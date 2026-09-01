@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 510 410" width="51mm" height="41mm">
+  <title>Topic - MindSpark mascot</title>
+  <g stroke-linecap="round" stroke-linejoin="round">
+
+    <path d="M255 160 L255 126" stroke="#23201b" stroke-width="10"/>
+    <path d="M32 16 L36 28 L48 32 L36 36 L32 48 L28 36 L16 32 L28 28 Z" fill="#e0613a" transform="translate(255 100) scale(1.7) translate(-32 -32)"/>
+    <path d="M190 200 C140 190 118 168 112 140" fill="none" stroke="#23201b" stroke-width="14"/>
+    <circle cx="108" cy="132" r="16" fill="#2f6f6a"/>
+    <path d="M320 216 C370 224 394 240 402 258" fill="none" stroke="#23201b" stroke-width="14"/>
+    <circle cx="406" cy="266" r="16" fill="#e0613a"/>
+    <path d="M215 286 L215 328" stroke="#23201b" stroke-width="17"/>
+    <path d="M295 286 L295 328" stroke="#23201b" stroke-width="17"/>
+    <rect x="188" y="320" width="54" height="22" rx="11" fill="#23201b"/>
+    <rect x="268" y="320" width="54" height="22" rx="11" fill="#23201b"/>
+    <rect x="170" y="160" width="170" height="130" rx="30" fill="#23201b"/>
+    <circle cx="217" cy="214" r="16" fill="#f4efe6"/>
+     <circle cx="220" cy="217" r="8" fill="#23201b"/>
+     <circle cx="293" cy="214" r="16" fill="#f4efe6"/>
+     <circle cx="296" cy="217" r="8" fill="#23201b"/>
+     <path d="M228 250 q27 18 54 0" fill="none" stroke="#f4efe6" stroke-width="9" stroke-linecap="round"/>
+  </g>
+</svg>

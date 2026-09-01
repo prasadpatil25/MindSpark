@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GitHub cat - exact walk animation</title>
+<link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='%23171515' d='M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z'/></svg>" />
+<style>
+  :root{
+    --ink:#171515;--line:#d0d7de;--accent:#0969da;--paper:#ffffff;
+    --chrome:#fbf8f2;--chrome-edge:#e7ddcc;--shadow:0 2px 4px rgba(40,30,15,.06),0 8px 24px rgba(40,30,15,.10);
+    --sans:"Bricolage Grotesque",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background:#fff;color:var(--ink)}
+  header{max-width:1000px;margin:22px auto 0;padding:0 20px}
+  header h1{margin:0;font-size:26px;letter-spacing:-.4px}
+  header p{margin:8px 0 0;color:#656d76;line-height:1.6;font-size:13.5px}
+  .refbox{margin-top:14px;display:grid;grid-template-columns:190px 1fr;gap:16px;align-items:center;padding:12px;background:#f6f8fa;border:1px solid var(--line);border-radius:12px}
+  .refbox img{width:190px;height:auto;border-radius:10px;border:1px solid var(--line);background:#fff}
+  .refbox .txt{font-size:12.5px;line-height:1.65;color:#656d76}
+  .refbox .txt b{color:var(--ink)}
+  .refbox a{color:var(--accent);text-decoration:none}
+  .refbox a:hover{text-decoration:underline}
+  .wrap{max-width:1000px;margin:16px auto;padding:0 20px 40px}
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  #stage,#stage2,#stage3,#stage4,#stage5{height:360px;border-radius:14px;position:relative;overflow:hidden;background:#ffffff}
+  .refside{height:360px;border:1px solid var(--line);border-radius:14px;background:#fff;display:flex;align-items:center;justify-content:center;padding:14px}
+  .refside img{max-width:100%;max-height:100%;object-fit:contain}
+  .cap{margin-top:6px;text-align:center;font-size:11.5px;color:#8c959f}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px;padding:12px;background:#f6f8fa;border:1px solid var(--line);border-radius:12px}
+  .controls .group{display:flex;align-items:center;gap:8px}
+  .controls label{font-size:12px;font-weight:600;color:#656d76}
+  .controls input[type=range]{accent-color:var(--ink);width:150px}
+  .btn{appearance:none;border:1px solid var(--line);background:#fff;color:var(--ink);padding:8px 12px;border-radius:8px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+  .btn:hover{background:#eef1f4}
+  .btn.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .btn.on{background:#0969da;color:#fff;border-color:#0969da}
+  .spacer{flex:1}
+  .badge{font-size:11px;padding:4px 8px;border-radius:99px;background:#fff;border:1px solid var(--line);color:#656d76}
+  .cite{margin-top:12px;padding:12px;background:#fff;border:1px solid var(--line);border-radius:12px;font-size:12.2px;line-height:1.7;color:#656d76}
+  .cite b{color:var(--ink)}
+  footer{max-width:1000px;margin:0 auto;padding:0 20px 28px;color:#8c959f;font-size:12px;text-align:center}
+  @media(max-width:760px){.duo{grid-template-columns:1fr}.refside{height:220px}#stage{height:320px}}
+  /* ===== Minimap demo - exact copy of mindspark's minimap =====
+     .minimap in public/styles.css:2983 - width:104 height:50,
+     background:color-mix(in srgb, var(--chrome) 92%, transparent),
+     border:1px solid var(--chrome-edge), border-radius:10, box-shadow,
+     overflow:hidden. For demo it is centered, with cat scaled to sit on it. */
+  .minimap-demo{position:relative;z-index:29;
+    width:104px;height:50px;
+    background:color-mix(in srgb, var(--chrome) 92%, transparent);
+    border:1px solid var(--chrome-edge);border-radius:10px;
+    box-shadow:var(--shadow);overflow:visible;cursor:crosshair;
+    margin:0 auto;
+  }
+  .minimap-demo svg.minimap-bg{display:block;width:100%;height:100%}
+  /* Cat on minimap - the track is the minimap itself.
+     Minimap is tiny (104×50), so cat is scaled to ~32px wide (≈30% of original)
+     so paws sit on minimap’s top edge. Overflow visible so cat towers above. */
+  .mm-track{position:absolute !important;left:0 !important;right:0 !important;top:0 !important;bottom:0 !important;pointer-events:none;overflow:visible !important;z-index:2;min-height:0 !important;height:100% !important;width:100% !important;border:none !important;background:transparent !important;display:block !important}
+  .mm-track.cw-stage{position:absolute !important;min-height:0 !important;height:100% !important;width:100% !important;border:none !important;background:transparent !important}
+  .mm-track .cw-actor{position:absolute !important;bottom:calc(100% - 6px) !important;left:0;will-change:left,transform;transform-origin:center bottom}
+  .mm-track .cw-actor svg{width:32px !important;height:auto !important;display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,.18))}
+  .mm-track.grooming .cw-actor svg,
+  .mm-track.waving .cw-actor svg{width:32px !important}
+  .mm-track .cw-label{display:none !important}
+  .mm-track [id$="-puddle"]{display:none !important}
+  .mm-track [id$="-shadow"]{display:none !important}
+  .mm-track [id$="-puddle"] *, .mm-track [id$="-shadow"] *{display:none !important}
+  .mm-track g[id$="puddle"], .mm-track g[id*="puddle"]{display:none !important}
+  .mm-demo-wrap{position:relative;max-width:1000px;margin:16px auto;padding:0 20px 40px}
+  .mm-demo-card{position:relative;background:#fff;border:1px solid var(--line);border-radius:14px;padding:56px 18px 18px;overflow:visible;display:flex;flex-direction:column;align-items:center;gap:14px}
+  .mm-demo-card .minimap-demo{margin-top:0}
+</style>
+</head>
+<body>
+<header>
+  <h1>GitHub cat - exact walk</h1>
+  <p>Rebuilt 1:1 from <code>gist:christophermanning/4460135/octocat.svg</code> (<a href="https://raw.githubusercontent.com/gist/christophermanning/4460135/raw/7278f8125f4508e096396b024304daf238e38b97/octocat.svg" target="_blank">raw svg</a>): black cat (<code>#000</code>, 3 whiskers/side in silhouette), peach face <code>#F4CBB2</code>, white eyes + rust pupils <code>#AD5C51</code>, nose/mouth <code>#AD5C51</code>, <b>9 suckers <code>#C3E4D8</code> + blue droplet <code>#9CDAF1</code></b>, puddle <code>#9CDAF1</code> + shadow legs <code>#7DBBE6</code>. The four limbs and the tail curl are cut out of the original path and re-hung on hinges, so they move without a single coordinate being redrawn.</p>
+  <div class="refbox">
+    <img src="./octocat-ref.svg" alt="Reference: octocat.svg - black Octocat with peach face, white eyes, rust pupils, 9 suckers, drop, puddle" loading="lazy" />
+    <div class="txt">
+      <b>Reference (left) vs animation (right)</b> - the same art: black <code>#000</code> silhouette (hood + ears + 3 whiskers/side + 5 tentacles), face path <code>#F4CBB2</code>, white eye ellipses + rust pupils <code>#AD5C51</code>, nose circle + w-mouth arc, 9 sucker ellipses <code>#C3E4D8</code> along the left curl, teardrop droplet <code>#9CDAF1</code>, puddle ellipse <code>#9CDAF1</code> + two shadow-leg paths <code>#7DBBE6</code> - copied verbatim from the gist (viewBox <code>-0.2 -1 379 334</code>). At rest the rigged cat matches the reference to <b>0.06% of pixels</b>, all of it sub-pixel edge anti-aliasing.<br>
+      <b>Walk:</b> a real <b>lateral-sequence</b> quadruped cycle - left hind, left fore, right hind, right fore, a quarter-cycle apart, each paw planted two-thirds of the time. Hands and feet lift in that order, the body drops onto each paw as it takes weight, and the tail counter-swings against the sway.
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="duo">
+    <div>
+      <div id="stage" aria-label="GitHub cat animation stage"></div>
+      <div class="cap">▶ animation - lateral-sequence walk, strolling across</div>
+    </div>
+    <div>
+      <div class="refside"><img src="./octocat-ref.svg" alt="Reference image" loading="lazy" /></div>
+      <div class="cap">reference - octocat.svg (gist)</div>
+    </div>
+  </div>
+
+  <div class="controls" role="toolbar" aria-label="GitHub cat controls">
+    <div class="group">
+      <button class="btn primary" id="playBtn">⏸ Pause</button>
+      <button class="btn on" id="strollBtn" title="March across the stage vs march in place">🚶 Stroll</button>
+      <button class="btn" id="dirBtn" title="Stroll direction">⇄ Dir</button>
+    </div>
+    <div class="group">
+      <label for="speed">Speed</label>
+      <input id="speed" type="range" min="0" max="200" value="80" />
+      <span class="badge" id="speedVal">80 px/s</span>
+    </div>
+    <span class="spacer"></span>
+    <span class="badge">Space pause · S stroll · F direction</span>
+  </div>
+
+  <div class="cite">
+    <b>What animates:</b> the four limbs are real hinged parts, extracted from the single closed path that draws the whole cat and re-hung at the hip line - so <b>both hands and both feet</b> lift, swing and plant in the lateral-sequence order <code>LH → LF → RH → RF</code> (phases <code>0, ¼, ½, ¾</code>, duty factor <code>0.66</code>), each plant ringing the puddle. The <b>tail curl</b> is hinged at its root and counter-swings against the body's sway, carrying the 9 suckers with it while the droplet trails behind on its own lag. Body bob runs at 4× the cycle (weight landing) over a 2× couplet swap, plus roll and sway onto the loaded side. Whiskers flare on each footfall; eyes blink every 2.4–5.4s. Every limb move turns about its own hip, the one point that must not shift: planted paws counter-<i>rotate</i> to stand still while the body sways, and a swinging paw lifts by <i>foreshortening</i> along its own axis rather than sliding upward - either slide would step the leg out of the socket it fills. A round joint under each shoulder keeps the hip line smooth however far the limb swings. Speed 0 = stand and breathe; stroll drifts across the stage with edge bounce and never mirrors.
+  </div>
+</div>
+
+<!-- Second cat - grooming (below first) -->
+<div class="wrap" style="margin-top:28px;border-top:2px solid #d0d7de;padding-top:18px">
+  <h2 style="margin:0 0 6px;font-size:18px;letter-spacing:-.3px">Second cat - washing its face</h2>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px">Same exact Octocat, same rig - now <b>grooming</b>. The outer left forepaw comes up off the water to the muzzle, the <b>tongue</b> flicks out onto it, and the paw <b>wipes up over the cheek</b> and back. A single rigid limb cannot reach from the hip to the muzzle, so the arm stretches along its own axis on the way up; the shaft is hidden against the black chest, so only the paw shows. Eyes squint while it works, the other three paws brace, the tail sways and flicks when the wet paw hits the puddle again. The shoulder turns on a round joint, so the arm stays smoothly joined at the fold even at full reach. Loop: settle → raise → lick ×3 → wipe ×2 → lick ×2 → wipe → lower → tap.</p>
+  <div id="stage2" aria-label="Second cat grooming stage"></div>
+  <div class="cap">grooming - paw to muzzle · tongue · squint · whiskers forward · tail flick</div>
+  <div class="controls" role="toolbar" aria-label="Grooming cat controls">
+    <div class="group">
+      <button class="btn primary" id="groomPlayBtn">⏸ Pause</button>
+      <button class="btn" id="groomRestartBtn">↺ Restart</button>
+    </div>
+    <span class="badge">Groom loop auto · Space also pauses top cat</span>
+    <span class="spacer"></span>
+    <span class="badge">CatGroom - reaching forepaw + tongue + squint</span>
+  </div>
+</div>
+
+<!-- Third cat - waving (below second) -->
+<div class="wrap" style="margin-top:28px;border-top:2px solid #d0d7de;padding-top:18px">
+  <h2 style="margin:0 0 6px;font-size:18px;letter-spacing:-.3px">Third cat - saying hi</h2>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px">Same exact Octocat, same rig - now <b>waving</b>. The <b>rightmost hand</b> comes up out of the water, with a <b>“Hi!”</b> bubble and a <b>wink</b> on the way through. Ears prick right up, whiskers fan forward, the mouth widens, and the tail whips on the same beat as the paw. Loop: idle → raise → wave → lower → idle.</p>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px">The arm is a <b>two-bone rig</b>, not one rigid segment. A limb hinged only at the shoulder sweeps as a board - and the shape on its end is a <i>foot</i>: the paw in <code>CAT_D</code> hooks outward and downward, right for standing in a puddle, but swung up through ~140° it curls back over itself and finishes the arm as a candy-cane. No shoulder angle fixes that. So the free limb splits at <code>L.elbow</code> into upper arm + forearm - both the <i>same</i> limb <code>&lt;use&gt;</code>, each clipped to its side of the line and overlapped by <code>ELBOW_LAP</code> - with an elbow disc filling the wedge a bend opens (the rig’s joint-disc trick, applied at the elbow), and a <b>mitt at the wrist</b> that swallows the paw hook.</p>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px">Two constraints fall out. The stretch goes on the <b>bones</b>, never on a shared ancestor: a <code>scale(1,k)</code> above a rotated forearm is a shear and turns it into a wedge, so <code>move</code> carries rotation only and each bone scales along its own axis. And the mitt hangs <i>outside</i> both scales, so reach never stretches the hand - the thing the old single-bar arm could not avoid. The target moved too: a bent chain is shorter end to end, so keeping the old <code>(288, 206)</code> would have cost <code>k 1.355</code> instead of <code>1.289</code>. At <code>(272, 190)</code> with a 28° elbow it is <code>1.249</code> - <i>less</i> stretch than the straight arm used - the elbow lands at <code>(255.6, 218.5)</code>, 21 units clear of the body so the bend actually shows, and the hand sits nearer shoulder height. The beat is one driver read at <b>three delays</b> (shoulder, then forearm, then wrist), which is what makes the wave travel outward instead of the arm swinging rigidly - the same principle as the tail’s whip. At rest every sub-transform is identity and the halves reassemble into the original limb, so <code>CatGroom</code>’s reach is untouched.</p>
+  <div id="stage3" aria-label="Third cat waving stage"></div>
+  <div class="cap">waving - paw up · four beats · “Hi!” · wink · ears up · tail whip</div>
+  <div class="controls" role="toolbar" aria-label="Waving cat controls">
+    <div class="group">
+      <button class="btn primary" id="wavePlayBtn">⏸ Pause</button>
+      <button class="btn" id="waveGreetBtn" title="Skip straight to the wave">👋 Wave now</button>
+    </div>
+    <span class="badge">Wave loop auto · click 👋 to greet on demand</span>
+    <span class="spacer"></span>
+    <span class="badge">CatWave - swinging forepaw + bubble + wink</span>
+  </div>
+</div>
+
+<!-- Fourth cat - plumber waving (plumber-octo) -->
+<div class="wrap" style="margin-top:28px;border-top:2px solid #d0d7de;padding-top:18px">
+  <h2 style="margin:0 0 6px;font-size:18px;letter-spacing:-.3px">Fourth cat - plumber waving</h2>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px">Same rig, <b>Mario plumber</b> theme, now <b>matched to the reference on the right by measuring it</b> rather than by eye. The JPEG was mapped into the rig’s <code>viewBox</code> using two anchors - the whiskers span the full image width (<code>svg x 0.007..378.46</code>) and the artwork’s full height is <code>svg y 0..332.6</code> - giving <code>x = px/2.368</code>, <code>y = (px−50)/2.38</code>. Every colour below is a sampled pixel and every shape is the per-column extent of that colour’s mask.</p>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px">What the comparison turned up: the <b>torso was black</b> - the reference’s red shirt starts at <code>y 185.7</code>, and by <code>y 182</code> the silhouette has already narrowed from hood width (<code>x 111..269</code>) to shoulder width (<code>x 149..235</code>), so a straight cut at <code>COLLAR_Y 184</code> lands on the jaw line and repaints the body red while the hood stays black. The <b>hat</b> was a squat ellipse; traced off the red mask it is one elliptical arc (<code>rx 125 ry 110.3</code>) whose apex lands at <code>y 0.8</code> - the same height as the ears’ own tips, which is what leaves both ears standing clear either side of it - over a brim sagging to <code>y 100.8</code> at the lobes. The <b>eyes</b> were flat blue discs; scanning across <code>y 126</code> gives sclera <code>125..160.5</code>, blue ring <code>131.8..155.4</code>, near-black centre <code>135.1..152</code>, so a dark pupil at 0.72 of the iris was added. The <b>tail’s suckers</b> had been dropped entirely - the reference keeps them, in <code>#A51A16</code>. The <b>palette</b> was all slightly off: red <code>#e53935→#E30203</code>, blue <code>#1565c0→#0A42AF</code>, green <code>#2e7d32→#01A03C</code>. <b>Overalls</b> are now the measured shape - straps <code>y 186..205</code>, bib to <code>y 243</code>, legs split at <code>x 186..192</code>. And a real bug surfaced: the shaft filler rect was hardcoded <code>#000</code>, so every themed sleeve carried a <b>black band</b> from the clip line down to <code>y 244</code>.</p>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px"><b>Gloves, boots and the tail glove - these are tentacles.</b> Each limb is a tube of near-constant width that curls outward and only narrows in its last few units. Measuring the <i>true filled span</i> per row (crossings of the closed subpath, not the outline’s min/max) gives <code>17.9</code> at the ankle, <code>18–23</code> through the curl, then <code>15.4</code> and <code>8.1</code> at the tip. The tail is the same: <code>8.8</code> wide 6 units back from its point, <code>15.8</code> at 24 back, along an axis of about <code>207°</code>.</p>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px">An earlier pass took the outline’s min/max per row instead, read that as a “broad flat foot” 31 wide, and fitted a covering blob to it - but that envelope is the span of the <i>curl</i>, not of the tentacle, so the shape was covering the empty air the curl encloses. Hence flat saucers. So a glove is no longer a shape fitted over the tip: <b>it is the tip</b> - the limb’s own <code>&lt;use&gt;</code> recoloured and clipped to a half-plane cut across the tube, perpendicular to the tentacle’s local axis (hands cut at <code>u 3.0, w −11</code> at <code>28.8°</code> off vertical; feet at <code>u 2.8, w −13</code> at <code>22.6°</code>; the tail 28 back from its point). It tapers exactly as the tentacle tapers, cannot leave the colour underneath showing, and needs no authored outline. The cut edge reads as the cuff, with a second copy 3 further along leaving a band of it visible.</p>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px">Two consequences. The tail glove moved <i>out</i> of <code>tailG</code> into its own group after the suckers - the suckers draw over the tail, so a glove inside <code>tailG</code> had a sucker showing through it; <code>setTail()</code> now carries that group too. And the black cat’s waving arm lost the rounded mitt added earlier: that was a workaround for the same bad measurement, and it only flattened the tentacle’s taper into a blob. Its tip is now the same shape as its three planted limbs. Note the tail’s extreme point is <code>(66.65, 178.99)</code> - <i>not</i> <code>TAIL_TIP (73.8, 176.0)</code>, which is just a point on the outline.</p>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px"><b>What still differs, and why:</b> the reference is redrawn artwork, not this rig’s <code>CAT_D</code>. Its body is wider and its tentacle thicker. And its feet stand <i>on</i> the mushroom (shoes at <code>y 261..281</code>) while this rig’s paws plant <i>into</i> it at <code>y 283..293</code>, so the gloves and boots sit about 15 lower than the reference’s. That gap is not a styling choice: the paw positions are fixed by the limb subpaths extracted from the silhouette, and every way of forcing them up costs more than it buys - moving the cat clips its ears at the viewBox top, moving the mushroom clips its base at the bottom, and clipping the legs short leaves a hole in the masked silhouette that only a paw-sized shape can fill, which is the thing being replaced. Waving uses the same compound motion as the black cat (shoulder <code>3.5°</code> + forearm <code>13°</code> at <code>2.1Hz</code>, each lagging the last).</p>
+  <div class="duo">
+    <div>
+      <div id="stage4" aria-label="Plumber waving stage"></div>
+      <div class="cap">plumber waving - white glove · “Hi!” · Mario hat</div>
+    </div>
+    <div>
+      <div class="refside"><img src="./plumber-octo.jpg" alt="Plumber Octocat reference - Mario hat, red tail, blue overalls, green mushroom" loading="lazy" style="max-height:320px;object-fit:contain" /></div>
+      <div class="cap">reference - plumber-octo.jpg (JPEG) + plumber-octo.svg (raster-in-SVG)</div>
+    </div>
+  </div>
+  <div class="controls" role="toolbar" aria-label="Plumber waving controls">
+    <div class="group">
+      <button class="btn primary" id="plumberWavePlayBtn">⏸ Pause</button>
+      <button class="btn" id="plumberWaveGreetBtn" title="Skip straight to the wave">👋 Wave now</button>
+    </div>
+    <span class="badge">Plumber waving - vector rig, same CatWave with theme</span>
+    <span class="spacer"></span>
+    <span class="badge">CatWave theme:plumber - red/white/blue/brown/green</span>
+  </div>
+</div>
+
+<!-- Fifth cat - plumber grooming -->
+<div class="wrap" style="margin-top:28px;border-top:2px solid #d0d7de;padding-top:18px">
+  <h2 style="margin:0 0 6px;font-size:18px;letter-spacing:-.3px">Fifth cat - plumber grooming</h2>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px">Same plumber, now <b>grooming</b> - the white-gloved forepaw lifts to the mustache, tongue flicks onto it, then wipes over the cheek. Uses the identical <code>CatGroom</code> reach logic (<code>R.solveReach</code> stretch + elbow tuck) as the black cat, just with plumber colours and the mushroom platform. The JPEG’s white glove and brown shoe match the vector limb tips; the green mushroom replaces the blue puddle.</p>
+  <div id="stage5" aria-label="Plumber grooming stage"></div>
+  <div class="cap">plumber grooming - white glove to mustache · tongue · mushroom</div>
+  <div class="controls" role="toolbar" aria-label="Plumber grooming controls">
+    <div class="group">
+      <button class="btn primary" id="plumberGroomPlayBtn">⏸ Pause</button>
+      <button class="btn" id="plumberGroomRestartBtn">↺ Restart</button>
+    </div>
+    <span class="badge">Plumber grooming - CatGroom theme:plumber</span>
+    <span class="spacer"></span>
+    <span class="badge">Groom loop auto - same script as black cat</span>
+  </div>
+</div>
+
+<!-- Minimap demo - size-matched to mindspark's minimap -->
+<div class="mm-demo-wrap">
+  <h2 style="margin:0 0 6px;font-size:18px;letter-spacing:-.3px">Minimap demo - cat walks on the minimap</h2>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px">A <b>pixel-matched minimap</b> copied verbatim from <code>public/styles.css:2983</code> and <code>public/index.html:148</code> - <code>width:104px height:50px</code>, <code>border-radius:10px</code>, <code>overflow:hidden</code> (here <code>overflow:visible</code> for the cat). The octocat is <b>scaled to 32px</b> and its <code>.cw-actor</code> is anchored <code>bottom:calc(100% - 6px)</code>, so its paws sit on the minimap’s top edge - the edge is the <b>walkable platform</b>.</p>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px">The cat runs a small <b>behaviour state machine</b> on top of <code>CatWalk</code>, borrowed from three characters that live on other people’s screens. From <b>Shimeji</b>, the idea that a window’s top edge is terrain: reaching either end plays a <i>peek over the edge</i> before it turns back. From <b>oneko.js</b>, a distance threshold (its 48px, scaled here to 7px) before the cat bothers to chase the cursor - <b>hover the minimap and it walks over to you</b>. From the <b>Claude site mascot</b>, behaviour as scripted beats rather than physics. Its stops are the minimap’s own <b>route dots</b>, read live out of the <code>&lt;svg&gt;</code> at <code>cx 28/52/76</code> - edit the map and the cat’s itinerary moves with it. States: <code>patrol → inspect → peek</code>, plus <code>follow → greet</code> while you hover.</p>
+  <p style="margin:0 0 10px;color:#656d76;line-height:1.6;font-size:13px"><b>One writer per property:</b> <code>CatWalk</code> renders the gait, the behaviour layer owns <code>left</code> and <code>transform</code>. That needs <code>ownPosition:false</code> (<code>cat-walk.js:75</code>) - previously the rAF loop and this page’s CSS transitions both wrote <code>left</code>, so click-to-move was stomped within a frame and never showed. <code>CatWalk</code> also now takes <code>theme</code>, so 🎩 Plumber applies while walking, not just to wave/groom. <b>To use on Mindspark:</b> put the cat’s track inside <code>#minimap</code> in <code>public/index.html:148</code>.</p>
+  <div class="mm-demo-card" id="mmDemoCard">
+    <div class="minimap-demo" id="minimap-demo" title="Minimap demo - click to jump (as in Mindspark)">
+      <!-- tiny map preview inside minimap, like Mindspark's #mmView -->
+      <svg class="minimap-bg" viewBox="0 0 104 50" preserveAspectRatio="none" aria-hidden="true">
+        <rect x="0" y="0" width="104" height="50" fill="var(--chrome)" />
+        <rect x="8" y="10" width="88" height="30" rx="4" fill="none" stroke="#e7ddcc" stroke-width="0.8" opacity="0.9"/>
+        <circle cx="28" cy="25" r="3" fill="#e7ddcc" />
+        <circle cx="52" cy="20" r="2.5" fill="#d0d7de" />
+        <circle cx="76" cy="28" r="3" fill="#e7ddcc" />
+        <path d="M28 25 L52 20 L76 28" stroke="#e7ddcc" stroke-width="0.9" fill="none" opacity="0.7"/>
+      </svg>
+      <div class="mm-track" id="mm-track" aria-hidden="true"></div>
+    </div>
+    <div style="height:38px"></div>
+    <div style="text-align:center;color:#8c959f;font-size:11px;margin-top:2px">minimap is <code>.minimap 104×50 radius 10</code> - cat’s <code>.cw-actor</code> rides on top, <code>bottom:calc(100% -6px)</code></div>
+  </div>
+  <div class="controls" role="toolbar" aria-label="Minimap cat controls" style="margin-top:12px">
+    <div class="group">
+      <button class="btn primary" id="mmWalkBtn" title="Walk along the minimap">🚶 Walk</button>
+      <button class="btn" id="mmHideBtn" title="Hide behind the minimap">🙈 Hide</button>
+      <button class="btn" id="mmWaveBtn" title="Wave on the minimap">👋 Wave</button>
+      <button class="btn" id="mmGroomBtn" title="Groom on the minimap">🐱 Groom</button>
+      <button class="btn" id="mmPlumberBtn" title="Toggle plumber theme">🎩 Plumber</button>
+      <button class="btn" id="mmRandomBtn" title="Random - cat does a surprise trick on the minimap">🎲 Random</button>
+    </div>
+    <span class="badge" id="mmStatus">Minimap cat - walk · hide · wave · groom · random</span>
+    <span class="spacer"></span>
+    <span class="badge">Hover the minimap and the cat comes to you · click to send it somewhere</span>
+  </div>
+</div>
+
+<footer><a href="./index.html">← Back to MindSpark</a> · <code>new CatWalk('#stage')</code> / <code>new CatGroom('#stage2')</code> / <code>new CatWave('#stage3')</code> / <code>new CatWave('#stage4',{theme:'plumber'})</code> / <code>new CatGroom('#stage5',{theme:'plumber'})</code> / <code>MinimapCat('#minimap-demo')</code> · aliases <code>OctocatWalk</code>/<code>GitHubCatWalk</code>/<code>CatLick</code>/<code>CatHi</code></footer>
+
+<script src="./cat-rig.js?v=16"></script>
+<script src="./cat-walk.js?v=9"></script>
+<script src="./cat-groom.js?v=7"></script>
+<script src="./cat-wave.js?v=6"></script>
+<script>
+  const walk = new CatWalk('#stage', { speed: 80, stroll: true, autoStart: true });
+  const playBtn = document.getElementById('playBtn');
+  const strollBtn = document.getElementById('strollBtn');
+  const dirBtn = document.getElementById('dirBtn');
+  const speed = document.getElementById('speed');
+  const speedVal = document.getElementById('speedVal');
+  let playing = true;
+  function sync(){ playBtn.textContent = playing ? '⏸ Pause' : '▶ Play'; strollBtn.classList.toggle('on', walk.stroll); }
+  playBtn.onclick = () => { playing = !playing; if (playing) walk.start(); else walk.pause(); sync(); };
+  strollBtn.onclick = () => { walk.toggleStroll(); sync(); };
+  dirBtn.onclick = () => walk.setDirection(walk.dir * -1);
+  speed.addEventListener('input', () => { const v = Number(speed.value); walk.setSpeed(v); speedVal.textContent = v + ' px/s'; });
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space') { e.preventDefault(); playBtn.click(); }
+    if (e.key === 's' || e.key === 'S') strollBtn.click();
+    if (e.key === 'f' || e.key === 'F') dirBtn.click();
+  });
+  sync();
+  // second cat - grooming
+  const groom = new CatGroom('#stage2', { autoStart: true });
+  const groomPlayBtn = document.getElementById('groomPlayBtn');
+  const groomRestartBtn = document.getElementById('groomRestartBtn');
+  let groomPlaying = true;
+  function groomSync(){ groomPlayBtn.textContent = groomPlaying ? '⏸ Pause' : '▶ Play'; }
+  groomPlayBtn.onclick = () => { groomPlaying = !groomPlaying; if (groomPlaying) groom.start(); else groom.pause(); groomSync(); };
+  groomRestartBtn.onclick = () => { groomPlaying = true; groom.restart(); groomSync(); };
+  groomSync();
+  // third cat - waving
+  const wave = new CatWave('#stage3', { autoStart: true });
+  const wavePlayBtn = document.getElementById('wavePlayBtn');
+  const waveGreetBtn = document.getElementById('waveGreetBtn');
+  let wavePlaying = true;
+  function waveSync(){ wavePlayBtn.textContent = wavePlaying ? '⏸ Pause' : '▶ Play'; }
+  wavePlayBtn.onclick = () => { wavePlaying = !wavePlaying; if (wavePlaying) wave.start(); else wave.pause(); waveSync(); };
+  waveGreetBtn.onclick = () => { wavePlaying = true; wave.greet(); waveSync(); };
+  waveSync();
+  // fourth cat - plumber waving (vector plumber via theme:plumber)
+  const plumberWave = new CatWave('#stage4', { theme: 'plumber', autoStart: true });
+  const plumberWavePlayBtn = document.getElementById('plumberWavePlayBtn');
+  const plumberWaveGreetBtn = document.getElementById('plumberWaveGreetBtn');
+  let plumberWavePlaying = true;
+  function plumberWaveSync(){ plumberWavePlayBtn.textContent = plumberWavePlaying ? '⏸ Pause' : '▶ Play'; }
+  plumberWavePlayBtn.onclick = () => { plumberWavePlaying = !plumberWavePlaying; if (plumberWavePlaying) plumberWave.start(); else plumberWave.pause(); plumberWaveSync(); };
+  plumberWaveGreetBtn.onclick = () => { plumberWavePlaying = true; plumberWave.greet(); plumberWaveSync(); };
+  plumberWaveSync();
+  // fifth cat - plumber grooming
+  const plumberGroom = new CatGroom('#stage5', { theme: 'plumber', autoStart: true });
+  const plumberGroomPlayBtn = document.getElementById('plumberGroomPlayBtn');
+  const plumberGroomRestartBtn = document.getElementById('plumberGroomRestartBtn');
+  let plumberGroomPlaying = true;
+  function plumberGroomSync(){ plumberGroomPlayBtn.textContent = plumberGroomPlaying ? '⏸ Pause' : '▶ Play'; }
+  plumberGroomPlayBtn.onclick = () => { plumberGroomPlaying = !plumberGroomPlaying; if (plumberGroomPlaying) plumberGroom.start(); else plumberGroom.pause(); plumberGroomSync(); };
+  plumberGroomRestartBtn.onclick = () => { plumberGroomPlaying = true; plumberGroom.restart(); plumberGroomSync(); };
+  plumberGroomSync();
+
+  // ----- Minimap demo - the cat lives on the minimap -------------------------
+  // Size-matched to mindspark's .minimap 104×50 (public/styles.css:2983).
+  //
+  // PRIOR ART, AND WHAT EACH CONTRIBUTES
+  // ------------------------------------
+  //   Shimeji (desktop mascot) - the top edge of a *window* is a walkable
+  //     platform, and the mascot tests for the edge and reacts to it instead of
+  //     bouncing off an invisible wall. Here the minimap's top edge is that
+  //     platform, and hitting either end plays a peek-over-the-edge before the
+  //     cat turns around.
+  //
+  //   oneko.js (adryd325) - behaviour as a small state machine, and a *distance
+  //     threshold* (48px against a full viewport) before the cat bothers to
+  //     chase the cursor at all; position is clamped to bounds rather than
+  //     wrapped. Scaled to a 104px-wide map that threshold becomes FOLLOW_EPS.
+  //
+  //   Claude's site mascot (Codrops teardown) - behaviour as a scripted
+  //     sequence of beats (look → walk → crouch → leap) rather than a physics
+  //     sim, with the limbs clipped so they can never cross the ground line.
+  //     cat-groom.js and cat-wave.js already work that way; PATROL does too.
+  //
+  // THE ONE STRUCTURAL RULE: exactly one writer per animated property. CatWalk
+  // renders the gait; this layer owns actor.style.left and actor.style.transform
+  // and nothing else touches them. That is why the walker is constructed with
+  // ownPosition:false - before, CatWalk's rAF loop and this file's CSS
+  // transitions both wrote `left`, so every transition was stomped within a
+  // frame and click-to-move silently did nothing.
+  (function(){
+    const track  = document.getElementById('mm-track');
+    const demo   = document.getElementById('minimap-demo');
+    const bg     = demo.querySelector('svg.minimap-bg');
+    const walkBtn    = document.getElementById('mmWalkBtn');
+    const hideBtn    = document.getElementById('mmHideBtn');
+    const waveBtn    = document.getElementById('mmWaveBtn');
+    const groomBtn   = document.getElementById('mmGroomBtn');
+    const plumberBtn = document.getElementById('mmPlumberBtn');
+    const randomBtn  = document.getElementById('mmRandomBtn');
+    const statusEl   = document.getElementById('mmStatus');
+
+    const SPEED      = 15;    // px/s along the edge - crosses the 104px map in ~5s
+    const FOLLOW_EPS = 7;     // oneko's 48px chase threshold, scaled to this map
+    const ARRIVE     = 1.2;   // px - close enough to a target
+    const PEEK_T     = 0.9;   // s spent looking over the edge before turning
+    const LEAN       = 2.2;   // deg the body leans into the direction of travel
+    const PEEK_LEAN  = 7;     // deg it tips out over the edge while peeking
+
+    let cat = null, mode = 'walk', theme = null;
+    let x = 0, dir = 1, state = 'patrol', stateT = 0, target = 0, hold = 0, lean = 0;
+    let pointerX = null;
+    let raf = 0, prev = 0, hideTimer = null, autoTimer = null, auto = false;
+
+    const actor  = () => track.querySelector('.cw-actor');
+    const actorW = () => (actor() && actor().offsetWidth) || 32;
+    const trackW = () => track.clientWidth || 104;
+    const maxX   = () => Math.max(0, trackW() - actorW());
+    const clampX = v => Math.max(0, Math.min(maxX(), v));
+    const say    = t => { if (statusEl) statusEl.textContent = t; };
+
+    // Landmarks read out of the minimap's OWN <svg> - the route dots at
+    // cx 28/52/76 in a 0 0 104 50 viewBox. Reading them instead of hard-coding
+    // is the Shimeji move: the character navigates by the real content that
+    // happens to be under it, so editing the minimap moves the cat's stops too.
+    function landmarks(){
+      const vb = bg.viewBox.baseVal, w = trackW(), aw = actorW();
+      return Array.prototype.map.call(bg.querySelectorAll('circle'),
+        c => clampX((+c.getAttribute('cx')) / vb.width * w - aw / 2)
+      ).sort((a, b) => a - b);
+    }
+
+    // the next landmark ahead in the current direction, or the edge if none
+    function nextLandmark(){
+      const L = landmarks();
+      const ahead = dir > 0 ? L.filter(v => v > x + ARRIVE + 2)
+                            : L.filter(v => v < x - ARRIVE - 2);
+      if (ahead.length) return dir > 0 ? ahead[0] : ahead[ahead.length - 1];
+      return dir > 0 ? maxX() : 0;
+    }
+
+    const setState = (s, holdFor) => { state = s; stateT = 0; hold = holdFor || 0; };
+    const ease = (v, to, dt) => v + (to - v) * Math.min(1, dt * 6);
+
+    // ------------------------------------------------------------ behaviour
+    function behave(dt){
+      stateT += dt;
+      const aw = actorW(), centre = x + aw / 2;
+
+      // oneko rule: only chase once the cursor is meaningfully far away, so a
+      // cat standing under the pointer stays put instead of jittering on it.
+      // The threshold is measured against where the cat could actually STAND
+      // (clamped into bounds), not against the raw cursor x. Against the raw x,
+      // a cursor parked past either end stays forever further than FOLLOW_EPS
+      // from a cat that is already as close as the bounds allow, so follow and
+      // greet swap every frame: stateT resets each time, greet never expires,
+      // and the body holds its walking lean instead of settling upright.
+      if (pointerX != null && state !== 'peek') {
+        const want = clampX(pointerX - aw / 2);
+        if (Math.abs(want - x) > FOLLOW_EPS) {
+          if (state !== 'follow') setState('follow');
+          target = want;
+        } else if (state === 'follow') {
+          setState('greet', 1.1);
+        }
+      } else if (pointerX == null && state === 'follow') {
+        target = nextLandmark();
+        setState('patrol');
+      }
+
+      switch (state) {
+        case 'patrol':
+        case 'follow': {
+          const d = target - x;
+          if (Math.abs(d) <= ARRIVE) {
+            x = target;
+            if (state === 'follow') { setState('greet', 1.1); break; }
+            // arrived: either standing on a map dot, or out at the edge
+            if (x <= 0.5 || x >= maxX() - 0.5) setState('peek', PEEK_T);
+            else setState('inspect', 0.9 + Math.random() * 1.2);
+            break;
+          }
+          dir = d > 0 ? 1 : -1;
+          x = clampX(x + dir * SPEED * dt);
+          lean = ease(lean, dir * LEAN, dt);
+          cat.setSpeed(30);
+          say(state === 'follow' ? 'following the cursor along the edge'
+                                 : 'walking the minimap edge → next map dot');
+          break;
+        }
+        case 'inspect':   // stopped over one of the minimap's route dots
+          cat.setSpeed(0);
+          lean = ease(lean, 0, dt);
+          say('standing on a map dot, looking around');
+          if (stateT >= hold) { target = nextLandmark(); setState('patrol'); }
+          break;
+        case 'greet':     // caught up with the cursor
+          // deliberately does NOT time out while the pointer is still on the
+          // map: the cat should sit with you for as long as you hover, and only
+          // go back to its rounds once you leave.
+          cat.setSpeed(0);
+          lean = ease(lean, 0, dt);
+          say('caught the cursor - sitting with it');
+          if (pointerX == null && stateT >= hold) { target = nextLandmark(); setState('patrol'); }
+          break;
+        case 'peek': {    // Shimeji: check the edge before stepping off it
+          cat.setSpeed(0);
+          const out = x <= 0.5 ? -1 : 1;
+          lean = out * PEEK_LEAN * Math.sin(Math.PI * Math.min(1, stateT / hold));
+          say('at the edge - peering over before turning back');
+          if (stateT >= hold) { dir = -out; target = nextLandmark(); setState('patrol'); }
+          break;
+        }
+      }
+    }
+
+    function place(){
+      const a = actor(); if (!a) return;
+      a.style.left = x.toFixed(1) + 'px';
+      a.style.transform = Math.abs(lean) < 0.02 ? '' : 'rotate(' + lean.toFixed(2) + 'deg)';
+    }
+
+    function tick(ts){
+      raf = requestAnimationFrame(tick);
+      if (document.hidden) { prev = 0; return; }
+      const dt = prev ? Math.min((ts - prev) / 1000, 0.05) : 0;
+      prev = ts;
+      if (mode !== 'walk' || !cat) return;
+      behave(dt);
+      place();
+    }
+
+    // ----------------------------------------------------------------- modes
+    function clearCat(){
+      if (cat) { try { cat.destroy(); } catch (e) {} cat = null; }
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+      track.innerHTML = '';
+      track.className = 'mm-track';
+      track.style.opacity = '1';
+    }
+
+    function setMmMode(m){
+      clearCat();
+      mode = m;
+      [walkBtn, hideBtn, waveBtn, groomBtn].forEach(b => b.classList.remove('primary'));
+      const btn = { walk: walkBtn, hide: hideBtn, wave: waveBtn, groom: groomBtn }[m];
+      if (btn) btn.classList.add('primary');
+
+      const opts = { theme: theme, autoStart: true };
+      if (m === 'walk') {
+        track.classList.add('walking');
+        // ownPosition:false - behave()/place() drive `left`, CatWalk only the gait
+        cat = new CatWalk(track, Object.assign({}, opts,
+          { speed: 30, stroll: false, ownPosition: false }));
+        const L = landmarks();
+        x = clampX(x || L[0] || 0);
+        lean = 0;
+        target = nextLandmark();
+        setState('patrol');
+        place();
+      } else if (m === 'wave') {
+        track.classList.add('waving');
+        cat = new CatWave(track, opts);
+        say('waving from the minimap · Hi!');
+      } else if (m === 'groom') {
+        track.classList.add('grooming');
+        cat = new CatGroom(track, opts);
+        say('grooming on the minimap · lick → wipe → set down');
+      } else if (m === 'hide') {
+        track.classList.add('hiding');
+        cat = new CatWalk(track, Object.assign({}, opts, { speed: 0, stroll: false }));
+        say('ducking down behind the minimap');
+        requestAnimationFrame(() => {
+          const a = actor(); if (!a) return;
+          a.style.transition = 'transform .45s ease, opacity .35s ease';
+          hideTimer = setTimeout(() => {
+            a.style.transform = 'translateY(18px) scale(0.88)';
+            a.style.opacity = '0.18';
+            say('hidden behind the minimap · peeking');
+          }, 650);
+        });
+      }
+      const a = actor();
+      if (a) { a.style.bottom = 'calc(100% - 6px)'; a.style.top = 'auto'; }
+    }
+
+    // ---------------------------------------------------------- interaction
+    // Hovering the minimap is the main interaction (oneko): the cat breaks off
+    // its patrol and walks over. Click/drag sets an explicit destination, which
+    // matters on touch, where there is no hover.
+    demo.addEventListener('pointermove', e => {
+      const r = track.getBoundingClientRect();
+      pointerX = e.clientX - r.left;
+    });
+    demo.addEventListener('pointerleave', () => { pointerX = null; });
+    demo.addEventListener('click', e => {
+      if (mode !== 'walk') setMmMode('walk');
+      const r = track.getBoundingClientRect();
+      target = clampX(e.clientX - r.left - actorW() / 2);
+      dir = target > x ? 1 : -1;
+      setState('patrol');
+    });
+
+    walkBtn.onclick  = () => setMmMode('walk');
+    hideBtn.onclick  = () => setMmMode('hide');
+    waveBtn.onclick  = () => setMmMode('wave');
+    groomBtn.onclick = () => setMmMode('groom');
+
+    function toggleTheme(){
+      theme = theme === 'plumber' ? null : 'plumber';
+      plumberBtn.classList.toggle('on', theme === 'plumber');
+      plumberBtn.textContent = theme === 'plumber' ? '🎩 Plumber on' : '🎩 Plumber';
+    }
+    plumberBtn.onclick = () => { toggleTheme(); setMmMode(mode); };
+
+    function randomTrick(){
+      // walking is what the cat mostly does; the tricks are punctuation
+      const weighted = ['walk', 'walk', 'walk', 'wave', 'groom', 'hide'];
+      const pick = weighted[Math.floor(Math.random() * weighted.length)];
+      if (Math.random() < 0.25) toggleTheme();
+      setMmMode(pick);
+      if (pick === 'walk') {
+        const L = landmarks();
+        target = L.length ? L[Math.floor(Math.random() * L.length)] : maxX();
+        dir = target > x ? 1 : -1;
+        setState('patrol');
+      }
+      randomBtn.classList.add('on');
+      setTimeout(() => randomBtn.classList.remove('on'), 320);
+    }
+    randomBtn.onclick = randomTrick;
+
+    // double-click to leave it running: human-ish spacing, not a metronome
+    function scheduleNext(){
+      if (!auto) return;
+      const delay = 2200 + Math.random() * 2000 + (Math.random() < 0.2 ? 900 : 0);
+      autoTimer = setTimeout(() => { randomTrick(); scheduleNext(); }, delay);
+    }
+    randomBtn.ondblclick = () => {
+      auto = !auto;
+      clearTimeout(autoTimer);
+      randomBtn.textContent = auto ? '🎲 Auto' : '🎲 Random';
+      if (auto) setTimeout(() => { randomTrick(); scheduleNext(); }, 380);
+    };
+
+    window.addEventListener('resize', () => { x = clampX(x); target = clampX(target); });
+
+    setMmMode('walk');
+    raf = requestAnimationFrame(tick);
+
+    window._mmCat = () => cat;
+    window._mmSetMode = setMmMode;
+    window._mmRandom = randomTrick;
+    window._mmState = () => ({ mode: mode, state: state, x: x, target: target, dir: dir });
+  })();
+</script>
+</body>
+</html>

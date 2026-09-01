@@ -15,7 +15,7 @@
      to an attacker origin: script-src has no external host, and connect-src is
      an allowlist. Adding an origin here widens that exfiltration channel, so
      read the "External hosts need a CSP entry" note in AGENTS.md first. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://icons.duckduckgo.com; connect-src 'self' https://api.github.com https://api.crossref.org https://api.anthropic.com https://api.openai.com https://api.quotable.io https://zenquotes.io https://favqs.com https://dummyjson.com https://quoteslate.vercel.app https://stoic.tekloon.net https://type.fit https://api.freeapi.app https://mindspark-oauth.githubpage.workers.dev wss://mindspark-oauth.githubpage.workers.dev; object-src 'none'; base-uri 'self'; form-action 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://avatars.githubusercontent.com https://icons.duckduckgo.com; connect-src 'self' https://api.github.com https://codeberg.org https://gitea.com https://api.crossref.org https://api.anthropic.com https://api.openai.com https://api.quotable.io https://zenquotes.io https://favqs.com https://dummyjson.com https://quoteslate.vercel.app https://stoic.tekloon.net https://type.fit https://api.freeapi.app https://mindspark-oauth.githubpage.workers.dev wss://mindspark-oauth.githubpage.workers.dev; object-src 'none'; base-uri 'self'; form-action 'self'" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes" />
 <meta name="theme-color" content="#e0613a" />
 <meta name="apple-mobile-web-app-title" content="MindSpark" />
@@ -172,6 +172,7 @@
       <div class="token-total" id="tokenTotal" title="Rough estimate of total tokens across all nodes (~4 chars/token)"></div>
       <div class="user-pill" id="userPill" style="display:none">
         <img id="userAvatar" alt="" />
+        <span id="userInitial" class="user-initial" aria-hidden="true" hidden></span>
         <span id="userName"></span>
         <button id="userSignOut" title="Sign out">⏻</button>
       </div>
@@ -202,17 +203,24 @@
       <h1>Mind<span>Spark</span></h1>
     </div>
     <div class="login-share-note" id="loginShareNote" style="display:none"></div>
-    <h2>Sign in with GitHub</h2>
-    <p>Your mind maps will be saved as private JSON files in a repository called <code>mindspark-maps</code> on your own GitHub account. This app talks to GitHub directly - there's no server in between.</p>
+    <h2>Sign in</h2>
+    <p>Your mind maps are saved as private JSON files in a repository called <code>mindspark-maps</code> on your own account. This app talks to your git host directly - there's no server in between.</p>
 
+    <div class="forge-tabs" role="tablist" aria-label="Choose your git host">
+      <button class="forge-tab is-on" type="button" role="tab" data-forge="github" aria-selected="true">GitHub</button>
+      <button class="forge-tab" type="button" role="tab" data-forge="gitea" aria-selected="false">Gitea / Forgejo</button>
+    </div>
+
+    <div class="forge-pane" data-forge-pane="github">
     <div class="login-oauth" id="loginOauth" style="display:none">
       <button id="ghOauthBtn" class="oauth-btn" type="button">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
         Sign in with GitHub
       </button>
-      <div class="oauth-or"><span>or use a personal access token</span></div>
     </div>
 
+    <details class="login-token" id="ghTokenDetails">
+      <summary>Sign in with an access token</summary>
     <ol class="login-steps">
       <li>
         <a class="login-step-link" href="https://github.com/new?name=mindspark-maps&amp;description=My+MindSpark+mind+maps" target="_blank" rel="noopener">
@@ -243,13 +251,83 @@
         <div class="login-error" id="ghError"></div>
       </li>
     </ol>
+    </details>
+    </div><!-- /github pane -->
+
+    <div class="forge-pane" data-forge-pane="gitea" hidden>
+      <label class="pane-label" for="giteaInstance">Your Gitea or Forgejo instance</label>
+      <input type="url" id="giteaInstance" class="instance-input" list="giteaSuggest"
+             placeholder="https://codeberg.org" autocomplete="off" spellcheck="false" />
+      <datalist id="giteaSuggest">
+        <option value="https://codeberg.org"></option>
+        <option value="https://gitea.com"></option>
+      </datalist>
+      <div class="login-step-hint">
+        The address you browse your repos at - just the origin, e.g. <code>https://codeberg.org</code>.
+        Codeberg and gitea.com work as-is; a <b>self-hosted</b> instance also needs its origin added to
+        this deployment's Content-Security-Policy, and MindSpark will tell you exactly what to add.
+      </div>
+
+      <div class="login-oauth">
+        <button id="giteaOauthBtn" class="oauth-btn" type="button">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0Zm0 2.2a5.8 5.8 0 1 1 0 11.6A5.8 5.8 0 0 1 8 2.2Zm-.9 2.1v2.2H4.9v1.8h2.2v3.4h1.8V8.3h2.2V6.5H8.9V4.3H7.1Z"/></svg>
+          Sign in with Gitea / Forgejo
+        </button>
+        <input type="text" id="giteaClientId" class="instance-input" style="margin-top:8px"
+               placeholder="OAuth application client ID" autocomplete="off" spellcheck="false" />
+        <details class="login-fallback">
+          <summary>Where does the client ID come from?</summary>
+          <p>
+            Nobody can pre-register an OAuth app on <i>your</i> server, so you register one once:
+            <b>Settings → Applications → Create a new OAuth2 application</b> on your instance.
+          </p>
+          <p>
+            <b>Redirect URI</b> (must match exactly): <code id="giteaRedirect"></code><br>
+            <b>Leave “Confidential Client” unchecked</b> - MindSpark is a public client and uses PKCE,
+            so there is no secret to store in your browser.
+          </p>
+          <p>
+            Your instance must also allow this page to make the token request: in <code>app.ini</code>,
+            <code>[cors] ENABLED = true</code>. Codeberg has this on already. If it is off you'll get a
+            clear message and can use an access token instead - that path needs no instance configuration.
+          </p>
+        </details>
+      </div>
+
+      <details class="login-token" id="giteaTokenDetails">
+        <summary>Sign in with an access token</summary>
+        <ol class="login-steps">
+          <li>
+            <a class="login-step-link" id="giteaTokenLink" target="_blank" rel="noopener">
+              Create an access token →
+            </a>
+            <div class="login-step-hint">
+              <b>Settings → Applications → Generate New Token.</b> Select the
+              <code>write:repository</code> scope (and <code>read:user</code> if your instance lists it).
+              MindSpark creates the private <code>mindspark-maps</code> repo for you on first sign-in.<br>
+              <b>Note:</b> Gitea and Forgejo tokens are <b>account-wide</b> - they can't be scoped to a
+              single repository the way GitHub's fine-grained tokens can, so this token reaches every
+              repo on your account.
+            </div>
+          </li>
+          <li>
+            <label for="giteaPat">Paste your token here:</label>
+            <div class="token-input">
+              <input type="password" id="giteaPat" placeholder="access token" autocomplete="off" spellcheck="false" />
+              <button id="giteaSignIn">Sign in</button>
+            </div>
+          </li>
+        </ol>
+      </details>
+      <div class="login-error" id="giteaError"></div>
+    </div><!-- /gitea pane -->
 
     <details class="login-extra">
       <summary>How does this work / is it safe?</summary>
-      <p>MindSpark runs entirely in your browser. The token is stored only in <code>localStorage</code> on this device, and is sent only to <code>api.github.com</code> - never to any third party. A Content-Security-Policy on this page blocks scripts and network calls to any other origin, so there is no route out for it; a fine-grained token keeps the damage to one repository even if that fails.</p>
+      <p>MindSpark runs entirely in your browser. The token is stored only in <code>localStorage</code> on this device, and is sent only to the git host you signed in to - never to any third party. A Content-Security-Policy on this page blocks scripts and network calls to any other origin, so there is no route out for it. On GitHub, a fine-grained token also keeps the damage to one repository if that ever fails; Gitea and Forgejo have no per-repo token scoping, so their tokens are account-wide.</p>
       <p>Because the token lives in this browser, treat signing in the way you would treat staying logged in anywhere: don't do it on a shared or untrusted machine, and sign out when you're done.</p>
-      <p>Every save commits a small JSON file to your <code>mindspark-maps</code> repo, so your data is versioned and you can <code>git clone</code> it any time. (A classic token creates that repo for you on first sign-in; a fine-grained one can't, which is why step 1 exists.)</p>
-      <p>To revoke access: <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">fine-grained tokens</a> / <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">classic tokens</a>.</p>
+      <p>Every save commits a small JSON file to your <code>mindspark-maps</code> repo, so your data is versioned and you can <code>git clone</code> it any time. (On Gitea and Forgejo - and with a GitHub classic token - MindSpark creates that repo on first sign-in. A GitHub fine-grained token can't create repositories, which is why its step 1 exists.)</p>
+      <p>To revoke access on GitHub: <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">fine-grained tokens</a> / <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">classic tokens</a>. On Gitea or Forgejo: <b>Settings → Applications</b> on your instance.</p>
     </details>
   </div>
 </div>
