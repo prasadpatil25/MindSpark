@@ -32,12 +32,14 @@ async function applyClaims(storage, d, ident, acl, editToken, request){
   }
   return acl;
 }
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+function isSafeKey(k){ return typeof k === 'string' && !UNSAFE_KEYS.has(k); }
 function applyOps(snap, ops){
   snap.nodes = snap.nodes || {};
   for(const op of (ops || [])){
-    if(op && op.t === 'node' && op.id) snap.nodes[op.id] = op.n;
-    else if(op && op.t === 'del' && op.id) delete snap.nodes[op.id];
-    else if(op && op.t === 'meta' && op.k) snap[op.k] = op.v;
+    if(op && op.t === 'node' && op.id && isSafeKey(op.id)) snap.nodes[op.id] = op.n;
+    else if(op && op.t === 'del' && op.id && isSafeKey(op.id)) delete snap.nodes[op.id];
+    else if(op && op.t === 'meta' && op.k && isSafeKey(op.k)) snap[op.k] = op.v;
   }
   return snap;
 }
@@ -78,6 +80,7 @@ export async function handleCollabHttp(storage, env, request){
       const uid = String((b && b.userId) || '').trim();
       const role = (b && b.role === 'viewer') ? 'viewer' : 'editor';
       if(!uid) return { status: 400, body: { error: 'userId required' } };
+      if(!isSafeKey(uid)) return { status: 400, body: { error: 'invalid userId' } };
       if(uid === String(cur.ownerId)) return { status: 400, body: { error: 'already the owner' } };
       cur.members = cur.members || {};
       cur.members[uid] = { role, login: String((b && b.login) || '') };
