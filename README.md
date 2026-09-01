@@ -97,7 +97,7 @@ MindSpark's editor is 100% client-side. The only things that require the optiona
 | Import / export (JSON, OPML, Markdown, PNG, PDF, `.doc`, Mermaid, …) | ✅ | ✅ | ✅ |
 | Version history, undo/redo, search, presentation mode | ✅ | ✅ | ✅ |
 | **Read-only share links** (`#view=`, whole map encoded in the URL) | ✅ | ✅ | ✅ |
-| Save maps to **your own private GitHub repo** | ✅ *(SQLite, no GitHub)* | ✅ *(PAT)* | ✅ *(PAT or OAuth)* |
+| Save maps to **your own private repo** (GitHub, Gitea, Forgejo) | ✅ *(SQLite, no forge)* | ✅ *(token)* | ✅ *(token, or GitHub OAuth)* |
 | One-click **"Sign in with GitHub"** (OAuth) | ❌ | ❌ | ✅ |
 | **Cloud share (editable)** `#shared=` links | ❌ | ❌ | ✅ |
 | **Real-time collaboration** / live merge | ❌ | ❌ | ✅ |
@@ -177,7 +177,7 @@ MindSpark detects how it's running and picks a storage backend automatically (th
 | Mode | Example URL | How to run | Auth | Storage | Collaboration | Cost |
 |---|---|---|---|---|:---:|---|
 | **Local** | `http://localhost:3000` | `node server.js` | None - single user | SQLite on disk | ❌ | Your server |
-| **Static Pages (PAT-only)** | `https://prasadpatil25.github.io/MindSpark/` (`https://<you>.github.io/MindSpark/` for forks) | Host `public/` on GitHub Pages (or any static host) | GitHub PAT (`repo` scope) | User's own private `mindspark-maps` repo | ❌ (no OAuth, no `#shared=`, no live) | **$0** |
+| **Static Pages (token-only)** | `https://prasadpatil25.github.io/MindSpark/` (`https://<you>.github.io/MindSpark/` for forks) | Host `public/` on GitHub Pages (or any static host) | GitHub fine-grained token, or a Gitea/Forgejo token | User's own private `mindspark-maps` repo | ❌ (no OAuth, no `#shared=`, no live) | **$0** |
 | **Worker (full)** | `https://mindspark.githubpage.workers.dev` | `public/` on Cloudflare Workers **+** the `worker/` collab worker | GitHub OAuth or PAT | User's GitHub repo + shared rooms in the worker | ✅ | **$0** on CF free tier |
 
 ### Static Pages deployment (PAT-only) - $0 forever
@@ -187,7 +187,36 @@ Pure browser app, talks directly to the GitHub API. Each visitor stores their ow
 - **GitHub Pages** - the repo ships a workflow at [`.github/workflows/static.yml`](.github/workflows/static.yml) that publishes `public/` on every push to `main`. Live at `https://prasadpatil25.github.io/MindSpark/` - forks automatically get `https://<you>.github.io/MindSpark/`. First enable **Settings → Pages → Source: GitHub Actions** then **Settings → Actions → General → Workflow permissions: Read and write** - otherwise `actions/configure-pages@v5` fails with `Get Pages site failed / Resource not accessible by integration`.
 - **Cloudflare Pages / Netlify / Vercel** - point any static host at `public/`. No build command, output directory `public`. Any `*.github.io` host stays PAT-only; non-`github.io` static hosts behave the same unless you point `GH_OAUTH` at your own worker.
 
-**User flow (per visitor):** click *Create a personal access token on GitHub →*, generate a `repo`-scoped token, paste it in, and sign in. On first sign-in MindSpark creates a **private** `mindspark-maps` repo and commits a small JSON file per save. The token is kept only in `localStorage` and sent only to `api.github.com`. Revoke at <https://github.com/settings/tokens>.
+**User flow (per visitor):** create a **private** `mindspark-maps` repo, then a [fine-grained token](https://github.com/settings/personal-access-tokens/new) limited to that one repo with `Contents: Read and write`, paste it in, and sign in. Every save commits a small JSON file. Revoke at <https://github.com/settings/personal-access-tokens>.
+
+#### Git hosts: GitHub, Gitea and Forgejo
+
+The login screen has a host picker. Gitea and Forgejo (Codeberg included) share one adapter, because Gitea mirrors GitHub's contents API and Forgejo is a Gitea fork - same `/contents/{path}` shape, same base64 + `sha` writes. See `FORGES` in `public/app.js`; the rule is that a per-host difference lives in that descriptor, never as an `if` inside `CloudStore`, so index reconciliation and tombstones stay host-agnostic. `test/forge-adapters.test.mjs` enforces both halves of that.
+
+| | GitHub | Gitea / Forgejo |
+|---|---|---|
+| Sign-in | fine-grained token, or OAuth on the Worker deploy | access token, or OAuth (PKCE) from any deploy |
+| Token scope | can be limited to the one repo | **account-wide** - no per-repo scoping exists |
+| Repo creation | fine-grained tokens can't create repos, so you make it first | `write:repository` creates it for you - one step fewer |
+| Version history | ✅ commits | ✅ commits |
+| Live collaboration / `#shared=` | ✅ on the Worker deploy | ❌ not yet - the collab worker's identity is GitHub-only |
+
+**Self-hosted instances need one extra step.** `connect-src` is a fixed allowlist and can't learn a new origin at runtime, so only `codeberg.org` and `gitea.com` work out of the box. For your own instance, add its origin to the three CSP copies (`public/index.html`, `public/_headers`, `server.js`) and redeploy - the app checks this *before* it makes a request and tells you exactly what's missing rather than failing as an opaque network error.
+
+#### OAuth
+
+The two hosts get there by different routes, because GitHub OAuth Apps have no PKCE support:
+
+- **GitHub** - authorization code with a client *secret*, so the exchange has to happen server-side. That is what `worker/oauth-worker.js` is for, and why the button only appears on the Worker deploy.
+- **Gitea / Forgejo** - authorization code with **PKCE and a public client**: no secret, so the whole exchange runs in the browser and works from a purely static deploy, GitHub Pages included. `public/oauth-callback.html` is the redirect target; it never sees a token, only the one-time code, which it posts to the opener (the only window holding the verifier).
+
+Because nobody can pre-register an OAuth app on *your* server, Gitea/Forgejo sign-in asks for a client ID once, remembered per instance. To create one: **Settings → Applications → Create a new OAuth2 application** on your instance, set the redirect URI to the exact string the login screen shows you (`…/oauth-callback.html`), and **leave "Confidential Client" unchecked**.
+
+One instance-side setting is required: the token exchange is a cross-origin POST, so `[cors] ENABLED = true` must be set in `app.ini`. Codeberg has had this on [since February 2024](https://codeberg.org/Codeberg/Community/issues/1379); self-hosted instances default to off. If it isn't enabled, MindSpark says exactly that and opens the access-token flow instead, which needs no instance configuration at all.
+
+A classic `repo`-scoped token still works and skips the repo-creation step (fine-grained tokens can't create repositories), but `repo` grants read/write to **every** private repository on the account - so a token that leaked would reach all of them, not just the maps. The login screen offers it as a labelled fallback, not the default.
+
+**On keeping the token in the browser:** it lives in `localStorage`, so anything that manages to run script on the origin can read it. Two things narrow that: the app loads no third-party scripts, and ships a Content-Security-Policy (`<meta>` in `public/index.html`, headers in `public/_headers` and `server.js`, kept in sync by `test/csp.test.mjs`) whose `script-src` names no external host and whose `connect-src` is an allowlist - so there is no origin to post a stolen token to. Scoping the token to one repo is what bounds the damage if both fail. Moving the token behind a server-side proxy would stop it being *stolen*, but not stop injected script *using* it, and it would cost the "no backend, no server in between" property the static mode exists for.
 
 ### Worker deployment (full - OAuth + live collaboration)
 
@@ -313,4 +342,3 @@ Contributions welcome (see the issue templates under **New issue**). Ideas on th
 ## License
 
 MIT - do anything you want with it. No restrictions.
-

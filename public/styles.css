@@ -2387,12 +2387,23 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
     display:flex; align-items:center; justify-content:center;
     background:var(--paper);
     font-family:var(--sans);
+    padding:20px; box-sizing:border-box;
   }
   .login-card{
     background:var(--node-bg, #fff); color:var(--ink);
     border-radius:16px; box-shadow:0 22px 70px rgba(0,0,0,.25), 0 1px 3px rgba(0,0,0,.06);
     padding:32px 36px; width:520px; max-width:92vw;
     border:1px solid var(--chrome-edge);
+    /* Never taller than the window: the card scrolls inside itself instead of
+       pushing the sign-in button off-screen where it cannot be reached. The
+       collapsed <details> below keep it short enough that this rarely engages.
+
+       Sized against the overlay (100% of a padded, inset:0 flex parent), NOT
+       against 100vh. The app scales its whole UI at small viewports - at 0.8x a
+       600px window is 750 CSS px of usable space, so a vh-based cap clips the
+       card several hundred pixels short of the room it actually has. */
+    max-height:100%;
+    overflow-y:auto; overscroll-behavior:contain;
   }
   .login-brand{display:flex; align-items:center; gap:10px; margin-bottom:18px}
   .login-brand .mark{flex:0 0 auto; filter:drop-shadow(0 2px 6px rgba(224,97,58,.3))}
@@ -2451,6 +2462,39 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   .login-error{
     color:#c5392a; font-size:13px; margin-top:8px; min-height:16px; line-height:1.4;
   }
+  /* Each host offers two sign-in methods. The one that needs no setup leads;
+     the other collapses, so the card stays short enough to fit on a laptop
+     window. showLoginOverlay() opens the token method automatically whenever
+     OAuth isn't usable, so nobody lands on a card with nothing actionable. */
+  .login-token{margin-top:14px; border-top:1px solid var(--chrome-edge); padding-top:12px}
+  .login-token > summary{
+    cursor:pointer; list-style:none; color:var(--accent); font-size:13.5px; font-weight:600; padding:2px 0;
+  }
+  .login-token > summary::-webkit-details-marker{display:none}
+  .login-token > summary::before{content:'▸ '; display:inline-block; transition:transform .15s}
+  .login-token[open] > summary::before{content:'▾ '}
+  .login-token > summary:hover{text-decoration:underline}
+  .login-token .login-steps{margin-top:12px}
+  .pane-label{display:block; font-size:14px; color:var(--ink); margin:16px 0 6px; font-weight:500}
+
+  /* Forge picker - GitHub vs Gitea/Forgejo. A segmented control rather than a
+     <select> so both options are visible: users arriving from the "does this
+     work with my Forgejo?" thread need to see the answer without opening a menu. */
+  .forge-tabs{display:flex; gap:4px; margin:16px 0 4px; padding:4px; border-radius:10px; background:var(--paper-2)}
+  .forge-tab{
+    flex:1; padding:8px 10px; border:none; border-radius:7px; cursor:pointer;
+    background:transparent; color:var(--ink-soft); font-family:inherit; font-size:13.5px; font-weight:600;
+  }
+  .forge-tab:hover{color:var(--ink)}
+  .forge-tab.is-on{background:var(--paper); color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.10)}
+  .instance-input{
+    width:100%; box-sizing:border-box; padding:10px 12px; margin-bottom:2px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:13px;
+    border:1.5px solid var(--line); border-radius:8px;
+    background:var(--paper); color:var(--ink); outline:none;
+  }
+  .instance-input:focus{border-color:var(--accent); background:var(--node-bg, #fff)}
+
   /* Classic-token fallback tucked inside step 2 - present but not the default path. */
   .login-fallback{margin-top:8px}
   .login-fallback summary{cursor:pointer; color:var(--ink-soft); font-size:12.5px}
@@ -2472,6 +2516,15 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
     color:var(--ink); height:32px;
   }
   .user-pill img{width:24px; height:24px; border-radius:50%; background:var(--paper-2)}
+  /* Shown instead of the avatar when the image can't load. A self-hosted Gitea
+     or Forgejo serves avatars from its own origin, which img-src cannot know in
+     advance, so for those users this is the normal state - not an error state. */
+  .user-pill .user-initial{
+    width:24px; height:24px; border-radius:50%; padding:0;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--accent); color:#fff; font-size:12px; font-weight:700; flex:0 0 auto;
+  }
+  .statusbar .user-pill .user-initial{width:20px; height:20px; font-size:11px}
   .user-pill span{padding:0 4px}
   .user-pill button{
     background:transparent; border:none; color:var(--ink-soft);

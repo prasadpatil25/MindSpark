@@ -2,9 +2,10 @@
    MindSpark - pluggable storage.
    - ServerStore: when running with `node server.js` locally (SQLite)
    - CloudStore : when deployed as static files (GitHub Pages, CF Pages,
-                  Netlify, etc.). User logs in with a GitHub PAT and we
+                  Netlify, etc.). User logs in with an access token for a git
+                  forge - GitHub, or Gitea/Forgejo (Codeberg included) - and we
                   store each map as a JSON file inside their own private
-                  `mindspark-maps` repo. No backend required.
+                  `mindspark-maps` repo. See FORGES. No backend required.
    `initStore()` probes /healthz, then picks one.
    ============================================================ */
 
@@ -49,12 +50,149 @@ const ServerStore = {
   async version(id, ref){ try{ return await this._j('/api/maps/'+id+'/versions/'+ref); }catch(e){ return null; } }
 };
 
+/* ------------------------------------------------------------
+   Forge registry - which git host CloudStore talks to.
+
+   Gitea deliberately mirrors GitHub's contents API and Forgejo is a Gitea
+   fork, so ONE descriptor covers both of those: same `/repos/{owner}/{repo}/
+   contents/{path}` shape, same base64 + `sha` write/delete semantics, same
+   `Authorization: token <t>`. What genuinely differs is captured below.
+
+   The rule that keeps this from rotting: a difference belongs in a field or
+   method HERE, never as an `if(forge.id==='github')` inside CloudStore. The
+   valuable part of CloudStore - merge-on-write index reconciliation,
+   tombstones, orphan recovery, the local backup cache - is provider-agnostic
+   and must stay that way, because that is the code that loses maps if it
+   grows a per-forge branch nobody tests.
+
+   `selfHosted:true` means the API origin comes from the user, which collides
+   with the Content-Security-Policy: connect-src is a fixed allowlist and
+   cannot learn a new origin at runtime. Public instances are allowlisted in
+   index.html / _headers / server.js; anyone running their own instance has to
+   add its origin to their own deploy. `cspAllowsInstance()` below checks that
+   BEFORE the request, so a self-hoster gets told what to add instead of an
+   opaque "Failed to fetch".
+   ------------------------------------------------------------ */
+const FORGES = {
+  github: {
+    id:'github', label:'GitHub', selfHosted:false,
+    apiBase(){ return 'https://api.github.com'; },
+    webBase(){ return 'https://github.com'; },
+    headers(t){ return {Authorization:`token ${t}`,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}; },
+    createRepoPath:'/user/repos',
+    // GitHub's PUT both creates and updates; sha is optional and means "update".
+    createFileMethod:'PUT',
+    commitsLimitParam:'per_page',
+    // GitHub's fine-grained tokens can't create repositories (that needs
+    // account-level Administration), which is why the UI asks for the repo first.
+    canCreateRepo(token){ return !/^github_pat_/.test(token||''); },
+    newRepoUrl(){ return 'https://github.com/new?name=mindspark-maps&description=My+MindSpark+mind+maps'; },
+    newTokenUrl(){ return 'https://github.com/settings/personal-access-tokens/new'; },
+    tokenPlaceholder:'github_pat_\u2026'
+  },
+  gitea: {
+    // Covers Gitea AND Forgejo (Codeberg included) - the API surface MindSpark
+    // uses is identical between them.
+    id:'gitea', label:'Gitea / Forgejo', selfHosted:true,
+    apiBase(instance){ return String(instance||'').replace(/\/+$/,'') + '/api/v1'; },
+    webBase(instance){ return String(instance||'').replace(/\/+$/,''); },
+    headers(t){ return {Authorization:`token ${t}`,Accept:'application/json'}; },
+    createRepoPath:'/user/repos',
+    // The divergence that matters most: Gitea and Forgejo split the contents
+    // API across two methods - POST creates (and must NOT carry a sha), PUT
+    // updates and REQUIRES one. GitHub's PUT does both. A sha-less PUT here
+    // fails every first write: each new map, and the very first _index.json.
+    createFileMethod:'POST',
+    // Gitea pages with `limit`, not GitHub's `per_page`; sending the wrong one
+    // is silently ignored and you get the default page size.
+    commitsLimitParam:'limit',
+    // Gitea tokens carry `write:repository`, which DOES allow creating a repo
+    // under your own account - so unlike GitHub there is no repo-first step.
+    canCreateRepo(){ return true; },
+    newRepoUrl(instance){ return this.webBase(instance) + '/repo/create'; },
+    newTokenUrl(instance){ return this.webBase(instance) + '/user/settings/applications'; },
+    tokenPlaceholder:'\u2026',
+    // Gitea and Forgejo support OAuth2 PUBLIC clients with PKCE - no client
+    // secret, so unlike GitHub this needs no server-side exchange and works
+    // from a purely static deploy. What it does need is an OAuth application
+    // registered on the instance (nobody can pre-register on someone else's
+    // server), hence the client-id field in the UI.
+    oauth:{
+      pkce:true,
+      authorizeUrl(instance){ return FORGES.gitea.webBase(instance) + '/login/oauth/authorize'; },
+      tokenUrl(instance){ return FORGES.gitea.webBase(instance) + '/login/oauth/access_token'; },
+      newAppUrl(instance){ return FORGES.gitea.webBase(instance) + '/user/settings/applications'; },
+      scope:'write:repository read:user'
+    }
+  }
+};
+// ---- PKCE (RFC 7636) -------------------------------------------------------
+// The browser can finish an OAuth exchange with no client secret by proving it
+// started the flow: it sends SHA256(verifier) up front and the raw verifier at
+// redemption. An intercepted authorization code is then useless on its own.
+function pkceVerifier(){
+  // 32 random bytes -> 43 base64url chars, the minimum length the RFC allows.
+  const b=new Uint8Array(32); crypto.getRandomValues(b);
+  return b64urlFromBytes(b);
+}
+function b64urlFromBytes(bytes){
+  let s=''; for(let i=0;i<bytes.length;i++) s+=String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+async function pkceChallenge(verifier){
+  const digest=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return b64urlFromBytes(new Uint8Array(digest));
+}
+// The redirect URI must be byte-identical in the authorize request, the token
+// request and the app registration on the instance - so it is derived in exactly
+// one place and shown to the user verbatim for registration.
+function oauthRedirectUri(){
+  return new URL('oauth-callback.html', location.href).href;
+}
+
+const DEFAULT_FORGE = 'github';
+function forgeById(id){ return FORGES[id] || FORGES[DEFAULT_FORGE]; }
+// Name of the forge this session is signed in to, for UI copy. Falls back to
+// the neutral word rather than lying about GitHub when nothing is signed in.
+function forgeName(){
+  try{ return (MODE==='cloud' && CloudStore.forge) ? CloudStore.forge.label : 'your git host'; }
+  catch(e){ return 'your git host'; }
+}
+
+// Parse our own connect-src allowlist so a self-hosted instance can be checked
+// before we try to reach it. CSP is frozen at parse time, so an origin that is
+// missing here will fail as an untraceable network error - this turns that into
+// a message naming the three files to edit. Returns true when we can't tell
+// (server mode sends the policy as a header and has no meta tag to read).
+function cspConnectSrc(){
+  const el=document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+  if(!el) return null;
+  const m=(el.getAttribute('content')||'').match(/connect-src ([^;]+)/);
+  return m ? m[1].trim().split(/\s+/) : null;
+}
+function cspAllowsInstance(instance){
+  let origin; try{ origin=new URL(instance).origin; }catch(e){ return false; }
+  const list=cspConnectSrc();
+  if(!list) return true;                       // header-only deploy: can't tell, let it try
+  return list.includes(origin) || list.includes('*');
+}
+
 const CloudStore = {
   token:null, user:null, repo:'mindspark-maps',
   shas:{}, indexSha:null, index:[],
   deleted:[], deletedSha:null,
+  // Which forge this session is signed in to, and (self-hosted only) where it
+  // lives. Both are restored from localStorage by tryInit() before any request
+  // is made, because _apiBase() is meaningless without them.
+  forge:FORGES[DEFAULT_FORGE], instance:null,
 
-  _headers(t=this.token){ return {Authorization:`token ${t}`,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}; },
+  _apiBase(){ return this.forge.apiBase(this.instance); },
+  _api(path){ return this._apiBase() + path; },
+  // Per-forge token storage. GitHub deliberately keeps its original key so
+  // every existing session survives this change without a migration step.
+  _tokenKey(f=this.forge){ return f.id==='github' ? 'mindspark:gh:token' : 'mindspark:'+f.id+':token'; },
+
+  _headers(t=this.token){ return this.forge.headers(t); },
   // Base64 helpers safe for UTF-8 (atob/btoa are Latin-1 only)
   _encode(s){ return btoa(unescape(encodeURIComponent(s))); },
   _decode(s){ return decodeURIComponent(escape(atob(s.replace(/\n/g,'')))); },
@@ -64,7 +202,7 @@ const CloudStore = {
   // is full, the local map-backup cache (mindspark:backup:*) is the most
   // likely cause - it's written on every save/load with no cap or expiry, and
   // never cleared even for deleted maps. It's also just a recovery cache: the
-  // authoritative copy of every map already lives on GitHub, so clearing it
+  // authoritative copy of every map already lives on the forge, so clearing it
   // to make room for something that actually blocks sign-in is always safe.
   // Returns true/false rather than throwing, so callers can show one clear,
   // actionable message instead of a raw QuotaExceededError.
@@ -82,13 +220,43 @@ const CloudStore = {
     }
   },
 
+  // Point this store at a forge before touching the network. Kept separate from
+  // login() so tryInit() restores a saved session through the same code path a
+  // fresh sign-in uses - a restored session can then never end up aimed at a
+  // different origin than the one that issued the token it is about to send.
+  _useForge(forgeId, instance){
+    this.forge = forgeById(forgeId);
+    this.instance = this.forge.selfHosted ? String(instance||'').trim().replace(/\/+$/,'') : null;
+    if(this.forge.selfHosted){
+      if(!this.instance) throw new Error('A '+this.forge.label+' instance URL is required.');
+      let u; try{ u=new URL(this.instance); }catch(e){ throw new Error('That does not look like a URL. Use the full address, e.g. https://codeberg.org'); }
+      // http: would send the token in clear text; the CSP forbids it anyway.
+      if(u.protocol!=='https:') throw new Error('The instance URL must start with https:// - a token must never travel over plain http.');
+    }
+  },
   async _verify(t){
-    const r=await fetch('https://api.github.com/user',{headers:this._headers(t)});
-    if(!r.ok) throw new Error('Invalid GitHub token (HTTP '+r.status+')');
-    return r.json();
+    if(this.forge.selfHosted && !cspAllowsInstance(this.instance)){
+      throw new Error(new URL(this.instance).origin+' is not in this deployment\'s Content-Security-Policy, so the browser blocks every request to it before it is sent. '
+        + 'Add that origin to connect-src in public/index.html, public/_headers and server.js, then redeploy.');
+    }
+    let r;
+    try{ r=await fetch(this._api('/user'),{headers:this._headers(t)}); }
+    catch(e){
+      throw new Error('Could not reach '+(this.instance||this.forge.label)+'. Check the address, that the instance is reachable from this browser, and that it allows cross-origin API requests from '+location.origin+'.');
+    }
+    if(!r.ok) throw new Error('Invalid '+this.forge.label+' token (HTTP '+r.status+')');
+    const u=await r.json();
+    // GitHub and Gitea both answer {id, login, avatar_url}; assert the shape so
+    // a future forge fails loudly here rather than half-working later.
+    if(!u || u.id==null || !u.login) throw new Error('That token authenticated, but '+this.forge.label+' returned no usable account identity.');
+    return u;
   },
   async tryInit(){
-    const t=localStorage.getItem('mindspark:gh:token');
+    const forgeId=localStorage.getItem('mindspark:forge') || DEFAULT_FORGE;
+    const instance=localStorage.getItem('mindspark:forge:instance') || '';
+    try{ this._useForge(forgeId, instance); }
+    catch(e){ console.warn('Saved forge session unusable:', e.message); return false; }
+    const t=localStorage.getItem(this._tokenKey());
     if(!t) return false;
     try{
       this.user=await this._verify(t);
@@ -98,60 +266,73 @@ const CloudStore = {
       await this._loadDeleted();
       return true;
     }catch(e){
-      console.warn('Stored GitHub token rejected:', e.message);
-      localStorage.removeItem('mindspark:gh:token');
+      console.warn('Stored '+this.forge.label+' token rejected:', e.message);
+      localStorage.removeItem(this._tokenKey());
       return false;
     }
   },
-  async login(token){
+  async login(token, forgeId, instance){
+    this._useForge(forgeId || DEFAULT_FORGE, instance);
     this.user=await this._verify(token);
     this.token=token;
-    if(!this._setItemSafe('mindspark:gh:token', token)){
+    if(!this._setItemSafe(this._tokenKey(), token)){
       throw new Error('Signed in, but could not save your session locally - your browser\'s storage is full. Try clearing site data for this page and signing in again.');
     }
+    // Recorded only after the token itself is stored, so a half-written session
+    // can never point tryInit() at a forge whose token failed to persist.
+    this._setItemSafe('mindspark:forge', this.forge.id);
+    if(this.instance) this._setItemSafe('mindspark:forge:instance', this.instance);
+    else localStorage.removeItem('mindspark:forge:instance');
     await this._ensureRepo();
     await this._loadIndex();
     await this._loadDeleted();
     return this.user;
   },
   logout(){
+    const key=this._tokenKey();
     this.token=null; this.user=null;
     this.shas={}; this.indexSha=null; this.index=[];
     this.deleted=[]; this.deletedSha=null;
-    localStorage.removeItem('mindspark:gh:token');
+    localStorage.removeItem(key);
+    localStorage.removeItem('mindspark:forge');
+    localStorage.removeItem('mindspark:forge:instance');
   },
-  // A fine-grained token scoped to `mindspark-maps` (the recommended login) can
-  // read and write that one repo but CANNOT create it - repo creation needs
-  // account-level Administration, which is exactly the breadth we're avoiding.
-  // So a 404 here is only fatal for fine-grained tokens: we still try to create
-  // (classic `repo` tokens succeed, and skipping step 1 is the whole reason that
-  // fallback exists), and on failure say which of the two the user is holding
-  // instead of blaming the scope generically.
+  // Repo creation is the one place the forges genuinely diverge in capability.
+  // A GitHub fine-grained token scoped to `mindspark-maps` can read and write
+  // that repo but CANNOT create it (that needs account-level Administration -
+  // exactly the breadth we're avoiding), which is why the GitHub login asks for
+  // the repo first. A Gitea/Forgejo token with `write:repository` creates it
+  // happily, so those users get the one-step flow. Either way we still attempt
+  // the create and report which case the user is actually in.
   async _ensureRepo(){
-    const r=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}`,{headers:this._headers()});
+    const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}`,{headers:this._headers()});
     if(r.status===404){
-      const cr=await fetch('https://api.github.com/user/repos',{
+      const cr=await fetch(this._api(this.forge.createRepoPath),{
         method:'POST',
         headers:{...this._headers(),'Content-Type':'application/json'},
         body:JSON.stringify({name:this.repo,description:'My MindSpark mind maps',private:true,auto_init:true})
       });
       if(!cr.ok){
         const t=await cr.text();
-        const fineGrained=/^github_pat_/.test(this.token||'');
-        throw new Error(fineGrained
-          ? 'Signed in, but there is no `'+this.repo+'` repository yet, and a fine-grained token can\'t create one. Create it on GitHub (private, with a README), then sign in again.'
-          : 'Could not create '+this.repo+' (HTTP '+cr.status+'). A classic token needs the `repo` scope. '+t.slice(0,140));
+        throw new Error(!this.forge.canCreateRepo(this.token)
+          ? 'Signed in, but there is no `'+this.repo+'` repository yet, and a fine-grained token can\'t create one. Create it on '+this.forge.label+' (private, with a README), then sign in again.'
+          : 'Could not create '+this.repo+' on '+this.forge.label+' (HTTP '+cr.status+'). '
+            + (this.forge.id==='github' ? 'A classic token needs the `repo` scope. ' : 'The token needs the `write:repository` scope. ')
+            + t.slice(0,140));
       }
       await new Promise(res=>setTimeout(res,800));
     } else if(r.status===403){
-      throw new Error('Token was accepted but can\'t reach `'+this.repo+'`. If it is fine-grained, check it lists that repository under Repository access and has Contents: Read and write.');
+      throw new Error('Token was accepted but can\'t reach `'+this.repo+'` on '+this.forge.label+'. '
+        + (this.forge.id==='github'
+            ? 'If it is fine-grained, check it lists that repository under Repository access and has Contents: Read and write.'
+            : 'Check the token has the `write:repository` scope.'));
     } else if(!r.ok){
       throw new Error('Could not access repo (HTTP '+r.status+')');
     }
   },
   // Raw read of _index.json (updates indexSha). Returns [] on 404 or parse error.
   async _fetchIndexRaw(){
-    const r=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}/contents/_index.json`,{headers:this._headers()});
+    const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/_index.json`,{headers:this._headers()});
     if(r.status===404){ this.indexSha=null; return []; }
     if(!r.ok) throw new Error('Could not load index (HTTP '+r.status+')');
     const data=await r.json(); this.indexSha=data.sha;
@@ -162,7 +343,7 @@ const CloudStore = {
   // map file (e.g. a delete whose file-removal failed) is never resurrected.
   async _loadDeleted(){
     try{
-      const r=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}/contents/_deleted.json`,{headers:this._headers()});
+      const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/_deleted.json`,{headers:this._headers()});
       if(!r.ok){ this.deleted=[]; this.deletedSha=null; return; }
       const data=await r.json(); this.deletedSha=data.sha;
       const a=JSON.parse(this._decode(data.content)); this.deleted=Array.isArray(a)?a:[];
@@ -173,7 +354,7 @@ const CloudStore = {
   },
   // List map ids present in the maps/ folder.
   async _listMapFiles(){
-    const r=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}/contents/maps`,{headers:this._headers()});
+    const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/maps`,{headers:this._headers()});
     if(r.status===404) return [];
     if(!r.ok) throw new Error('Could not list maps (HTTP '+r.status+')');
     const arr=await r.json();
@@ -189,7 +370,7 @@ const CloudStore = {
     const out=[];
     for(const id of ids){
       try{
-        const r=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}/contents/maps/${id}.json`,{headers:this._headers()});
+        const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/maps/${id}.json`,{headers:this._headers()});
         if(!r.ok) continue;
         const data=await r.json(); this.shas[id]=data.sha;
         const m=JSON.parse(this._decode(data.content));
@@ -210,35 +391,42 @@ const CloudStore = {
     if(n) await this._saveIndex();
     return n;
   },
+  // Create vs update is the one place the two forges disagree on METHOD, not
+  // just on payload - see FORGES.gitea.createFileMethod. `sha` is what tells
+  // the two apart here: absent means we believe the file is new.
+  //
+  // The recovery path deliberately re-derives that belief from the server
+  // rather than trusting our cached sha, because both directions happen in
+  // practice: a map written from another device makes our "create" a conflict,
+  // and a deleted-then-resaved map makes our "update" a 404.
   async _writeFile(path, content, sha){
-    const body={message:`MindSpark: update ${path}`, content:this._encode(content)};
-    if(sha) body.sha=sha;
-    const r=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}/contents/${path}`,{
-      method:'PUT', headers:{...this._headers(),'Content-Type':'application/json'},
-      body:JSON.stringify(body)
+    const url=`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/${path}`;
+    const encoded=this._encode(content);
+    const send=(method, extra)=>fetch(url,{
+      method, headers:{...this._headers(),'Content-Type':'application/json'},
+      body:JSON.stringify({message:`MindSpark: update ${path}`, content:encoded, ...extra})
     });
-    if(!r.ok){
-      // If we got a 409 sha conflict, try once more after refreshing the sha
-      if(r.status===409 || r.status===422){
-        const gh=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}/contents/${path}`,{headers:this._headers()});
-        if(gh.ok){
-          const d=await gh.json();
-          body.sha=d.sha;
-          const retry=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}/contents/${path}`,{
-            method:'PUT', headers:{...this._headers(),'Content-Type':'application/json'},
-            body:JSON.stringify(body)
-          });
-          if(retry.ok){ const dat=await retry.json(); return dat.content.sha; }
-        }
+    // A create must not carry a sha at all: Forgejo's CreateFileOptions has no
+    // such property and rejects the request rather than ignoring it.
+    let r = sha ? await send('PUT',{sha}) : await send(this.forge.createFileMethod,{});
+    if(!r.ok && (r.status===409 || r.status===422 || r.status===404)){
+      const cur=await fetch(url,{headers:this._headers()});
+      if(cur.status===404){
+        r = await send(this.forge.createFileMethod,{});     // it really is new
+      } else if(cur.ok){
+        const d=await cur.json();
+        r = await send('PUT',{sha:d.sha});                  // it exists - update it
       }
+    }
+    if(!r.ok){
       const t=await r.text();
-      throw new Error('Write '+path+' failed (HTTP '+r.status+') '+t.slice(0,140));
+      throw new Error('Write '+path+' failed on '+this.forge.label+' (HTTP '+r.status+') '+t.slice(0,140));
     }
     const data=await r.json();
     return data.content.sha;
   },
   async _deleteFile(path, sha){
-    const url=`https://api.github.com/repos/${this.user.login}/${this.repo}/contents/${path}`;
+    const url=`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/${path}`;
     const del=(s)=>fetch(url,{method:'DELETE', headers:{...this._headers(),'Content-Type':'application/json'},
       body:JSON.stringify({message:`MindSpark: delete ${path}`, sha:s})});
     let r=await del(sha);
@@ -267,7 +455,7 @@ const CloudStore = {
   async list(){ return this.index.slice(); },
   async get(id){
     try{
-      const r=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}/contents/maps/${id}.json`,{headers:this._headers()});
+      const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/maps/${id}.json`,{headers:this._headers()});
       if(r.status===404){ const b=this._localBackup(id); if(b) return b; return null; }
       if(!r.ok) throw new Error('Could not load map (HTTP '+r.status+')');
       const data=await r.json();
@@ -335,10 +523,10 @@ const CloudStore = {
     try{ await this._saveDeleted(); }catch(e){ console.warn('tombstone save:', e.message); }
     await this._saveIndex();
   },
-  // Version history = the GitHub commit history of the map's JSON file.
+  // Version history = the forge's commit history for the map's JSON file.
   async history(id){
     try{
-      const r=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}/commits?path=maps/${id}.json&per_page=50`,{headers:this._headers()});
+      const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/commits?path=maps/${id}.json&${this.forge.commitsLimitParam}=50`,{headers:this._headers()});
       if(!r.ok) return [];
       const commits=await r.json();
       return commits.map(c=>({
@@ -350,7 +538,7 @@ const CloudStore = {
   },
   async version(id, ref){
     try{
-      const r=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}/contents/maps/${id}.json?ref=${encodeURIComponent(ref)}`,{headers:this._headers()});
+      const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/maps/${id}.json?ref=${encodeURIComponent(ref)}`,{headers:this._headers()});
       if(!r.ok) return null;
       const data=await r.json();
       const inlined = data.content && data.content.trim() && data.encoding!=='none';
@@ -4314,7 +4502,7 @@ async function searchAllMaps(query){
   if(!idx.length) return [];
   const results=[];
   const CONCURRENCY = 6;
-  // Process in batches to avoid firing 50+ parallel GitHub requests (rate limit)
+  // Process in batches to avoid firing 50+ parallel forge API requests (rate limit)
   for(let i=0;i<idx.length && results.length<200;i+=CONCURRENCY){
     const batch = idx.slice(i, i+CONCURRENCY);
     const maps = await Promise.all(batch.map(async meta=>{
@@ -6293,7 +6481,7 @@ function scheduleSave(){
   _pendingSaveMap = target;    // fires must NOT redirect the write onto another map
   $('#savePill').classList.add('saving'); $('#saveText').textContent='Saving…';
   clearTimeout(saveTimer);
-  // Cloud mode talks to GitHub - debounce longer to stay well under 5000 req/h
+  // Cloud mode talks to a forge API - debounce longer to stay well under GitHub's 5000 req/h
   const delay = (MODE==='cloud') ? 1500 : 600;
   saveTimer=setTimeout(async()=>{
     saveTimer=null;
@@ -6306,7 +6494,7 @@ function scheduleSave(){
       // The map was copied to local storage before the network write, so the
       // edit isn't lost. Tell the user plainly and retry once after a short wait.
       toast((MODE==='cloud')
-        ? 'Couldn’t sync to GitHub just now - your changes are saved on this device and will retry.'
+        ? 'Couldn’t sync to '+forgeName()+' just now - your changes are saved on this device and will retry.'
         : 'Couldn’t reach the server - your changes are saved on this device and will retry.');
       setTimeout(async()=>{
         try{ await Store.save(target); if(_pendingSaveMap===target) _pendingSaveMap=null; $('#savePill').classList.remove('saving'); $('#saveText').textContent='Saved'; }
@@ -6423,7 +6611,7 @@ async function showVersionHistory(){
   let versions=[];
   try{ versions=await Store.history(mapId); }catch(e){ versions=[]; }
   if(!versions || !versions.length){
-    list.innerHTML=`<div class="hist-status">No earlier versions yet.<br><span class="hist-sub">Versions are recorded each time the map changes${MODE==='cloud'?' (your GitHub commit history)':''}. Make an edit, then check back.</span></div>`;
+    list.innerHTML=`<div class="hist-status">No earlier versions yet.<br><span class="hist-sub">Versions are recorded each time the map changes${MODE==='cloud'?' (your '+forgeName()+' commit history)':''}. Make an edit, then check back.</span></div>`;
     return;
   }
   list.innerHTML = versions.map((v,i)=>`
@@ -12430,10 +12618,22 @@ function showUserPill(){
   const pill=$('#userPill'); if(!pill) return;
   pill.classList.remove('shared-pill'); pill.title='';
   pill.style.display='flex';
-  $('#userAvatar').src = CloudStore.user.avatar_url;
-  $('#userName').textContent = CloudStore.user.login;
+  // Avatar with an initials fallback. GitHub's avatar host is allowlisted, but a
+  // self-hosted Gitea/Forgejo serves avatars from the user's own origin, which
+  // img-src can't know ahead of time - so for those accounts the image is
+  // blocked every time and the fallback is the normal path, not an error path.
+  const av=$('#userAvatar'), ini=$('#userInitial');
+  const login=CloudStore.user.login||'';
+  if(ini) ini.textContent=(login.trim().charAt(0)||'?').toUpperCase();
+  const useInitial=()=>{ if(av) av.hidden=true; if(ini) ini.hidden=false; };
+  if(av){
+    av.onerror=useInitial;
+    if(CloudStore.user.avatar_url){ av.hidden=false; if(ini) ini.hidden=true; av.src=CloudStore.user.avatar_url; }
+    else useInitial();
+  } else useInitial();
+  $('#userName').textContent = login;
   $('#userSignOut').onclick = ()=>{
-    if(confirm('Sign out of MindSpark? Your maps stay safely in your GitHub repo.')){
+    if(confirm('Sign out of MindSpark? Your maps stay safely in your '+forgeName()+' repo.')){
       CloudStore.logout();
       location.reload();
     }
@@ -12462,8 +12662,8 @@ function collabAvailable(){ return MODE==='cloud' && oauthConfigured(); }
 // A cloud-backed #shared= link opened while signed out is parked here, then opened
 // in-place once sign-in completes (Overleaf-style: shared links require an account).
 let _pendingSharedLink = null;
-async function completeCloudLogin(token){
-  await CloudStore.login(token);
+async function completeCloudLogin(token, forgeId, instance){
+  await CloudStore.login(token, forgeId, instance);
   const ov=$('#loginOverlay'); if(ov) ov.style.display='none';
   showUserPill();
   await proceedBoot();
@@ -12496,6 +12696,120 @@ function startGithubLogin(){
   if(!pop && err) err.textContent = 'Popup blocked - allow popups for this site, or use a token below.';
 }
 
+// ============================================================
+// Gitea / Forgejo OAuth - authorization code + PKCE, entirely in the browser.
+//
+// Why this needs no worker (and GitHub's does): GitHub OAuth Apps have no PKCE
+// support, so their code->token exchange requires a client secret and therefore
+// a server. Gitea and Forgejo support public clients, where the secret is
+// replaced by proof that this browser started the flow. The trade-off is that
+// an OAuth application has to exist on the user's own instance, so the client id
+// is something they paste once - it is public by design, not a credential.
+// ============================================================
+const GITEA_OAUTH_STATE = 'mindspark:gitea:oauthstate';   // {state, verifier, instance, clientId}
+function giteaClientIdFor(instance){
+  try{ return JSON.parse(localStorage.getItem('mindspark:gitea:clients')||'{}')[instance] || ''; }
+  catch(e){ return ''; }
+}
+function rememberGiteaClientId(instance, clientId){
+  let m={}; try{ m=JSON.parse(localStorage.getItem('mindspark:gitea:clients')||'{}'); }catch(e){}
+  m[instance]=clientId;
+  CloudStore._setItemSafe('mindspark:gitea:clients', JSON.stringify(m));
+}
+
+async function startGiteaLogin(instance, clientId, errEl){
+  // Any OAuth failure reveals the token flow: it needs no instance
+  // configuration, so it is the way out of every error this path can produce.
+  const say=(m)=>{
+    if(errEl) errEl.textContent=m;
+    if(m){ const d=$('#giteaTokenDetails'); if(d) d.open=true; }
+  };
+  const base=String(instance||'').trim().replace(/\/+$/,'');
+  if(!/^https:\/\/.+/.test(base)) return say('Enter your instance URL first (https://…).');
+  if(!clientId) return say('Enter the client ID of the OAuth application you registered on your instance.');
+  if(!cspAllowsInstance(base)){
+    return say(new URL(base).origin+' is not in this deployment\'s Content-Security-Policy, so the token exchange would be blocked. '
+      + 'Add that origin to connect-src in public/index.html, public/_headers and server.js, then redeploy.');
+  }
+  const verifier=pkceVerifier();
+  const state=pkceVerifier();                       // same generator: 43 random base64url chars
+  const challenge=await pkceChallenge(verifier);
+  // Persisted rather than held in a closure: the popup can outlive a reload of
+  // the opener, and losing the verifier makes the returning code unusable.
+  if(!CloudStore._setItemSafe(GITEA_OAUTH_STATE, JSON.stringify({state, verifier, instance:base, clientId}))){
+    return say('Could not start sign-in - your browser\'s local storage is full. Clear site data and try again.');
+  }
+  rememberGiteaClientId(base, clientId);
+  const o=FORGES.gitea.oauth;
+  const url=o.authorizeUrl(base)
+    + '?client_id='             + encodeURIComponent(clientId)
+    + '&redirect_uri='          + encodeURIComponent(oauthRedirectUri())
+    + '&response_type=code'
+    + '&scope='                 + encodeURIComponent(o.scope)
+    + '&code_challenge_method=S256'
+    + '&code_challenge='        + encodeURIComponent(challenge)
+    + '&state='                 + encodeURIComponent(state);
+  const w=620,h=760, left=Math.max(0,(screen.width-w)/2), top=Math.max(0,(screen.height-h)/2);
+  const pop=window.open(url, 'mindspark_gitea_oauth', `width=${w},height=${h},left=${left},top=${top}`);
+  if(!pop) say('Popup blocked - allow popups for this site, or use an access token below.');
+  else say('');
+}
+
+// Redeem the authorization code. This is the step that needs CORS on the
+// instance: it is a cross-origin POST from the page. Gitea/Forgejo ship the
+// handler (upstream PR #28184) but gate it behind `[cors] ENABLED`, which is off
+// by default - so a network-level failure here almost always means that setting,
+// and saying so is far more useful than "Failed to fetch".
+async function finishGiteaLogin(code, state, errEl){
+  // Any OAuth failure reveals the token flow: it needs no instance
+  // configuration, so it is the way out of every error this path can produce.
+  const say=(m)=>{
+    if(errEl) errEl.textContent=m;
+    if(m){ const d=$('#giteaTokenDetails'); if(d) d.open=true; }
+  };
+  let saved=null;
+  try{ saved=JSON.parse(localStorage.getItem(GITEA_OAUTH_STATE)||'null'); }catch(e){}
+  localStorage.removeItem(GITEA_OAUTH_STATE);
+  if(!saved) return say('Sign-in could not be completed - the request this reply belongs to is gone. Try again.');
+  if(!state || state!==saved.state) return say('Sign-in could not be verified - please try again.');
+
+  let r;
+  try{
+    r=await fetch(FORGES.gitea.oauth.tokenUrl(saved.instance),{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        client_id: saved.clientId, code, grant_type:'authorization_code',
+        redirect_uri: oauthRedirectUri(), code_verifier: saved.verifier
+      })
+    });
+  }catch(e){
+    return say('The instance accepted the sign-in but refused the token exchange from this page. '
+      + 'That is almost always CORS: on Gitea/Forgejo set `[cors] ENABLED = true` (and list '+location.origin+' in ALLOW_DOMAIN) in app.ini, then retry. '
+      + 'An access token works without any instance configuration.');
+  }
+  if(!r.ok){
+    let d={}; try{ d=await r.json(); }catch(e){}
+    return say('Token exchange failed (HTTP '+r.status+')'+(d.error_description?': '+d.error_description:d.error?': '+d.error:'')+'.');
+  }
+  const d=await r.json();
+  if(!d || !d.access_token) return say('The instance returned no access token.');
+  try{ await completeCloudLogin(d.access_token, 'gitea', saved.instance); }
+  catch(e){ say(e.message || String(e)); }
+}
+
+// The PKCE popup lands on our OWN origin (public/oauth-callback.html) and posts
+// the code here. Accept only same-origin messages: unlike the GitHub worker
+// flow, no third party is ever a legitimate sender.
+window.addEventListener('message', (ev)=>{
+  if(ev.origin !== location.origin) return;
+  const d=ev.data;
+  if(!d || d.type !== 'mindspark-oauth-pkce') return;
+  const errEl=$('#giteaError');
+  if(d.error){ if(errEl) errEl.textContent='Sign-in failed: '+d.error; return; }
+  if(!d.code){ if(errEl) errEl.textContent='Sign-in returned no authorization code.'; return; }
+  finishGiteaLogin(d.code, d.state, errEl);
+});
+
 // Receive the token from the Worker popup. Validated by (a) message origin ===
 // the configured Worker origin and (b) a matching one-time state nonce.
 window.addEventListener('message', async (ev)=>{
@@ -12518,30 +12832,108 @@ function showLoginOverlay(opts){
   ov.style.display='flex';
   const note=$('#loginShareNote');
   if(note){
-    if(opts && opts.shared){ note.textContent='This map was shared with you. Sign in with GitHub to open it.'; note.style.display='block'; }
+    if(opts && opts.shared){ note.textContent='This map was shared with you. Sign in to open it.'; note.style.display='block'; }
     else { note.style.display='none'; }
   }
   const sign=$('#ghSignIn'), pat=$('#ghPat'), err=$('#ghError');
-  // OAuth button: only shown when an OAuth App + Worker are configured.
+  // OAuth button: only shown when an OAuth App + Worker are configured, and only
+  // on the GitHub tab - the worker does a GitHub-specific code->token exchange.
+  // Gitea/Forgejo support PKCE public clients (no secret, no worker), but that
+  // needs an OAuth app registered per instance, so it is token-only for now.
   const oauthBox=$('#loginOauth'), oauthBtn=$('#ghOauthBtn');
   if(oauthBox){
     if(oauthConfigured()){ oauthBox.style.display='block'; if(oauthBtn) oauthBtn.onclick=startGithubLogin; }
     else { oauthBox.style.display='none'; }
   }
-  const doLogin=async()=>{
-    const tok=(pat.value||'').trim();
-    if(!tok){ err.textContent='Paste your token first.'; return; }
-    err.textContent=''; sign.disabled=true; sign.textContent='Signing in…';
+
+  // ---- forge picker ----
+  const tabs=[...document.querySelectorAll('.forge-tab')];
+  const panes=[...document.querySelectorAll('.forge-pane')];
+  const inst=$('#giteaInstance'), gPat=$('#giteaPat'), gSign=$('#giteaSignIn'),
+        gErr=$('#giteaError'), gLink=$('#giteaTokenLink'),
+        gClient=$('#giteaClientId'), gOauth=$('#giteaOauthBtn'),
+        gRedirect=$('#giteaRedirect'),
+        ghDetails=$('#ghTokenDetails'), gDetails=$('#giteaTokenDetails');
+  // The exact string the user must register on their instance. Derived, never
+  // typed, because a one-character mismatch fails the exchange with a generic
+  // OAuth error that gives no hint where to look.
+  if(gRedirect) gRedirect.textContent = oauthRedirectUri();
+  // Collapse the token flow only when the other method is actually usable -
+  // otherwise the card would open with no sign-in control in sight.
+  if(ghDetails) ghDetails.open = !oauthConfigured();
+  // Remember the last forge used so a returning user whose token expired lands
+  // back on their own tab instead of GitHub's.
+  let active = localStorage.getItem('mindspark:forge') || 'github';
+  if(!FORGES[active]) active='github';
+  const selectForge=(id)=>{
+    active=id;
+    tabs.forEach(t=>{ const on=t.dataset.forge===id; t.classList.toggle('is-on',on); t.setAttribute('aria-selected', on?'true':'false'); });
+    panes.forEach(pn=>{ pn.hidden = pn.dataset.forgePane!==id; });
+    if(id==='github') pat && pat.focus(); else inst && inst.focus();
+  };
+  tabs.forEach(t=> t.onclick=()=>selectForge(t.dataset.forge));
+
+  // The token page lives on the user's own instance, so the link only becomes
+  // real once they've typed one.
+  if(inst){
+    const savedInstance=localStorage.getItem('mindspark:forge:instance');
+    if(savedInstance && !inst.value) inst.value=savedInstance;
+    const syncLink=()=>{
+      const base=(inst.value||'').trim().replace(/\/+$/,'');
+      if(gLink){
+        if(/^https:\/\/.+/.test(base)){ gLink.href=FORGES.gitea.newTokenUrl(base); gLink.removeAttribute('aria-disabled'); }
+        else { gLink.removeAttribute('href'); gLink.setAttribute('aria-disabled','true'); }
+      }
+    };
+    inst.addEventListener('input', syncLink);
+    syncLink();
+  }
+
+  // ---- Gitea/Forgejo OAuth (PKCE, no worker) ----
+  if(gOauth && inst && gClient){
+    // A client id is per-instance, so remember it per-instance and restore it
+    // when the user switches back - re-registering an OAuth app to sign in
+    // again would be an absurd amount of friction.
+    const syncClient=()=>{
+      const base=(inst.value||'').trim().replace(/\/+$/,'');
+      const known=base?giteaClientIdFor(base):'';
+      if(known && !gClient.value) gClient.value=known;
+      if(gDetails) gDetails.open = !(known && gClient.value);
+    };
+    inst.addEventListener('input', syncClient);
+    syncClient();
+    gOauth.onclick=()=>startGiteaLogin(inst.value, (gClient.value||'').trim(), gErr);
+    gClient.addEventListener('keydown', e=>{ if(e.key==='Enter') gOauth.click(); });
+  }
+
+  // One sign-in path for both panes - only the inputs differ.
+  const attempt=async(btn, errEl, tokenEl, forgeId, instanceEl)=>{
+    const tok=(tokenEl.value||'').trim();
+    if(!tok){ errEl.textContent='Paste your token first.'; return; }
+    if(instanceEl && !(instanceEl.value||'').trim()){ errEl.textContent='Enter your instance URL first.'; return; }
+    errEl.textContent=''; btn.disabled=true; btn.textContent='Signing in…';
     try{
-      await completeCloudLogin(tok);
+      await completeCloudLogin(tok, forgeId, instanceEl ? instanceEl.value : null);
     }catch(e){
-      err.textContent = e.message || String(e);
-      sign.disabled=false; sign.textContent='Sign in';
+      errEl.textContent = e.message || String(e);
+      btn.disabled=false; btn.textContent='Sign in';
     }
   };
+  const doLogin=()=>attempt(sign, err, pat, 'github', null);
   sign.onclick = doLogin;
   pat.addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
-  pat.focus();
+
+  if(gSign && gPat){
+    const doGitea=()=>attempt(gSign, gErr, gPat, 'gitea', inst);
+    gSign.onclick = doGitea;
+    gPat.addEventListener('keydown', e=>{ if(e.key==='Enter') doGitea(); });
+    if(inst) inst.addEventListener('keydown', e=>{
+      if(e.key!=='Enter') return;
+      const cid=$('#giteaClientId');
+      if(cid && !cid.value) cid.focus(); else if(gOauth) gOauth.click();
+    });
+  }
+  selectForge(active);
 }
 
 /* ============================================================

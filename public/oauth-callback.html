@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<!-- Same-origin popup landing page for the Gitea/Forgejo PKCE flow. It holds no
+     token: the authorization CODE arrives here in the query string and is handed
+     straight to the opener, which does the PKCE exchange (it is the only window
+     that has the code_verifier). Deliberately far stricter than the app's own
+     policy - this page loads nothing and talks to nobody. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'" />
+<title>Signing in…</title>
+<style>
+  body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh;
+       font:14px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#4a4038;background:#f5f1ec}
+  .box{text-align:center;max-width:30rem;padding:1.5rem}
+  code{background:#e9e2d9;padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="box" id="msg">Completing sign-in…</div>
+<script>
+(function(){
+  var q = new URLSearchParams(location.search);
+  var payload = {
+    type:  'mindspark-oauth-pkce',
+    code:  q.get('code'),
+    state: q.get('state'),
+    error: q.get('error_description') || q.get('error')
+  };
+  // The opener is this same origin (the app served alongside this file), so the
+  // target origin is pinned rather than '*' - nothing else can read the code.
+  if(window.opener){
+    try{ window.opener.postMessage(payload, location.origin); window.close(); return; }catch(e){}
+  }
+  document.getElementById('msg').innerHTML = payload.error
+    ? 'Sign-in failed: <code>' + String(payload.error).replace(/[<&]/g, '') + '</code>. You can close this window.'
+    : 'This page is the OAuth callback for MindSpark. Open it from the app’s sign-in screen rather than directly.';
+})();
+</script>
+</body>
+</html>
