@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "apple-light",
+  "name": "Apple Light",
+  "vars": {
+    "--toolbar-bg": "#1c1c1e",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#ffffff",
+    "--paper-2": "#f2f2f7",
+    "--ink": "#1c1c1e",
+    "--ink-soft": "#8a8a8e",
+    "--line": "#d1d1d6",
+    "--line-2": "#c7c7cc",
+    "--accent": "#007aff",
+    "--accent-deep": "#0062cc",
+    "--teal": "#30b0c7",
+    "--chrome": "#f2f2f7",
+    "--chrome-edge": "#d1d1d6",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#1c1c1e",
+    "--canvas-dot": "#d8d8dd",
+    "--stage-glow": "rgba(0,122,255,.05)",
+    "--link": "#007aff",
+    "--shadow": "0 1px 3px rgba(28,28,30,.10),0 8px 24px rgba(28,28,30,.10)",
+    "--shadow-lg": "0 12px 40px rgba(28,28,30,.18)"
+  }
+}

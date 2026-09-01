@@ -1,0 +1,10 @@
+# Response headers for hosts that support them (Cloudflare Workers/Pages).
+# GitHub Pages ignores this file - the equivalent CSP is also in a <meta> tag in
+# index.html so it applies everywhere. `frame-ancestors` and nosniff/referrer
+# cannot be set from <meta>, which is the reason this file exists.
+# Keep the CSP in sync with index.html and with server.js (~line 218).
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://icons.duckduckgo.com; connect-src 'self' https://api.github.com https://api.crossref.org https://api.anthropic.com https://api.openai.com https://api.quotable.io https://zenquotes.io https://favqs.com https://dummyjson.com https://quoteslate.vercel.app https://stoic.tekloon.net https://type.fit https://api.freeapi.app https://mindspark-oauth.githubpage.workers.dev wss://mindspark-oauth.githubpage.workers.dev; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'

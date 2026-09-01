@@ -2,6 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<!-- Content-Security-Policy, in the document because the static deployments
+     (GitHub Pages, CF Workers assets) that use the GitHub-token login are
+     exactly the ones that cannot set response headers. `server.js` sends the
+     equivalent header for local SQLite mode and `public/_headers` covers
+     Cloudflare - KEEP ALL THREE IN SYNC (test/csp.test.mjs enforces it). This
+     list additionally carries the OAuth/collab Worker origin, which only the
+     static deployments talk to. `frame-ancestors` is ignored in <meta>, so it lives in
+     `public/_headers` (honoured by Cloudflare, not by GitHub Pages).
+
+     This is what stops an injected script from posting the stored GitHub token
+     to an attacker origin: script-src has no external host, and connect-src is
+     an allowlist. Adding an origin here widens that exfiltration channel, so
+     read the "External hosts need a CSP entry" note in AGENTS.md first. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://icons.duckduckgo.com; connect-src 'self' https://api.github.com https://api.crossref.org https://api.anthropic.com https://api.openai.com https://api.quotable.io https://zenquotes.io https://favqs.com https://dummyjson.com https://quoteslate.vercel.app https://stoic.tekloon.net https://type.fit https://api.freeapi.app https://mindspark-oauth.githubpage.workers.dev wss://mindspark-oauth.githubpage.workers.dev; object-src 'none'; base-uri 'self'; form-action 'self'" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes" />
 <meta name="theme-color" content="#e0613a" />
 <meta name="apple-mobile-web-app-title" content="MindSpark" />
@@ -17,17 +31,23 @@
 <link rel="stylesheet" href="./styles.css">
 <script>
   // Apply the interface scale before paint (no flash). Saved choice wins;
-  // otherwise pick a default by viewport size: ≤1265×570→80%, ≥2545×1305→100%, else 90%.
+  // otherwise pick a default by viewport size using continuous interpolation
+  // from 80% (≤1265×570) to 100% (≥2545×1305). Same formula as app.js
+  // autoScaleForViewport() so the two never disagree.
   try{
     var _s=parseFloat(localStorage.getItem('mindspark:uiScale'));
     if(!(_s && _s>=0.5 && _s<=2)){
       var _w=window.innerWidth, _h=window.innerHeight;
-      _s = (_w<=1265||_h<=570) ? 0.8 : (_w>=2545 && _h>=1305) ? 1 : 0.9;
+      var _minW=1265, _maxW=2545, _minH=570, _maxH=1305;
+      var _tw=Math.max(0,Math.min(1,(_w-_minW)/(_maxW-_minW)));
+      var _th=Math.max(0,Math.min(1,(_h-_minH)/(_maxH-_minH)));
+      _s = 0.8 + Math.min(_tw,_th) * 0.2;
     }
     if(_s && _s!==1){
       document.documentElement.style.zoom=String(_s);
       document.documentElement.style.setProperty('--ui-zoom', String(_s));
     }
+    window.__prePaintScale=_s;
   }catch(e){}
 </script>
 </head>
@@ -195,15 +215,29 @@
 
     <ol class="login-steps">
       <li>
-        <a class="login-step-link" href="https://github.com/settings/tokens/new?description=MindSpark&amp;scopes=repo" target="_blank" rel="noopener">
-          Create a personal access token on GitHub →
+        <a class="login-step-link" href="https://github.com/new?name=mindspark-maps&amp;description=My+MindSpark+mind+maps" target="_blank" rel="noopener">
+          Create the <code>mindspark-maps</code> repository →
         </a>
-        <div class="login-step-hint">Pick <b>classic</b> token, scope: <code>repo</code> (so the app can create the private repo and read/write files in it).</div>
+        <div class="login-step-hint">Set it to <b>Private</b> and tick <b>Add a README</b>. Already have it? Go to step 2.</div>
+      </li>
+      <li>
+        <a class="login-step-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">
+          Create a fine-grained token →
+        </a>
+        <div class="login-step-hint">
+          <b>Repository access:</b> Only select repositories → <code>mindspark-maps</code>.<br>
+          <b>Permissions:</b> Repository permissions → <code>Contents</code> → <b>Read and write</b>. Nothing else is needed.<br>
+          A token scoped this way can reach that one repository and nothing else in your account.
+        </div>
+        <details class="login-fallback">
+          <summary>Or use a classic token</summary>
+          <p>A <a href="https://github.com/settings/tokens/new?description=MindSpark&amp;scopes=repo" target="_blank" rel="noopener">classic token with the <code>repo</code> scope</a> works too and creates the repository for you, so you can skip step 1. The trade-off: <code>repo</code> grants read/write to <b>every</b> private repository you own, so anything that got hold of the token would reach all of them.</p>
+        </details>
       </li>
       <li>
         <label for="ghPat">Paste your token here:</label>
         <div class="token-input">
-          <input type="password" id="ghPat" placeholder="ghp_…" autocomplete="off" spellcheck="false" />
+          <input type="password" id="ghPat" placeholder="github_pat_…" autocomplete="off" spellcheck="false" />
           <button id="ghSignIn">Sign in</button>
         </div>
         <div class="login-error" id="ghError"></div>
@@ -212,9 +246,10 @@
 
     <details class="login-extra">
       <summary>How does this work / is it safe?</summary>
-      <p>MindSpark runs entirely in your browser. The token is stored only in <code>localStorage</code> on this device, and is sent only to <code>api.github.com</code> - never to any third party.</p>
-      <p>On first sign-in the app creates a <b>private</b> repo called <code>mindspark-maps</code> in your account. Every save commits a small JSON file to that repo, so your data is versioned and you can <code>git clone</code> it any time.</p>
-      <p>To revoke access: <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a></p>
+      <p>MindSpark runs entirely in your browser. The token is stored only in <code>localStorage</code> on this device, and is sent only to <code>api.github.com</code> - never to any third party. A Content-Security-Policy on this page blocks scripts and network calls to any other origin, so there is no route out for it; a fine-grained token keeps the damage to one repository even if that fails.</p>
+      <p>Because the token lives in this browser, treat signing in the way you would treat staying logged in anywhere: don't do it on a shared or untrusted machine, and sign out when you're done.</p>
+      <p>Every save commits a small JSON file to your <code>mindspark-maps</code> repo, so your data is versioned and you can <code>git clone</code> it any time. (A classic token creates that repo for you on first sign-in; a fine-grained one can't, which is why step 1 exists.)</p>
+      <p>To revoke access: <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">fine-grained tokens</a> / <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">classic tokens</a>.</p>
     </details>
   </div>
 </div>

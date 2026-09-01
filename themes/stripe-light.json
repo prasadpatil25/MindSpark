@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "stripe-light",
+  "name": "Stripe Light",
+  "vars": {
+    "--toolbar-bg": "#0a2540",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#ffffff",
+    "--paper-2": "#f6f9fc",
+    "--ink": "#0a2540",
+    "--ink-soft": "#425466",
+    "--line": "#e3e8ee",
+    "--line-2": "#cfd7df",
+    "--accent": "#635bff",
+    "--accent-deep": "#4b45cc",
+    "--teal": "#0ea5c6",
+    "--chrome": "#f6f9fc",
+    "--chrome-edge": "#e3e8ee",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#0a2540",
+    "--canvas-dot": "#e3e8ee",
+    "--stage-glow": "rgba(99,91,255,.05)",
+    "--link": "#635bff",
+    "--shadow": "0 1px 3px rgba(10,37,64,.10),0 8px 24px rgba(10,37,64,.10)",
+    "--shadow-lg": "0 12px 40px rgba(10,37,64,.18)"
+  }
+}

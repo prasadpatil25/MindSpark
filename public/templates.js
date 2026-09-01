@@ -16,7 +16,7 @@
 const TEMPLATES = {
   /* ===== AI & agents (flagship) ===== */
   agent_architecture: {
-    name:'AI Agent Architecture', desc:'The anatomy of a single agent: model, memory, planning, tools, loop & guardrails', color:'#8c5da7', group:'ai', icon:'🧠',
+    name:'AI Agent Architecture', desc:'The anatomy of a single agent: model, memory, planning, tools, loop & guardrails', color:'#8c5da7', group:'ai', icon:'🧠', layout:'radial',
     nodes:[
       { k:'root', text:'AI Agent Architecture', notes:'<p>The anatomy of a single AI agent \u2014 the model at its core, what it remembers, how it plans, the tools it can call, and the loop &amp; guardrails that keep it on track.</p>' },
       { k:'model', parent:'root', text:'Model (LLM core)' },
@@ -58,7 +58,7 @@ const TEMPLATES = {
     links:[ { from:'loop', to:'tools' }, { from:'loop', to:'memory' }, { from:'plan', to:'model' } ]
   },
   agentic_patterns: {
-    name:'Agentic Workflow Patterns', desc:'From an augmented LLM to autonomous agents \u2014 and how to choose between them', color:'#2f6f6a', group:'ai', icon:'🔀',
+    name:'Agentic Workflow Patterns', desc:'From an augmented LLM to autonomous agents \u2014 and how to choose between them', color:'#2f6f6a', group:'ai', icon:'🔀', layout:'fishbone',
     nodes:[
       { k:'root', text:'Agentic Workflow Patterns', notes:'<p>Common patterns for building agentic systems, from a single augmented LLM up to autonomous agents \u2014 and how to choose between them. Rule of thumb: prefer the <strong>simplest pattern that works</strong>.</p>' },
       { k:'aug', parent:'root', text:'Augmented LLM (foundation)' },
@@ -93,7 +93,7 @@ const TEMPLATES = {
   },
   claude_skill: {
     name:'Claude Agent Skill', desc:'Scaffold a SKILL.md - instructions Claude loads dynamically for a specialized task',
-    color:'#8c5da7', group:'ai', icon:'🧩',
+    color:'#8c5da7', group:'ai', icon:'🧩', layout:'down',
     nodes:[
       { k:'root', text:'My Skill Name', notes:'<p>A <strong>Skill</strong> is a folder with a <code>SKILL.md</code> file that teaches Claude how to do a specific task in a repeatable way \u2014 e.g. following your brand guidelines, or your team\u2019s specific workflow. The YAML block below is the file\u2019s required frontmatter; edit its table like any other node. See <a href="https://github.com/anthropics/skills" target="_blank" rel="noopener noreferrer">github.com/anthropics/skills</a>.</p>' },
       { k:'fm', parent:'root', text:'', frontmatter:true,
@@ -110,7 +110,7 @@ const TEMPLATES = {
   rtcce: {
     name: 'Role / Task / Context / Constraints / Examples',
     desc: 'Classic structured prompt - the bread-and-butter shape',
-    color: '#5b8db2', group:'prompt', icon:'⊟',
+    color: '#5b8db2', group:'prompt', icon:'⊟', layout:'right',
     nodes: [
       { k:'root', text:'Prompt: [your task]' },
       { k:'r',   parent:'root', text:'Role' },
@@ -128,7 +128,7 @@ const TEMPLATES = {
   cot: {
     name: 'Chain-of-Thought',
     desc: 'Step-by-step reasoning prompt',
-    color: '#6a8c3f', group:'prompt', icon:'⟶',
+    color: '#6a8c3f', group:'prompt', icon:'⟶', layout:'timeline',
     nodes: [
       { k:'root', text:'Reasoning prompt' },
       { k:'q',   parent:'root', text:'Question' },
@@ -145,7 +145,7 @@ const TEMPLATES = {
   fc: {
     name: 'Function-calling schema',
     desc: 'Tool / function definition outline',
-    color: '#8c5da7', group:'prompt', icon:'ƒ',
+    color: '#8c5da7', group:'prompt', icon:'ƒ', layout:'grid',
     nodes: [
       { k:'root', text:'function_name' },
       { k:'d',   parent:'root', text:'Description' },
@@ -163,7 +163,7 @@ const TEMPLATES = {
   fewshot: {
     name: 'Few-shot examples',
     desc: 'Pattern-by-example prompt',
-    color: '#c2783c', group:'prompt', icon:'≡',
+    color: '#c2783c', group:'prompt', icon:'≡', layout:'timeline',
     nodes: [
       { k:'root', text:'Few-shot prompt' },
       { k:'i',   parent:'root', text:'Instructions' },

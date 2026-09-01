@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "rice-paper",
+  "name": "Rice Paper",
+  "vars": {
+    "--toolbar-bg": "#2e2b26",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#fdfbf6",
+    "--paper-2": "#f4efe4",
+    "--ink": "#2e2b26",
+    "--ink-soft": "#7b746a",
+    "--line": "#e8e1d4",
+    "--line-2": "#d8cfbe",
+    "--accent": "#3b4c8a",
+    "--accent-deep": "#2b3a6d",
+    "--teal": "#6b7f4a",
+    "--chrome": "#f4efe4",
+    "--chrome-edge": "#e8e1d4",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#2e2b26",
+    "--canvas-dot": "#e8e1d4",
+    "--stage-glow": "rgba(59,76,138,.05)",
+    "--link": "#3b4c8a",
+    "--shadow": "0 1px 3px rgba(46,43,38,.10),0 8px 24px rgba(46,43,38,.10)",
+    "--shadow-lg": "0 12px 40px rgba(46,43,38,.18)"
+  }
+}

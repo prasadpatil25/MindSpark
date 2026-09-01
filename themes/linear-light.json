@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "linear-light",
+  "name": "Linear Light",
+  "vars": {
+    "--toolbar-bg": "#23232a",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#ffffff",
+    "--paper-2": "#f9f9fa",
+    "--ink": "#282a30",
+    "--ink-soft": "#6f6f79",
+    "--line": "#e6e6e8",
+    "--line-2": "#d8d8dc",
+    "--accent": "#5e6ad2",
+    "--accent-deep": "#4952b0",
+    "--teal": "#3f9e63",
+    "--chrome": "#f9f9fa",
+    "--chrome-edge": "#e6e6e8",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#282a30",
+    "--canvas-dot": "#e6e6e8",
+    "--stage-glow": "rgba(94,106,210,.05)",
+    "--link": "#5e6ad2",
+    "--shadow": "0 1px 3px rgba(40,42,48,.10),0 8px 24px rgba(40,42,48,.10)",
+    "--shadow-lg": "0 12px 40px rgba(40,42,48,.18)"
+  }
+}

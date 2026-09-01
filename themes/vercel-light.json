@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "vercel-light",
+  "name": "Vercel Light",
+  "vars": {
+    "--toolbar-bg": "#000000",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#ffffff",
+    "--paper-2": "#fafafa",
+    "--ink": "#000000",
+    "--ink-soft": "#666666",
+    "--line": "#eaeaea",
+    "--line-2": "#d4d4d4",
+    "--accent": "#171717",
+    "--accent-deep": "#000000",
+    "--teal": "#0070f3",
+    "--chrome": "#fafafa",
+    "--chrome-edge": "#eaeaea",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#000000",
+    "--canvas-dot": "#eaeaea",
+    "--stage-glow": "rgba(23,23,23,.05)",
+    "--link": "#0070f3",
+    "--shadow": "0 1px 3px rgba(0,0,0,.10),0 8px 24px rgba(0,0,0,.10)",
+    "--shadow-lg": "0 12px 40px rgba(0,0,0,.18)"
+  }
+}
