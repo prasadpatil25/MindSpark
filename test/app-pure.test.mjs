@@ -238,17 +238,19 @@ describe('edgePath - zigzag draws a jagged polyline', () => {
   });
 
   test('bounces above and below the straight axis', () => {
-    const ys = [...horiz.matchAll(/L(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?= L)/g)].map(m => +m[2]);
-    assert.equal(ys.length, 3, 'three zigzag peaks');
-    assert.ok(Math.max(...ys.map(y => Math.abs(y - 0))) > 0, 'at least one peak leaves the axis');
-    assert.ok(ys.every((y, i) => i % 2 === 0 ? y < 0 : y > 0), 'alternates sides');
+    const pts = [...horiz.matchAll(/L(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?= L)/g)].map(m => [+m[1], +m[2]]);
+    assert.equal(pts.length, 3, 'three zigzag peaks');
+    const deltas = pts.map(([x, y], i) => { const t=(i+1)/4, ey=0+(50-0)*t; return y-ey; });
+    assert.ok(Math.max(...deltas.map(d => Math.abs(d))) > 0, 'at least one peak leaves the axis');
+    assert.ok(deltas.every((d, i) => i % 2 === 0 ? d < 0 : d > 0), 'alternates sides');
   });
 
   test('vertical variant zigzags on the x axis instead', () => {
-    const xs = [...vert.matchAll(/L(-?\d+(?:\.\d+)?),(\d+(?:\.\d+)?)(?= L)/g)].map(m => +m[1]);
-    assert.equal(xs.length, 3);
-    assert.ok(Math.max(...xs.map(x => Math.abs(x - 0))) > 0, 'peaks leave the x axis');
-    assert.ok(xs.every((x, i) => i % 2 === 0 ? x < 0 : x > 0), 'alternates sides');
+    const pts = [...vert.matchAll(/L(-?\d+(?:\.\d+)?),(\d+(?:\.\d+)?)(?= L)/g)].map(m => [+m[1], +m[2]]);
+    assert.equal(pts.length, 3);
+    const deltas = pts.map(([x, y], i) => { const t=(i+1)/4, ex=0+(50-0)*t; return x-ex; });
+    assert.ok(Math.max(...deltas.map(d => Math.abs(d))) > 0, 'peaks leave the x axis');
+    assert.ok(deltas.every((d, i) => i % 2 === 0 ? d < 0 : d > 0), 'alternates sides');
   });
 
   test('ends exactly on the target point', () => {
@@ -258,7 +260,8 @@ describe('edgePath - zigzag draws a jagged polyline', () => {
 
   test('amplitude clamps for long distances', () => {
     const far = edgePath(0, 0, 500, 50, false, true, 'zigzag');
-    const ys = [...far.matchAll(/L-?\d+,(-?\d+(?:\.\d+)?)(?= L)/g)].map(m => +m[1]);
-    assert.ok(ys.every(y => Math.abs(y - 0) <= 12), 'never exceeds the 12px cap');
+    const pts = [...far.matchAll(/L(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?= L)/g)].map(m => [+m[1], +m[2]]);
+    const deltas = pts.map(([x, y], i) => { const t=(i+1)/4, ey=0+(50-0)*t; return y-ey; });
+    assert.ok(deltas.every(d => Math.abs(d) <= 12), 'never exceeds the 12px cap');
   });
 });

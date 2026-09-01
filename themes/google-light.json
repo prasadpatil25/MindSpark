@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "google-light",
+  "name": "Google Light",
+  "vars": {
+    "--toolbar-bg": "#202124",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#ffffff",
+    "--paper-2": "#f8f9fa",
+    "--ink": "#202124",
+    "--ink-soft": "#5f6368",
+    "--line": "#dadce0",
+    "--line-2": "#bdc1c6",
+    "--accent": "#1a73e8",
+    "--accent-deep": "#1557b0",
+    "--teal": "#188038",
+    "--chrome": "#f8f9fa",
+    "--chrome-edge": "#dadce0",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#202124",
+    "--canvas-dot": "#dadce0",
+    "--stage-glow": "rgba(26,115,232,.05)",
+    "--link": "#1a73e8",
+    "--shadow": "0 1px 3px rgba(32,33,36,.10),0 8px 24px rgba(32,33,36,.10)",
+    "--shadow-lg": "0 12px 40px rgba(32,33,36,.18)"
+  }
+}

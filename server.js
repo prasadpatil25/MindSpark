@@ -215,6 +215,12 @@ const server = http.createServer(async (req, res) => {
   // inline styles/script for the bootstrap, Google Fonts, data:/blob: images,
   // and the GitHub API for cloud mode) while blocking external script/exfil
   // origins, framing, and plugins. Relax if you self-host extra integrations.
+  //
+  // This header only covers server mode. The static deployments can't send
+  // headers, so the same policy is duplicated in public/index.html (<meta>) and
+  // public/_headers - and test/csp.test.mjs fails if the three drift apart.
+  // The only sanctioned difference: the static copies also allow the OAuth /
+  // collab Worker origin, which server mode never contacts.
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
@@ -224,6 +230,7 @@ const server = http.createServer(async (req, res) => {
     "connect-src 'self' https://api.github.com https://api.crossref.org https://api.anthropic.com https://api.openai.com https://api.quotable.io https://zenquotes.io https://favqs.com https://dummyjson.com https://quoteslate.vercel.app https://stoic.tekloon.net https://type.fit https://api.freeapi.app",
     "object-src 'none'",
     "base-uri 'self'",
+    "form-action 'self'",
     "frame-ancestors 'none'"
   ].join('; '));
 

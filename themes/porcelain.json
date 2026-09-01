@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "porcelain",
+  "name": "Porcelain",
+  "vars": {
+    "--toolbar-bg": "#2b3440",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#fdfdfe",
+    "--paper-2": "#f1f4f7",
+    "--ink": "#2b3440",
+    "--ink-soft": "#6b7787",
+    "--line": "#e2e8ef",
+    "--line-2": "#cfd8e3",
+    "--accent": "#3d6a8f",
+    "--accent-deep": "#2c5170",
+    "--teal": "#4f9a94",
+    "--chrome": "#f1f4f7",
+    "--chrome-edge": "#e2e8ef",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#2b3440",
+    "--canvas-dot": "#e2e8ef",
+    "--stage-glow": "rgba(61,106,143,.05)",
+    "--link": "#3d6a8f",
+    "--shadow": "0 1px 3px rgba(43,52,64,.10),0 8px 24px rgba(43,52,64,.10)",
+    "--shadow-lg": "0 12px 40px rgba(43,52,64,.18)"
+  }
+}

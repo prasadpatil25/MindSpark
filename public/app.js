@@ -7,6 +7,7 @@
                   `mindspark-maps` repo. No backend required.
    `initStore()` probes /healthz, then picks one.
    ============================================================ */
+
 /* ------------------------------------------------------------
    On `catch(e){}` in this file.
 
@@ -119,6 +120,13 @@ const CloudStore = {
     this.deleted=[]; this.deletedSha=null;
     localStorage.removeItem('mindspark:gh:token');
   },
+  // A fine-grained token scoped to `mindspark-maps` (the recommended login) can
+  // read and write that one repo but CANNOT create it - repo creation needs
+  // account-level Administration, which is exactly the breadth we're avoiding.
+  // So a 404 here is only fatal for fine-grained tokens: we still try to create
+  // (classic `repo` tokens succeed, and skipping step 1 is the whole reason that
+  // fallback exists), and on failure say which of the two the user is holding
+  // instead of blaming the scope generically.
   async _ensureRepo(){
     const r=await fetch(`https://api.github.com/repos/${this.user.login}/${this.repo}`,{headers:this._headers()});
     if(r.status===404){
@@ -127,8 +135,16 @@ const CloudStore = {
         headers:{...this._headers(),'Content-Type':'application/json'},
         body:JSON.stringify({name:this.repo,description:'My MindSpark mind maps',private:true,auto_init:true})
       });
-      if(!cr.ok){ const t=await cr.text(); throw new Error('Could not create '+this.repo+' (HTTP '+cr.status+'). Token may lack `repo` scope. '+t.slice(0,140)); }
+      if(!cr.ok){
+        const t=await cr.text();
+        const fineGrained=/^github_pat_/.test(this.token||'');
+        throw new Error(fineGrained
+          ? 'Signed in, but there is no `'+this.repo+'` repository yet, and a fine-grained token can\'t create one. Create it on GitHub (private, with a README), then sign in again.'
+          : 'Could not create '+this.repo+' (HTTP '+cr.status+'). A classic token needs the `repo` scope. '+t.slice(0,140));
+      }
       await new Promise(res=>setTimeout(res,800));
+    } else if(r.status===403){
+      throw new Error('Token was accepted but can\'t reach `'+this.repo+'`. If it is fine-grained, check it lists that repository under Repository access and has Contents: Read and write.');
     } else if(!r.ok){
       throw new Error('Could not access repo (HTTP '+r.status+')');
     }
@@ -1572,9 +1588,10 @@ function edgePath(x1,y1,x2,y2,leftSide,horizontal,style){
       const amp=Math.min(12, Math.max(3, (horizontal?Math.abs(x2-x1):Math.abs(y2-y1))/8));
       let d=`M${x1},${y1}`;
       for(let i=1;i<=3;i++){
-        const along = horizontal ? (x1+(x2-x1)*i/3) : (y1+(y2-y1)*i/3);
-        const off   = (i%2 ? -amp : amp);
-        d += horizontal ? ` L${along},${y1+off}` : ` L${x1+off},${along}`;
+        const t=i/4;
+        const bx=x1+(x2-x1)*t, by=y1+(y2-y1)*t;
+        const off=(i%2 ? -amp : amp);
+        d += horizontal ? ` L${bx},${by+off}` : ` L${bx+off},${by}`;
       }
       return d+` L${x2},${y2}`;
     }
@@ -6045,9 +6062,12 @@ async function createMapFromTemplate(templateId){
     ? tpl.links.filter(l => keyToId[l.from] && keyToId[l.to])
                .map(l => ({ from: keyToId[l.from], to: keyToId[l.to] }))
     : [];
-  map = { id, title: tpl.name, titleAuto: false, color: tpl.color, layout: 'balanced', rootId, nodes, links };
+  const _tplLayout = (typeof tpl.layout === 'string' && tpl.layout) ? tpl.layout : 'balanced';
+  const _engineOk = typeof LAYOUT_ENGINES !== 'undefined' ? LAYOUT_ENGINES.includes(_tplLayout) : true;
+  const _layout = _engineOk ? _tplLayout : 'balanced';
+  map = { id, title: tpl.name, titleAuto: false, color: tpl.color, layout: _layout, rootId, nodes, links };
   sel = rootId; history = []; hpos = -1;
-  balanceRootSides();        // split top-level branches evenly left/right
+  if(_layout === 'balanced') balanceRootSides();        // split top-level branches evenly left/right (only for balanced)
   pushHistory();
   $('#mapTitle').value = map.title;
   autoLayout(); fit();
@@ -8522,15 +8542,30 @@ async function exportPNG(){
       ctx.strokeStyle=lineColor; ctx.globalAlpha=0.12; ctx.lineWidth=1;
       for(let y=60; y<H; y+=120){ ctx.beginPath(); ctx.moveTo(0,y+0.5); ctx.lineTo(W,y+0.5); ctx.stroke(); }
       for(let x=80; x<W; x+=80){ ctx.beginPath(); ctx.moveTo(x+0.5,0); ctx.lineTo(x+0.5,H); ctx.stroke(); }
-      ctx.globalAlpha=1;
-    } else if(look==='observatory'){
-      ctx.fillStyle=accentColor;
-      const stars=[[12,14,1.4],[44,38,1],[30,52,0.9],[56,12,0.7]];
-      stars.forEach(([x,y,r])=>{ ctx.globalAlpha=0.6; ctx.beginPath(); ctx.arc((x/70)*W,(y/70)*H,r,0,Math.PI*2); ctx.fill(); });
-      // nebula haze
-      ctx.globalAlpha=0.12; ctx.beginPath(); ctx.ellipse(W*0.28,H*0.26,W*0.12,H*0.08,0,0,Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(W*0.74,H*0.68,W*0.12,H*0.08,0,0,Math.PI*2); ctx.fill();
-      ctx.globalAlpha=1;
+      ctx.globalAlpha=1;    } else if(look==='desert'){
+      // dunes - three large ellipses + coconut palms on curve + sand speck
+      ctx.fillStyle=lineColor; ctx.globalAlpha=0.12;
+      ctx.beginPath(); ctx.ellipse(W*0.22,H*1.08,W*0.42,H*0.18,0,0,Math.PI*2); ctx.fill();
+      ctx.globalAlpha=0.10; ctx.beginPath(); ctx.ellipse(W*0.78,H*1.15,W*0.38,H*0.15,0,0,Math.PI*2); ctx.fill();
+      ctx.globalAlpha=0.08; ctx.beginPath(); ctx.ellipse(W*0.50,H*1.02,W*0.52,H*0.12,0,0,Math.PI*2); ctx.fill();
+      // coconut palms on dune curve - four palms at 12/35/62/85%
+      ctx.strokeStyle=lineColor; ctx.globalAlpha=0.16; ctx.lineWidth=2.2; ctx.lineCap='round'; ctx.lineJoin='round';
+      const palms=[{x:W*0.12,y:H-18},{x:W*0.35,y:H-22},{x:W*0.62,y:H-16},{x:W*0.85,y:H-18}];
+      palms.forEach(p=>{
+        const topY=p.y-72;
+        ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.quadraticCurveTo(p.x-1,p.y-35,p.x+2,topY); ctx.stroke();
+        const fronds=[[-32,-10,-46,-26],[-22,-22,-36,-42],[0,-28,-4,-46],[22,-22,38,-34],[32,-10,48,-18]];
+        fronds.forEach(([dx1,dy1,dx2,dy2])=>{ ctx.beginPath(); ctx.moveTo(p.x+2,topY); ctx.quadraticCurveTo(p.x+dx1*0.6,topY+dy1*0.6,p.x+dx2,topY+dy2); ctx.stroke(); });
+        ctx.fillStyle=lineColor; ctx.globalAlpha=0.16;
+        ctx.beginPath(); ctx.arc(p.x-2,topY+4,2.2,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(p.x+5,topY+6,1.9,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle=lineColor; ctx.globalAlpha=0.16; ctx.fillStyle=lineColor;
+      });
+      // speck
+      ctx.fillStyle=css('--ink')||themeInk; ctx.globalAlpha=0.09;
+      for(let dx=12; dx<W; dx+=46){ for(let dy=12; dy<H; dy+=46){ ctx.beginPath(); ctx.arc(dx,dy,1,0,Math.PI*2); ctx.fill(); }}
+      for(let dx=34; dx<W; dx+=52){ for(let dy=28; dy<H; dy+=52){ ctx.beginPath(); ctx.arc(dx,dy,0.9,0,Math.PI*2); ctx.fill(); }}
+      ctx.globalAlpha=1; ctx.lineCap='round'; ctx.lineJoin='round';
     } else {
       // office / default, sketchpad, etc. - dot grid
       if(canvasDot){
@@ -8667,9 +8702,8 @@ async function exportPNG(){
       const amp=Math.min(12, Math.max(3, (horizontal?Math.abs(x2-x1):Math.abs(y2-y1))/8));
       ctx.moveTo(x1,y1);
       for(let zi=1;zi<=3;zi++){
-        const along = horizontal ? (x1+(x2-x1)*zi/3) : (y1+(y2-y1)*zi/3);
-        const off   = (zi%2 ? -amp : amp);
-        horizontal ? ctx.lineTo(along, y1+off) : ctx.lineTo(x1+off, along);
+        const t=zi/4, bx=x1+(x2-x1)*t, by=y1+(y2-y1)*t, off=(zi%2 ? -amp : amp);
+        horizontal ? ctx.lineTo(bx, by+off) : ctx.lineTo(bx+off, by);
       }
       ctx.lineTo(x2,y2);
     } else {
@@ -9993,7 +10027,7 @@ const LOOKS = [
   {id:'beach',       name:'at the<br>Beach',    font:'"Oswald",system-ui,sans-serif'},
   {id:'studio',      name:'in the<br>Studio',   font:'"Fraunces",serif'},
   {id:'mountain',    name:'on the<br>Mountain',font:'"Roboto Condensed",system-ui,sans-serif'},
-  {id:'observatory', name:'in the<br>Observatory',font:'"Libre Baskerville",serif'}
+  {id:'desert',      name:'in the<br>Desert',     font:'"Nunito",system-ui,sans-serif'}
 ];
 const MAP_STYLES = [
   {id:'modern',  name:'Modern',  desc:'Soft cards, curved branches'},
@@ -10100,7 +10134,7 @@ const LOOK_CONFIG_DEFAULTS = {
   beach:        { font:'"Oswald",system-ui,sans-serif',              nodeSize:1, radius:24 },
   studio:       { font:'"Fraunces",serif',                           nodeSize:1, radius:8  },
   mountain:     { font:'"Roboto Condensed",system-ui,sans-serif',    nodeSize:1, radius:10 },
-  observatory:  { font:'"Libre Baskerville",serif',                  nodeSize:1, radius:6  },
+  desert:       { font:'"Nunito",system-ui,sans-serif',               nodeSize:1, radius:12 },
   sketchpad:    { font:'system-ui,sans-serif',                        nodeSize:1, radius:14 },
 };
 const LOOK_CONFIG_BOUNDS = { nodeSize:[0.8,1.6], radius:[0,60] };
@@ -11841,7 +11875,9 @@ $('#themeBtn').onclick=(e)=>{
       // otherwise the pointer resting here would trap vertical scrolling.
       if((ev.deltaY < 0 && row.scrollLeft <= 0) || (ev.deltaY > 0 && row.scrollLeft >= max - 1)) return;
       ev.preventDefault();
-      row.scrollLeft += ev.deltaY;
+      const card=row.querySelector('.theme-opt');
+      const step=((card?card.offsetWidth:160)+4)*4;
+      row.scrollBy({left: Math.sign(ev.deltaY)*step, behavior:'smooth'});
     }, {passive:false});
     // Reveal the current selection rather than always starting at the left.
     const act = row.querySelector('.theme-opt.active');
@@ -13476,13 +13512,16 @@ else loadQotd();
 
 (async()=>{
   // The inline <head> script guesses the auto scale before any page content exists,
-  // to avoid a flash of the wrong size - but that's a measurement taken in a very
-  // different layout context than this point (script tag sits at the very end of
-  // body, so the whole page has been parsed by the time this runs). Re-apply it now,
-  // in auto mode only, using this file's own calculation - the same one already used
-  // whenever the user picks "Auto" by hand - so boot converges on the identical
-  // result rather than trusting a guess taken before there was anything to measure.
-  try{ if(isUiScaleAuto()) applyUiScale(getUiScale()); }catch(e){}
+  // Re-apply auto-scale now that the DOM is fully laid out. Skip if the pre-paint
+  // scale (index.html) already matches what this file's calculation produces -
+  // both use the same continuous formula, so they agree unless the viewport
+  // changed between the inline script and this point.
+  try{
+    if(isUiScaleAuto()){
+      const _now=getUiScale();
+      if(Math.abs((window.__prePaintScale||0)-_now)>0.001) applyUiScale(_now);
+    }
+  }catch(e){}
   requestAnimationFrame(()=>{ try{ if(isUiScaleAuto()) applyUiScale(getUiScale()); }catch(e){} });
   // Read-only shared link? Decode and render a view-only map - no store, no
   // login, no account needed by the recipient.

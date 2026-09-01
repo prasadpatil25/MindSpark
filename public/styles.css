@@ -1954,43 +1954,94 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   :root[data-look="mountain"] .minimap{ border-radius:10px 10px 0 0; border:2px solid var(--ink-soft); }
   :root[data-look="mountain"] .toast{ border-radius:10px 10px 0 0; border:2px solid var(--ink-soft); }
 
-  /* Observatory - night sky: sparse scattered stars of varied size with soft
-     nebula haze, crisp accent-edged cards. Libre Baskerville is a classical
-     scholarly serif. */
-  :root[data-look="observatory"]{ --sans:"Libre Baskerville",serif; --serif:"Libre Baskerville",serif; }
-  :root[data-look="observatory"] .stage{
+  /* ---- in the Desert: wind-sculpted dunes - two soft parabolic ellipses
+     at the horizon plus fine sand speck. Nunito is warm and dusty. Curved
+     dunes distinguish from mountain sharp stratified bands. ---- */
+  :root[data-look="desert"]{ --sans:"Nunito",system-ui,sans-serif; --serif:"Nunito",system-ui,sans-serif; }
+  :root[data-look="desert"] .stage{
     background-image:
-      radial-gradient(circle at 12px 14px, color-mix(in srgb, var(--accent) 60%, transparent) 1.4px, transparent 2px),
-      radial-gradient(circle at 44px 38px, color-mix(in srgb, var(--accent) 40%, transparent) 1px, transparent 1.6px),
-      radial-gradient(circle at 30px 52px, color-mix(in srgb, var(--accent) 50%, transparent) 0.9px, transparent 1.4px),
-      radial-gradient(circle at 56px 12px, color-mix(in srgb, var(--accent) 35%, transparent) 0.7px, transparent 1.1px),
-      radial-gradient(ellipse at 28% 26%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
-      radial-gradient(ellipse at 74% 68%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 70%);
-    background-size:70px 70px, 70px 70px, 70px 70px, 70px 70px, 100% 100%, 100% 100%; background-color:var(--paper);
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 200'%3E%3Cg opacity='0.15' fill='none' stroke='%23966e3a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M118 162 Q117 122 122 68'/%3E%3Cpath d='M122 68 Q92 58 76 42'/%3E%3Cpath d='M122 68 Q102 48 86 30'/%3E%3Cpath d='M122 68 Q122 40 118 22'/%3E%3Cpath d='M122 68 Q142 48 160 36'/%3E%3Cpath d='M122 68 Q152 60 170 52'/%3E%3Ccircle cx='118' cy='72' r='3.2' fill='%23966e3a' stroke='none'/%3E%3Ccircle cx='127' cy='74' r='2.6' fill='%23966e3a' stroke='none'/%3E%3Cpath d='M348 158 Q346 118 352 64'/%3E%3Cpath d='M352 64 Q322 54 306 38'/%3E%3Cpath d='M352 64 Q332 44 316 28'/%3E%3Cpath d='M352 64 Q352 36 348 18'/%3E%3Cpath d='M352 64 Q372 44 390 34'/%3E%3Cpath d='M352 64 Q382 56 400 48'/%3E%3Ccircle cx='348' cy='68' r='3.2' fill='%23966e3a' stroke='none'/%3E%3Ccircle cx='357' cy='70' r='2.6' fill='%23966e3a' stroke='none'/%3E%3Cpath d='M618 160 Q616 120 622 66'/%3E%3Cpath d='M622 66 Q592 56 576 40'/%3E%3Cpath d='M622 66 Q602 46 586 30'/%3E%3Cpath d='M622 66 Q622 38 618 20'/%3E%3Cpath d='M622 66 Q642 46 660 36'/%3E%3Cpath d='M622 66 Q652 58 670 50'/%3E%3Ccircle cx='618' cy='70' r='3.2' fill='%23966e3a' stroke='none'/%3E%3Ccircle cx='627' cy='72' r='2.6' fill='%23966e3a' stroke='none'/%3E%3Cpath d='M848 162 Q846 122 852 70'/%3E%3Cpath d='M852 70 Q822 60 806 44'/%3E%3Cpath d='M852 70 Q832 50 816 34'/%3E%3Cpath d='M852 70 Q852 42 848 24'/%3E%3Cpath d='M852 70 Q872 50 890 40'/%3E%3Cpath d='M852 70 Q882 62 900 54'/%3E%3Ccircle cx='848' cy='74' r='3.2' fill='%23966e3a' stroke='none'/%3E%3Ccircle cx='857' cy='76' r='2.6' fill='%23966e3a' stroke='none'/%3E%3C/g%3E%3C/svg%3E"),
+      radial-gradient(ellipse 520px 140px at 22% 108%, color-mix(in srgb, var(--line) 14%, transparent) 98%, transparent 100%),
+      radial-gradient(ellipse 460px 120px at 78% 115%, color-mix(in srgb, var(--line) 11%, transparent) 98%, transparent 100%),
+      radial-gradient(ellipse 620px 100px at 50% 102%, color-mix(in srgb, var(--accent) 6%, transparent) 98%, transparent 100%),
+      radial-gradient(circle at 12px 12px, color-mix(in srgb, var(--ink) 9%, transparent) 1px, transparent 1.6px),
+      radial-gradient(circle at 34px 28px, color-mix(in srgb, var(--ink) 7%, transparent) 0.9px, transparent 1.4px);
+    background-size:100% 180px, 100% 100%, 100% 100%, 100% 100%, 46px 46px, 52px 52px;
+    background-position:left bottom, 0 0, 0 0, 0 0, 0 0, 0 0;
+    background-repeat:no-repeat, no-repeat, no-repeat, no-repeat, repeat, repeat;
+    background-color:var(--paper);
   }
-  :root[data-look="observatory"] .nodebar{
-    border-radius:6px;
-    border:1.5px solid var(--accent); box-shadow:var(--shadow-lg);
+  :root[data-look="desert"] .nodebar{
+    border-radius:12px;
+    border:1.5px solid var(--ink-soft); box-shadow:var(--shadow);
   }
-  :root[data-look="observatory"] .side{border-right:1.5px solid var(--accent)}
-  :root[data-look="observatory"] .new-map{border:1.5px dashed var(--accent)}
-  :root[data-look="observatory"] .vf-card{
-    border-radius:6px; border:1.5px solid var(--accent); box-shadow:var(--shadow-lg);
+  :root[data-look="desert"] .side{border-right:1.5px solid var(--ink-soft)}
+  :root[data-look="desert"] .new-map{border:1.5px dashed var(--ink-soft)}
+  :root[data-look="desert"] .vf-card{
+    border-radius:12px; border:1.5px solid var(--ink-soft); box-shadow:var(--shadow-lg);
   }
-  :root[data-look="observatory"] .vf-card h2{font-weight:700}
-  :root[data-look="observatory"] .row-pop,
-  :root[data-look="observatory"] .picker,
-  :root[data-look="observatory"] .donate-card,
-  :root[data-look="observatory"] .export-pop,
-  :root[data-look="observatory"] .tpl-pop{
-    border-radius:6px; border:1.5px solid var(--accent);
+  :root[data-look="desert"] .vf-card h2{font-weight:700}
+  :root[data-look="desert"] .row-pop,
+  :root[data-look="desert"] .picker,
+  :root[data-look="desert"] .donate-card,
+  :root[data-look="desert"] .export-pop,
+  :root[data-look="desert"] .tpl-pop{
+    border-radius:12px; border:1.5px solid var(--ink-soft);
   }
-  :root[data-look="observatory"] .donate-card{ border-radius:8px; }
-  :root[data-look="observatory"] .search-wrap{ border-radius:6px; border:1.5px solid var(--accent); }
-  :root[data-look="observatory"] .minimap{ border-radius:6px; border:1.5px solid var(--accent); }
-  :root[data-look="observatory"] .toast{ border-radius:6px; border:1.5px solid var(--accent); }
+  :root[data-look="desert"] .donate-card{ border-radius:14px; }
+  :root[data-look="desert"] .search-wrap{ border-radius:12px; border:1.5px solid var(--ink-soft); }
+  :root[data-look="desert"] .minimap{
+    border-radius:12px;
+    border:2px solid var(--ink-soft);
+    border-bottom:3px solid var(--accent);
+    box-shadow:0 4px 12px color-mix(in srgb, var(--ink-soft) 16%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent);
+    overflow:hidden;
+    position:relative;
+    background:var(--paper);
+    transform:scaleY(-1);
+  }
+  :root[data-look="desert"] .minimap svg,
+  :root[data-look="desert"] .minimap canvas{
+    transform:scaleY(-1);
+  }
+  :root[data-look="desert"] .minimap::after{
+    content:"";
+    position:absolute; left:8px; right:8px; bottom:5px; height:2px;
+    background:color-mix(in srgb, var(--accent) 20%, transparent);
+    border-radius:999px; opacity:.6; pointer-events:none; z-index:2;
+  }
+  :root[data-look="desert"] .toast{ border-radius:12px; border:1.5px solid var(--ink-soft); }
+  :root[data-look="desert"] .breadcrumb{
+    background:var(--paper);
+    border:1.5px solid var(--ink-soft);
+    border-bottom:3px solid var(--accent);
+    box-shadow:var(--shadow);
+    border-radius:12px 12px 16px 16px;
+    padding:4px 8px; gap:4px;
+    font-family:"Nunito",system-ui,sans-serif; font-size:11px; letter-spacing:0.04em; text-transform:uppercase; font-weight:700;
+  }
+  :root[data-look="desert"] .breadcrumb .bc-crumb{
+    border-radius:999px; padding:3px 10px; border:1.5px solid var(--ink-soft);
+    background:color-mix(in srgb, var(--paper) 92%, var(--accent) 8%);
+    font-weight:800;
+  }
+  :root[data-look="desert"] .breadcrumb .bc-crumb.current{
+    background:var(--accent); color:var(--paper); border-color:var(--accent);
+    box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  :root[data-look="desert"] .breadcrumb .bc-crumb:hover{
+    background:color-mix(in srgb, var(--accent) 12%, var(--paper));
+  }
+  :root[data-look="desert"] .breadcrumb .bc-sep{
+    position:relative; width:14px; text-align:center; color:transparent; opacity:1;
+  }
+  :root[data-look="desert"] .breadcrumb .bc-sep::after{
+    content:"🌴";
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    font-size:8px; opacity:.75;
+  }
 
-  /* Sketchpad - expressive, bold pen strokes on a clean canvas. Thick borders,
+/* Sketchpad - expressive, bold pen strokes on a clean canvas. Thick borders,
      very asymmetric radii for a hand-drawn feel, and slightly larger node text
      to give the writing more presence. */
   :root[data-look="sketchpad"]{ --sans:system-ui,sans-serif; --serif:system-ui,sans-serif; }
@@ -2400,6 +2451,12 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   .login-error{
     color:#c5392a; font-size:13px; margin-top:8px; min-height:16px; line-height:1.4;
   }
+  /* Classic-token fallback tucked inside step 2 - present but not the default path. */
+  .login-fallback{margin-top:8px}
+  .login-fallback summary{cursor:pointer; color:var(--ink-soft); font-size:12.5px}
+  .login-fallback summary:hover{color:var(--ink)}
+  .login-fallback p{margin:8px 0 0; font-size:12.5px; color:var(--ink-soft); line-height:1.55}
+  .login-fallback a{color:var(--accent)}
   .login-extra{margin-top:18px; padding-top:16px; border-top:1px solid var(--chrome-edge)}
   .login-extra summary{cursor:pointer; color:var(--ink-soft); font-size:13px; font-weight:500}
   .login-extra summary:hover{color:var(--ink)}

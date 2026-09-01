@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "fluent-light",
+  "name": "Fluent Light",
+  "vars": {
+    "--toolbar-bg": "#201f1e",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#ffffff",
+    "--paper-2": "#faf9f8",
+    "--ink": "#201f1e",
+    "--ink-soft": "#605e5c",
+    "--line": "#edebe9",
+    "--line-2": "#d2d0ce",
+    "--accent": "#0078d4",
+    "--accent-deep": "#005a9e",
+    "--teal": "#038387",
+    "--chrome": "#faf9f8",
+    "--chrome-edge": "#edebe9",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#201f1e",
+    "--canvas-dot": "#e1dfdd",
+    "--stage-glow": "rgba(0,120,212,.05)",
+    "--link": "#0078d4",
+    "--shadow": "0 1px 3px rgba(32,31,30,.10),0 8px 24px rgba(32,31,30,.10)",
+    "--shadow-lg": "0 12px 40px rgba(32,31,30,.18)"
+  }
+}

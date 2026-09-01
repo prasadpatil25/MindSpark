@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "slack-light",
+  "name": "Slack Light",
+  "vars": {
+    "--toolbar-bg": "#3f0e40",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#ffffff",
+    "--paper-2": "#f8f8fa",
+    "--ink": "#1d1c1d",
+    "--ink-soft": "#616061",
+    "--line": "#e8e8e8",
+    "--line-2": "#d1d1d1",
+    "--accent": "#4a154b",
+    "--accent-deep": "#350d36",
+    "--teal": "#007a5a",
+    "--chrome": "#f8f8fa",
+    "--chrome-edge": "#e8e8e8",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#1d1c1d",
+    "--canvas-dot": "#e0e0e0",
+    "--stage-glow": "rgba(74,21,75,.05)",
+    "--link": "#1264a3",
+    "--shadow": "0 1px 3px rgba(29,28,29,.10),0 8px 24px rgba(29,28,29,.10)",
+    "--shadow-lg": "0 12px 40px rgba(29,28,29,.18)"
+  }
+}

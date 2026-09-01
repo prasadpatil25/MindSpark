@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "pearl-mist",
+  "name": "Pearl Mist",
+  "vars": {
+    "--toolbar-bg": "#35313f",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#fcfbfe",
+    "--paper-2": "#f3f1f8",
+    "--ink": "#35313f",
+    "--ink-soft": "#7d7791",
+    "--line": "#e7e3f0",
+    "--line-2": "#d8d3e6",
+    "--accent": "#8a7bb8",
+    "--accent-deep": "#6c5c9c",
+    "--teal": "#5f9ea6",
+    "--chrome": "#f3f1f8",
+    "--chrome-edge": "#e7e3f0",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#35313f",
+    "--canvas-dot": "#e7e3f0",
+    "--stage-glow": "rgba(138,123,184,.05)",
+    "--link": "#6c5c9c",
+    "--shadow": "0 1px 3px rgba(53,49,63,.10),0 8px 24px rgba(53,49,63,.10)",
+    "--shadow-lg": "0 12px 40px rgba(53,49,63,.18)"
+  }
+}

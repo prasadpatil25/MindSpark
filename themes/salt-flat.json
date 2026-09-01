@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "salt-flat",
+  "name": "Salt Flat",
+  "vars": {
+    "--toolbar-bg": "#191c1b",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#ffffff",
+    "--paper-2": "#f4f5f4",
+    "--ink": "#191c1b",
+    "--ink-soft": "#6a706e",
+    "--line": "#e4e7e5",
+    "--line-2": "#cfd4d1",
+    "--accent": "#1f5fbf",
+    "--accent-deep": "#17458c",
+    "--teal": "#b08d3f",
+    "--chrome": "#f4f5f4",
+    "--chrome-edge": "#e4e7e5",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#191c1b",
+    "--canvas-dot": "#e0e4e2",
+    "--stage-glow": "rgba(31,95,191,.05)",
+    "--link": "#1f5fbf",
+    "--shadow": "0 1px 3px rgba(25,28,27,.10),0 8px 24px rgba(25,28,27,.10)",
+    "--shadow-lg": "0 12px 40px rgba(25,28,27,.18)"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "figma-light",
+  "name": "Figma Light",
+  "vars": {
+    "--toolbar-bg": "#1e1e1e",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#ffffff",
+    "--paper-2": "#f5f5f5",
+    "--ink": "#1e1e1e",
+    "--ink-soft": "#767676",
+    "--line": "#e6e6e6",
+    "--line-2": "#d4d4d4",
+    "--accent": "#007be5",
+    "--accent-deep": "#0064bd",
+    "--teal": "#0fa958",
+    "--chrome": "#f5f5f5",
+    "--chrome-edge": "#e6e6e6",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#1e1e1e",
+    "--canvas-dot": "#e6e6e6",
+    "--stage-glow": "rgba(0,123,229,.05)",
+    "--link": "#007be5",
+    "--shadow": "0 1px 3px rgba(30,30,30,.10),0 8px 24px rgba(30,30,30,.10)",
+    "--shadow-lg": "0 12px 40px rgba(30,30,30,.18)"
+  }
+}

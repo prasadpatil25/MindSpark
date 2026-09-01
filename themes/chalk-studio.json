@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "chalk-studio",
+  "name": "Chalk Studio",
+  "vars": {
+    "--toolbar-bg": "#262626",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#fafaf8",
+    "--paper-2": "#f0f0ec",
+    "--ink": "#262626",
+    "--ink-soft": "#6e6e68",
+    "--line": "#e2e2dc",
+    "--line-2": "#d0d0c8",
+    "--accent": "#d1495b",
+    "--accent-deep": "#a83549",
+    "--teal": "#3f7d78",
+    "--chrome": "#f0f0ec",
+    "--chrome-edge": "#e2e2dc",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#262626",
+    "--canvas-dot": "#e2e2dc",
+    "--stage-glow": "rgba(209,73,91,.05)",
+    "--link": "#d1495b",
+    "--shadow": "0 1px 3px rgba(38,38,38,.10),0 8px 24px rgba(38,38,38,.10)",
+    "--shadow-lg": "0 12px 40px rgba(38,38,38,.18)"
+  }
+}

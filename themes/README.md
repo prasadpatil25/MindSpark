@@ -3,7 +3,14 @@
 `themes/*.json` are **reference palettes** for the Colour Theme picker (`public/app.js:8787` `THEMES`, `public/styles.css:21` `:root[data-theme="..."]`). They are not fetched at boot - the picker is hardcoded for instant offline switching. Use these JSON files to **import** a theme via **Add theme** or to propose a new built-in.
 
 ## File count
-65 JSON files, each one complete palette. Example `light.json` / `dark.json`.
+81 JSON files, each one complete palette. Example `light.json` / `dark.json`.
+
+Light palettes are the largest group. Some are drawn from interfaces people
+already know - `google-light`, `youtube-light`, `notion-light`, `figma-light`,
+`slack-light`, `apple-light`, `stripe-light`, `vercel-light`, `linear-light`,
+`fluent-light`, `github-light` - and the rest stand on their own:
+`porcelain`, `alabaster`, `salt-flat`, `pearl-mist`, `chalk-studio`,
+`rice-paper`, `paper-ink`, `scholar-parchment`, `sandstone`, `light`.
 
 ## JSON structure
 

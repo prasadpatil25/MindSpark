@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "alabaster",
+  "name": "Alabaster",
+  "vars": {
+    "--toolbar-bg": "#2f2a24",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#fbf9f5",
+    "--paper-2": "#f3efe7",
+    "--ink": "#2f2a24",
+    "--ink-soft": "#7a7166",
+    "--line": "#e6e0d5",
+    "--line-2": "#d6cec0",
+    "--accent": "#a8642a",
+    "--accent-deep": "#854d1e",
+    "--teal": "#6b7f5c",
+    "--chrome": "#f3efe7",
+    "--chrome-edge": "#e6e0d5",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#2f2a24",
+    "--canvas-dot": "#e6e0d5",
+    "--stage-glow": "rgba(168,100,42,.05)",
+    "--link": "#a8642a",
+    "--shadow": "0 1px 3px rgba(47,42,36,.10),0 8px 24px rgba(47,42,36,.10)",
+    "--shadow-lg": "0 12px 40px rgba(47,42,36,.18)"
+  }
+}

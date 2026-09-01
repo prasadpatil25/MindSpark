@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "youtube-light",
+  "name": "YouTube Light",
+  "vars": {
+    "--toolbar-bg": "#0f0f0f",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#ffffff",
+    "--paper-2": "#f9f9f9",
+    "--ink": "#0f0f0f",
+    "--ink-soft": "#606060",
+    "--line": "#e5e5e5",
+    "--line-2": "#cccccc",
+    "--accent": "#ff0000",
+    "--accent-deep": "#cc0000",
+    "--teal": "#065fd4",
+    "--chrome": "#f9f9f9",
+    "--chrome-edge": "#e5e5e5",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#0f0f0f",
+    "--canvas-dot": "#e5e5e5",
+    "--stage-glow": "rgba(255,0,0,.05)",
+    "--link": "#065fd4",
+    "--shadow": "0 1px 3px rgba(15,15,15,.10),0 8px 24px rgba(15,15,15,.10)",
+    "--shadow-lg": "0 12px 40px rgba(15,15,15,.18)"
+  }
+}

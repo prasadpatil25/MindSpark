@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "id": "notion-light",
+  "name": "Notion Light",
+  "vars": {
+    "--toolbar-bg": "#37352f",
+    "--toolbar-text": "#ffffff",
+    "--paper": "#ffffff",
+    "--paper-2": "#f7f7f5",
+    "--ink": "#37352f",
+    "--ink-soft": "#787774",
+    "--line": "#e9e9e7",
+    "--line-2": "#d9d9d6",
+    "--accent": "#2383e2",
+    "--accent-deep": "#1a6dc0",
+    "--teal": "#448361",
+    "--chrome": "#f7f7f5",
+    "--chrome-edge": "#e9e9e7",
+    "--node-bg": "#ffffff",
+    "--node-ink": "#37352f",
+    "--canvas-dot": "#e3e2e0",
+    "--stage-glow": "rgba(35,131,226,.05)",
+    "--link": "#2383e2",
+    "--shadow": "0 1px 3px rgba(55,53,47,.10),0 8px 24px rgba(55,53,47,.10)",
+    "--shadow-lg": "0 12px 40px rgba(55,53,47,.18)"
+  }
+}
