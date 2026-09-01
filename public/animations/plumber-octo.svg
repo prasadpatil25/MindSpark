@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="896" height="896" viewBox="0 0 896 896" role="img" aria-label="Plumber Octocat">
-  <image href="plumber-octo.jpg" x="0" y="0" width="896" height="896" preserveAspectRatio="xMidYMid meet"/>
-  <!-- Vector overlay for animation reference: this file is a raster-in-SVG wrapper.
-       True limb animation uses the CatRig vector plumber (cat-rig.js theme:plumber)
-       which reuses the same CAT_D geometry with Mario colors (red hat #e53935,
-       blue overalls #1565c0, white gloves, brown shoes, green mushroom). The JPEG
-       is kept as original asset; no potrace vectorization needed for rig-based
-       animation because the rig's paths are already vector. -->
-</svg>
