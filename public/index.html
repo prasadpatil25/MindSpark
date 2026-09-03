@@ -217,7 +217,16 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
         Sign in with GitHub
       </button>
+      <div class="login-step-hint">
+        No GitHub account yet? GitHub's sign-in page has a <b>Create an account</b> link - sign up
+        there and you come straight back here, already signed in.
+      </div>
     </div>
+
+    <p class="login-signup">
+      <a href="https://github.com/signup" target="_blank" rel="noopener">Create a free GitHub account &rarr;</a>
+      MindSpark can't create one for you - GitHub only allows signup on their own page.
+    </p>
 
     <details class="login-token" id="ghTokenDetails">
       <summary>Sign in with an access token</summary>
@@ -226,7 +235,8 @@
         <a class="login-step-link" href="https://github.com/new?name=mindspark-maps&amp;description=My+MindSpark+mind+maps" target="_blank" rel="noopener">
           Create the <code>mindspark-maps</code> repository →
         </a>
-        <div class="login-step-hint">Set it to <b>Private</b> and tick <b>Add a README</b>. Already have it? Go to step 2.</div>
+        <div class="login-step-hint">Set it to <b>Private</b> and tick <b>Add a README</b>. Already have it? Go to step 2.
+          Both links here need a GitHub account - create one above first if you don't have one.</div>
       </li>
       <li>
         <a class="login-step-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">
@@ -294,6 +304,12 @@
         </details>
       </div>
 
+      <p class="login-signup">
+        <a id="giteaSignupLink" target="_blank" rel="noopener" aria-disabled="true">Create an account on that instance &rarr;</a>
+        Registration lives on your own instance, so this link follows the URL above. Many instances
+        turn self-registration off - if yours does, ask its admin for an account.
+      </p>
+
       <details class="login-token" id="giteaTokenDetails">
         <summary>Sign in with an access token</summary>
         <ol class="login-steps">
@@ -316,10 +332,10 @@
               <input type="password" id="giteaPat" placeholder="access token" autocomplete="off" spellcheck="false" />
               <button id="giteaSignIn">Sign in</button>
             </div>
+            <div class="login-error" id="giteaError"></div>
           </li>
         </ol>
       </details>
-      <div class="login-error" id="giteaError"></div>
     </div><!-- /gitea pane -->
 
     <details class="login-extra">

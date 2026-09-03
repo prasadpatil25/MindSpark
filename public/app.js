@@ -88,6 +88,10 @@ const FORGES = {
     canCreateRepo(token){ return !/^github_pat_/.test(token||''); },
     newRepoUrl(){ return 'https://github.com/new?name=mindspark-maps&description=My+MindSpark+mind+maps'; },
     newTokenUrl(){ return 'https://github.com/settings/personal-access-tokens/new'; },
+    // Nothing here creates an account - GitHub has no such API, and its signup
+    // needs email verification and a CAPTCHA. Both sign-in paths just point at
+    // it, so someone arriving without an account has somewhere to go.
+    signupUrl(){ return 'https://github.com/signup'; },
     tokenPlaceholder:'github_pat_\u2026'
   },
   gitea: {
@@ -111,6 +115,9 @@ const FORGES = {
     canCreateRepo(){ return true; },
     newRepoUrl(instance){ return this.webBase(instance) + '/repo/create'; },
     newTokenUrl(instance){ return this.webBase(instance) + '/user/settings/applications'; },
+    // Registration is per-instance and instances routinely disable it, so this
+    // link is offered as "if your instance allows it" rather than promised.
+    signupUrl(instance){ return this.webBase(instance) + '/user/sign_up'; },
     tokenPlaceholder:'\u2026',
     // Gitea and Forgejo support OAuth2 PUBLIC clients with PKCE - no client
     // secret, so unlike GitHub this needs no server-side exchange and works
@@ -6523,11 +6530,14 @@ function exportMenu(){
   pop.className='export-pop';
   const _collabItems = collabAvailable() ? `
     <button data-a="collab"><span class="ex-ic">👥</span><span><b>Collaborate live</b><i>Real-time editing - share an invite link</i></span></button>
-    <button data-a="cloudshare"><span class="ex-ic">☁</span><span><b>Cloud share (editable)</b><i>Publish + copy an edit link collaborators can save to</i></span></button>
+    <button data-a="cloudshare"><span class="ex-ic">☁</span><span><b>Cloud share (editable)</b><i>Publish + copy an edit link collaborators can save to</i></span></button>` : '';
+  // Live collab is capability-based (the room id IS the access) and works on any
+  // forge; only this one needs the identity the worker can't issue for Gitea.
+  const _accessItem = accessControlAvailable() ? `
     <button data-a="manageaccess"><span class="ex-ic">🔐</span><span><b>Manage access</b><i>Named collaborators &amp; link permissions</i></span></button>` : '';
   pop.innerHTML=`
     <div class="ex-grp">Share &amp; collaborate</div>
-    <button data-a="share"><span class="ex-ic">🔗</span><span><b>Copy share link</b><i>Read-only view, no account needed</i></span></button>${_collabItems}
+    <button data-a="share"><span class="ex-ic">🔗</span><span><b>Copy share link</b><i>Read-only view, no account needed</i></span></button>${_collabItems}${_accessItem}
     <div class="ex-grp">Tools</div>
     <button data-a="history"><span class="ex-ic">🕘</span><span><b>Version history</b><i>Browse & restore past versions</i></span></button>
     <button data-a="present"><span class="ex-ic">▶</span><span><b>Presentation mode</b><i>Step through the map one topic at a time</i></span></button>
@@ -6562,7 +6572,10 @@ function exportMenu(){
     if(a==='share') copyShareLink();
     if(a==='collab'){ if(collabAvailable()) Collab.startHost(); else toast('Live collaboration needs the hosted app'); }
     if(a==='cloudshare'){ if(collabAvailable()) publishSharedMap(); else toast('Cloud share needs the hosted app'); }
-    if(a==='manageaccess'){ if(collabAvailable()) openAccessPanel(); else toast('Managing access needs the hosted app'); }
+    if(a==='manageaccess'){
+      if(accessControlAvailable()) openAccessPanel();
+      else toast(collabAvailable() ? 'Managing access needs a GitHub sign-in' : 'Managing access needs the hosted app');
+    }
     else if(a==='history') showVersionHistory();
     else if(a==='present') startPresentation();
     else if(a==='buildprompt') showBuildPrompt(sel || (map&&map.rootId));
@@ -12657,6 +12670,15 @@ function oauthConfigured(){
 // is bound to the deployed app - they can't work from local (server-mode) hosting
 // or from static GitHub Pages (PAT-only).
 function collabAvailable(){ return MODE==='cloud' && oauthConfigured(); }
+// Named collaborators and link permissions need a VERIFIED identity, and the
+// worker mints one only from a GitHub token (/api/session calls api.github.com).
+// A Gitea/Forgejo session therefore reaches the collab DO anonymously, where
+// every owner-only route answers 401 - which the UI used to surface as "Sign in
+// to manage access" to a user who was already signed in. Hidden beats broken.
+function accessControlAvailable(){
+  return collabAvailable() && typeof CloudStore!=='undefined'
+      && !!CloudStore.forge && CloudStore.forge.id==='github';
+}
 
 // Shared success path for BOTH login methods (PAT and OAuth).
 // A cloud-backed #shared= link opened while signed out is parked here, then opened
@@ -12707,6 +12729,16 @@ function startGithubLogin(){
 // is something they paste once - it is public by design, not a credential.
 // ============================================================
 const GITEA_OAUTH_STATE = 'mindspark:gitea:oauthstate';   // {state, verifier, instance, clientId}
+
+// Every message from the OAuth path lands in #giteaError, which lives inside the
+// token <details> - collapsed by default, exactly like GitHub's. Writing there
+// without opening it puts the error where nobody can see it, so the reveal is
+// part of saying it. It doubles as the way out: any OAuth failure surfaces the
+// token flow, which needs no instance configuration.
+function giteaSay(errEl, m){
+  if(errEl) errEl.textContent = m || '';
+  if(m){ const d=$('#giteaTokenDetails'); if(d) d.open=true; }
+}
 function giteaClientIdFor(instance){
   try{ return JSON.parse(localStorage.getItem('mindspark:gitea:clients')||'{}')[instance] || ''; }
   catch(e){ return ''; }
@@ -12718,12 +12750,7 @@ function rememberGiteaClientId(instance, clientId){
 }
 
 async function startGiteaLogin(instance, clientId, errEl){
-  // Any OAuth failure reveals the token flow: it needs no instance
-  // configuration, so it is the way out of every error this path can produce.
-  const say=(m)=>{
-    if(errEl) errEl.textContent=m;
-    if(m){ const d=$('#giteaTokenDetails'); if(d) d.open=true; }
-  };
+  const say=(m)=>giteaSay(errEl, m);
   const base=String(instance||'').trim().replace(/\/+$/,'');
   if(!/^https:\/\/.+/.test(base)) return say('Enter your instance URL first (https://…).');
   if(!clientId) return say('Enter the client ID of the OAuth application you registered on your instance.');
@@ -12761,12 +12788,7 @@ async function startGiteaLogin(instance, clientId, errEl){
 // by default - so a network-level failure here almost always means that setting,
 // and saying so is far more useful than "Failed to fetch".
 async function finishGiteaLogin(code, state, errEl){
-  // Any OAuth failure reveals the token flow: it needs no instance
-  // configuration, so it is the way out of every error this path can produce.
-  const say=(m)=>{
-    if(errEl) errEl.textContent=m;
-    if(m){ const d=$('#giteaTokenDetails'); if(d) d.open=true; }
-  };
+  const say=(m)=>giteaSay(errEl, m);
   let saved=null;
   try{ saved=JSON.parse(localStorage.getItem(GITEA_OAUTH_STATE)||'null'); }catch(e){}
   localStorage.removeItem(GITEA_OAUTH_STATE);
@@ -12805,8 +12827,8 @@ window.addEventListener('message', (ev)=>{
   const d=ev.data;
   if(!d || d.type !== 'mindspark-oauth-pkce') return;
   const errEl=$('#giteaError');
-  if(d.error){ if(errEl) errEl.textContent='Sign-in failed: '+d.error; return; }
-  if(!d.code){ if(errEl) errEl.textContent='Sign-in returned no authorization code.'; return; }
+  if(d.error){ giteaSay(errEl, 'Sign-in failed: '+d.error); return; }
+  if(!d.code){ giteaSay(errEl, 'Sign-in returned no authorization code.'); return; }
   finishGiteaLogin(d.code, d.state, errEl);
 });
 
@@ -12850,7 +12872,7 @@ function showLoginOverlay(opts){
   const tabs=[...document.querySelectorAll('.forge-tab')];
   const panes=[...document.querySelectorAll('.forge-pane')];
   const inst=$('#giteaInstance'), gPat=$('#giteaPat'), gSign=$('#giteaSignIn'),
-        gErr=$('#giteaError'), gLink=$('#giteaTokenLink'),
+        gErr=$('#giteaError'), gLink=$('#giteaTokenLink'), gSignup=$('#giteaSignupLink'),
         gClient=$('#giteaClientId'), gOauth=$('#giteaOauthBtn'),
         gRedirect=$('#giteaRedirect'),
         ghDetails=$('#ghTokenDetails'), gDetails=$('#giteaTokenDetails');
@@ -12859,8 +12881,13 @@ function showLoginOverlay(opts){
   // OAuth error that gives no hint where to look.
   if(gRedirect) gRedirect.textContent = oauthRedirectUri();
   // Collapse the token flow only when the other method is actually usable -
-  // otherwise the card would open with no sign-in control in sight.
+  // otherwise the card would open with no sign-in control in sight. On GitHub
+  // that turns on the deployment: a PAT-only build hides the OAuth box entirely.
   if(ghDetails) ghDetails.open = !oauthConfigured();
+  // Gitea's pane always renders its OAuth button and client-id field, so
+  // collapsing can never strand the user - it starts closed, matching GitHub.
+  // giteaSay() opens it on any OAuth failure, which is the way back out.
+  if(gDetails) gDetails.open = false;
   // Remember the last forge used so a returning user whose token expired lands
   // back on their own tab instead of GitHub's.
   let active = localStorage.getItem('mindspark:forge') || 'github';
@@ -12880,10 +12907,16 @@ function showLoginOverlay(opts){
     if(savedInstance && !inst.value) inst.value=savedInstance;
     const syncLink=()=>{
       const base=(inst.value||'').trim().replace(/\/+$/,'');
-      if(gLink){
-        if(/^https:\/\/.+/.test(base)){ gLink.href=FORGES.gitea.newTokenUrl(base); gLink.removeAttribute('aria-disabled'); }
-        else { gLink.removeAttribute('href'); gLink.setAttribute('aria-disabled','true'); }
-      }
+      const ok=/^https:\/\/.+/.test(base);
+      // Both links live on the user's instance: no URL, no target. Left
+      // href-less rather than hidden so the option is visible before it works.
+      const point=(el, url)=>{
+        if(!el) return;
+        if(ok){ el.href=url; el.removeAttribute('aria-disabled'); }
+        else { el.removeAttribute('href'); el.setAttribute('aria-disabled','true'); }
+      };
+      point(gLink,   ok?FORGES.gitea.newTokenUrl(base):'');
+      point(gSignup, ok?FORGES.gitea.signupUrl(base):'');
     };
     inst.addEventListener('input', syncLink);
     syncLink();
@@ -12898,7 +12931,6 @@ function showLoginOverlay(opts){
       const base=(inst.value||'').trim().replace(/\/+$/,'');
       const known=base?giteaClientIdFor(base):'';
       if(known && !gClient.value) gClient.value=known;
-      if(gDetails) gDetails.open = !(known && gClient.value);
     };
     inst.addEventListener('input', syncClient);
     syncClient();
@@ -13376,7 +13408,7 @@ function openSharedByMeRowMenu(btn, sm){
   const pop=document.createElement('div'); pop.className='row-pop'; pop._for='sbm:'+sm.room;
   pop.innerHTML='<button data-a="open"><span class="rp-ic">\u2197</span>Open live copy</button>'+
     '<button data-a="copyedit"><span class="rp-ic">\u270F\uFE0F</span>Copy edit link</button>'+
-    '<button data-a="access"><span class="rp-ic">\uD83D\uDD10</span>Manage access</button>'+
+    (accessControlAvailable()?'<button data-a="access"><span class="rp-ic">\uD83D\uDD10</span>Manage access</button>':'')+
     '<button data-a="forget" class="danger"><span class="rp-ic">\u2715</span>Remove from list</button>';
   pop.style.visibility='hidden'; pop.style.left='-9999px'; pop.style.top='-9999px';
   document.body.appendChild(pop);
@@ -13384,7 +13416,8 @@ function openSharedByMeRowMenu(btn, sm){
   const editLink=location.origin+location.pathname+'#shared='+sm.room+':'+sm.token;
   pop.querySelector('[data-a="open"]').onclick=ev=>{ ev.stopPropagation(); closeRowMenu(); openSharedInPlace(sm.room, sm.token); };
   pop.querySelector('[data-a="copyedit"]').onclick=async ev=>{ ev.stopPropagation(); closeRowMenu(); try{ await navigator.clipboard.writeText(editLink); toast('Edit link copied'); }catch(e){} };
-  pop.querySelector('[data-a="access"]').onclick=ev=>{ ev.stopPropagation(); closeRowMenu(); openAccessPanel(sm.room); };
+  const sbmAc=pop.querySelector('[data-a="access"]');
+  if(sbmAc) sbmAc.onclick=ev=>{ ev.stopPropagation(); closeRowMenu(); openAccessPanel(sm.room); };
   pop.querySelector('[data-a="forget"]').onclick=ev=>{ ev.stopPropagation(); closeRowMenu(); forgetSharedByMe(sm.room); };
   _rowPop=pop;
   _rowPopOut=(e)=>{ if(_rowPop && (!e || e.type!=='mousedown' || !_rowPop.contains(e.target))) closeRowMenu(); };
@@ -13400,7 +13433,7 @@ function openSharedRowMenu(btn, sm){
   pop.innerHTML='<button data-a="open"><span class="rp-ic">\u2197</span>Open</button>'+
     (sm.token?'<button data-a="copyedit"><span class="rp-ic">\u270F\uFE0F</span>Copy edit link</button>':'')+
     '<button data-a="copyview"><span class="rp-ic">\uD83D\uDD17</span>Copy view link</button>'+
-    (sm.mine?'<button data-a="access"><span class="rp-ic">\uD83D\uDD10</span>Manage access</button>':'')+
+    (sm.mine && accessControlAvailable()?'<button data-a="access"><span class="rp-ic">\uD83D\uDD10</span>Manage access</button>':'')+
     '<button data-a="forget" class="danger"><span class="rp-ic">\u2715</span>Remove from list</button>';
   pop.style.visibility='hidden'; pop.style.left='-9999px'; pop.style.top='-9999px';
   document.body.appendChild(pop);
@@ -13419,6 +13452,17 @@ function openSharedRowMenu(btn, sm){
 async function publishSharedMap(){
   if(!map || !map.id){ toast('Open a map first'); return; }
   if(!sharedApiUrl(map.id)){ toast('Cloud sharing isn\u2019t configured'); return; }
+  // Publishing still works without a verified identity, but on materially weaker
+  // terms: the worker claims the room by edit-token instead of creating an ACL,
+  // so linkAccess falls back to plain 'edit' and the edit-auth upgrade below
+  // would 401. Anyone holding the link can then edit anonymously. That is a
+  // security difference the sharer has to opt into, not discover later.
+  const named = accessControlAvailable();
+  if(!named && !confirm(
+      'Publish an edit link for this map?\n\n'
+    + 'Anyone who gets the link will be able to edit it, and it can\u2019t be restricted '
+    + 'to named collaborators - that needs a GitHub sign-in.\n\n'
+    + 'The link stays editable until you remove the map from "Shared by me".')) return;
   if(!map._editToken) map._editToken = 'e'+Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,6);
   let room = map._shareRoom || map.id;
   const body = JSON.stringify(_shareePayload(map));
@@ -13434,11 +13478,13 @@ async function publishSharedMap(){
     const editLink=location.origin+location.pathname+'#shared='+room+':'+map._editToken;
     try{ await navigator.clipboard.writeText(editLink); }catch(e){ console.warn('clipboard write failed:', e.message); toast('Could not copy the edit link'); }
     map._shareRoom = room;
-    // New editable shares require collaborators to sign in (legacy links stay anonymous until re-shared).
-    try{ await accessApi(room, 'link', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ access:'edit-auth' }) }); }catch(e){}
+    // New editable shares require collaborators to sign in (legacy links stay anonymous
+    // until re-shared). Owner-only route: without an identity it 401s, so don't pretend.
+    if(named){ try{ await accessApi(room, 'link', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ access:'edit-auth' }) }); }catch(e){} }
     rememberSharedByMe({ id: map.id, room, token: map._editToken, title: map.title, color: map.color });
     if(typeof scheduleSave==='function' && !map._cloudEdit) scheduleSave();   // persist the token in the owner repo so re-publishing reuses it
-    toast('Edit link copied - collaborators sign in with GitHub to open it.');
+    toast(named ? 'Edit link copied - collaborators sign in with GitHub to open it.'
+                : 'Edit link copied - anyone with this link can edit.');
   }catch(e){ toast('Could not publish: '+(e.message||e)); }
 }
 
