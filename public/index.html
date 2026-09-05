@@ -15,7 +15,7 @@
      to an attacker origin: script-src has no external host, and connect-src is
      an allowlist. Adding an origin here widens that exfiltration channel, so
      read the "External hosts need a CSP entry" note in AGENTS.md first. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://avatars.githubusercontent.com https://icons.duckduckgo.com; connect-src 'self' https://api.github.com https://codeberg.org https://gitea.com https://api.crossref.org https://api.anthropic.com https://api.openai.com https://api.quotable.io https://zenquotes.io https://favqs.com https://dummyjson.com https://quoteslate.vercel.app https://stoic.tekloon.net https://type.fit https://api.freeapi.app https://mindspark-oauth.githubpage.workers.dev wss://mindspark-oauth.githubpage.workers.dev; object-src 'none'; base-uri 'self'; form-action 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://avatars.githubusercontent.com https://icons.duckduckgo.com; connect-src 'self' https://api.github.com https://codeberg.org https://gitea.com https://gitlab.com https://api.crossref.org https://api.anthropic.com https://api.openai.com https://api.quotable.io https://zenquotes.io https://favqs.com https://dummyjson.com https://quoteslate.vercel.app https://stoic.tekloon.net https://type.fit https://api.freeapi.app https://mindspark-oauth.githubpage.workers.dev wss://mindspark-oauth.githubpage.workers.dev; object-src 'none'; base-uri 'self'; form-action 'self'" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes" />
 <meta name="theme-color" content="#e0613a" />
 <meta name="apple-mobile-web-app-title" content="MindSpark" />
@@ -209,6 +209,7 @@
     <div class="forge-tabs" role="tablist" aria-label="Choose your git host">
       <button class="forge-tab is-on" type="button" role="tab" data-forge="github" aria-selected="true">GitHub</button>
       <button class="forge-tab" type="button" role="tab" data-forge="gitea" aria-selected="false">Gitea / Forgejo</button>
+      <button class="forge-tab" type="button" role="tab" data-forge="gitlab" aria-selected="false">GitLab</button>
     </div>
 
     <div class="forge-pane" data-forge-pane="github">
@@ -338,12 +339,84 @@
       </details>
     </div><!-- /gitea pane -->
 
+    <div class="forge-pane" data-forge-pane="gitlab" hidden>
+      <label class="pane-label" for="glInstance">Your GitLab instance</label>
+      <input type="url" id="glInstance" class="instance-input" list="glSuggest"
+             placeholder="https://gitlab.com" autocomplete="off" spellcheck="false" />
+      <datalist id="glSuggest">
+        <option value="https://gitlab.com"></option>
+      </datalist>
+      <div class="login-step-hint">
+        The address you browse your projects at - just the origin, e.g. <code>https://gitlab.com</code>.
+        GitLab.com works as-is; a <b>self-managed</b> instance also needs its origin added to this
+        deployment's Content-Security-Policy, and MindSpark will tell you exactly what to add.
+      </div>
+
+      <div class="login-oauth">
+        <button id="glOauthBtn" class="oauth-btn" type="button">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 15.5 5.06 6.46h5.88L8 15.5Zm-6.9-9.04h3.4L8 15.5 1.1 6.46Zm0 0L.13 9.5a.66.66 0 0 0 .24.74L8 15.5 1.1 6.46Zm0 0L3.05.86a.34.34 0 0 1 .64 0l1.37 5.6H1.1Zm13.8 0h-3.4L8 15.5l6.9-9.04Zm0 0 .97 3.04a.66.66 0 0 1-.24.74L8 15.5l6.9-9.04Zm0 0L12.95.86a.34.34 0 0 0-.64 0l-1.37 5.6h3.96Z"/></svg>
+          Sign in with GitLab
+        </button>
+        <input type="text" id="glClientId" class="instance-input" style="margin-top:8px"
+               placeholder="OAuth application ID" autocomplete="off" spellcheck="false" />
+        <details class="login-fallback">
+          <summary>Where does the application ID come from?</summary>
+          <p>
+            MindSpark has no server to hold a client secret, so it signs in as a public
+            application you register once: <b>Preferences &rarr; Applications &rarr; Add new application</b>
+            on your instance.
+          </p>
+          <p>
+            <b>Redirect URI</b> (must match exactly): <code id="glRedirect"></code><br>
+            <b>Leave &ldquo;Confidential&rdquo; unchecked</b> and tick <b>Expire access tokens</b> off if offered -
+            MindSpark is a public client and uses PKCE, so there is no secret to store in your browser.<br>
+            <b>Scope:</b> <code>api</code>.
+          </p>
+        </details>
+      </div>
+
+      <p class="login-signup">
+        <a id="glSignupLink" target="_blank" rel="noopener" aria-disabled="true">Create an account on that instance &rarr;</a>
+        Registration lives on your own instance, so this link follows the URL above. Self-managed
+        instances often turn self-registration off - if yours does, ask its admin for an account.
+      </p>
+
+      <details class="login-token" id="glTokenDetails">
+        <summary>Sign in with an access token</summary>
+        <ol class="login-steps">
+          <li>
+            <a class="login-step-link" id="glTokenLink" target="_blank" rel="noopener">
+              Create an access token &rarr;
+            </a>
+            <div class="login-step-hint">
+              <b>Preferences &rarr; Access tokens &rarr; Add new token.</b> Select the
+              <code>api</code> scope. MindSpark creates the private <code>mindspark-maps</code>
+              project for you on first sign-in.<br>
+              <b>Note:</b> GitLab's Files API is only reachable with <code>api</code>, which is
+              <b>account-wide</b> - <code>read_repository</code> and <code>write_repository</code> cover
+              only git over HTTP and will not work here. So unlike GitHub's fine-grained tokens, this
+              token can reach everything your account can. A project access token cannot be used either,
+              because the project does not exist yet.
+            </div>
+          </li>
+          <li>
+            <label for="glPat">Paste your token here:</label>
+            <div class="token-input">
+              <input type="password" id="glPat" placeholder="glpat-…" autocomplete="off" spellcheck="false" />
+              <button id="glSignIn">Sign in</button>
+            </div>
+            <div class="login-error" id="glError"></div>
+          </li>
+        </ol>
+      </details>
+    </div><!-- /gitlab pane -->
+
     <details class="login-extra">
       <summary>How does this work / is it safe?</summary>
-      <p>MindSpark runs entirely in your browser. The token is stored only in <code>localStorage</code> on this device, and is sent only to the git host you signed in to - never to any third party. A Content-Security-Policy on this page blocks scripts and network calls to any other origin, so there is no route out for it. On GitHub, a fine-grained token also keeps the damage to one repository if that ever fails; Gitea and Forgejo have no per-repo token scoping, so their tokens are account-wide.</p>
+      <p>MindSpark runs entirely in your browser. The token is stored only in <code>localStorage</code> on this device, and is sent only to the git host you signed in to - never to any third party. A Content-Security-Policy on this page blocks scripts and network calls to any other origin, so there is no route out for it. On GitHub, a fine-grained token also keeps the damage to one repository if that ever fails; Gitea, Forgejo and GitLab have no usable per-repo token scoping, so their tokens are account-wide.</p>
       <p>Because the token lives in this browser, treat signing in the way you would treat staying logged in anywhere: don't do it on a shared or untrusted machine, and sign out when you're done.</p>
-      <p>Every save commits a small JSON file to your <code>mindspark-maps</code> repo, so your data is versioned and you can <code>git clone</code> it any time. (On Gitea and Forgejo - and with a GitHub classic token - MindSpark creates that repo on first sign-in. A GitHub fine-grained token can't create repositories, which is why its step 1 exists.)</p>
-      <p>To revoke access on GitHub: <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">fine-grained tokens</a> / <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">classic tokens</a>. On Gitea or Forgejo: <b>Settings → Applications</b> on your instance.</p>
+      <p>Every save commits a small JSON file to your <code>mindspark-maps</code> repo, so your data is versioned and you can <code>git clone</code> it any time. (On Gitea, Forgejo and GitLab - and with a GitHub classic token - MindSpark creates that repo on first sign-in. A GitHub fine-grained token can't create repositories, which is why its step 1 exists.)</p>
+      <p>To revoke access on GitHub: <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">fine-grained tokens</a> / <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">classic tokens</a>. On Gitea or Forgejo: <b>Settings → Applications</b> on your instance. On GitLab: <b>Preferences → Access tokens</b> (and <b>Applications</b> for an OAuth sign-in).</p>
     </details>
   </div>
 </div>

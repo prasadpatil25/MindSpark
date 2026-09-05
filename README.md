@@ -97,7 +97,7 @@ MindSpark's editor is 100% client-side. The only things that require the optiona
 | Import / export (JSON, OPML, Markdown, PNG, PDF, `.doc`, Mermaid, …) | ✅ | ✅ | ✅ |
 | Version history, undo/redo, search, presentation mode | ✅ | ✅ | ✅ |
 | **Read-only share links** (`#view=`, whole map encoded in the URL) | ✅ | ✅ | ✅ |
-| Save maps to **your own private repo** (GitHub, Gitea, Forgejo) | ✅ *(SQLite, no forge)* | ✅ *(token)* | ✅ *(token, or GitHub OAuth)* |
+| Save maps to **your own private repo** (GitHub, Gitea, Forgejo, GitLab) | ✅ *(SQLite, no forge)* | ✅ *(token)* | ✅ *(token, or GitHub OAuth)* |
 | One-click **"Sign in with GitHub"** (OAuth) | ❌ | ❌ | ✅ |
 | **Cloud share (editable)** `#shared=` links | ❌ | ❌ | ✅ |
 | **Real-time collaboration** / live merge | ❌ | ❌ | ✅ |
@@ -177,7 +177,7 @@ MindSpark detects how it's running and picks a storage backend automatically (th
 | Mode | Example URL | How to run | Auth | Storage | Collaboration | Cost |
 |---|---|---|---|---|:---:|---|
 | **Local** | `http://localhost:3000` | `node server.js` | None - single user | SQLite on disk | ❌ | Your server |
-| **Static Pages (token-only)** | `https://prasadpatil25.github.io/MindSpark/` (`https://<you>.github.io/MindSpark/` for forks) | Host `public/` on GitHub Pages (or any static host) | GitHub fine-grained token, or a Gitea/Forgejo token | User's own private `mindspark-maps` repo | ❌ (no OAuth, no `#shared=`, no live) | **$0** |
+| **Static Pages (token-only)** | `https://prasadpatil25.github.io/MindSpark/` (`https://<you>.github.io/MindSpark/` for forks) | Host `public/` on GitHub Pages (or any static host) | GitHub fine-grained token, or a Gitea/Forgejo/GitLab token | User's own private `mindspark-maps` repo | ❌ (no OAuth, no `#shared=`, no live) | **$0** |
 | **Worker (full)** | `https://mindspark.githubpage.workers.dev` | `public/` on Cloudflare Workers **+** the `worker/` collab worker | GitHub OAuth or PAT | User's GitHub repo + shared rooms in the worker | ✅ | **$0** on CF free tier |
 
 ### Static Pages deployment (PAT-only) - $0 forever
@@ -189,30 +189,36 @@ Pure browser app, talks directly to the GitHub API. Each visitor stores their ow
 
 **User flow (per visitor):** create a **private** `mindspark-maps` repo, then a [fine-grained token](https://github.com/settings/personal-access-tokens/new) limited to that one repo with `Contents: Read and write`, paste it in, and sign in. Every save commits a small JSON file. Revoke at <https://github.com/settings/personal-access-tokens>.
 
-#### Git hosts: GitHub, Gitea and Forgejo
+#### Git hosts: GitHub, Gitea/Forgejo and GitLab
 
-The login screen has a host picker. Gitea and Forgejo (Codeberg included) share one adapter, because Gitea mirrors GitHub's contents API and Forgejo is a Gitea fork - same `/contents/{path}` shape, same base64 + `sha` writes. See `FORGES` in `public/app.js`; the rule is that a per-host difference lives in that descriptor, never as an `if` inside `CloudStore`, so index reconciliation and tombstones stay host-agnostic. `test/forge-adapters.test.mjs` enforces both halves of that.
+The login screen has a host picker. Gitea and Forgejo (Codeberg included) share one adapter, because Gitea mirrors GitHub's contents API and Forgejo is a Gitea fork - same `/contents/{path}` shape, same base64 + `sha` writes. GitLab shares none of it: projects are addressed by URL-encoded path, listing a directory is a different endpoint from reading a file, a branch must be named on every call, and a successful write returns no sha to reuse. So each descriptor in `FORGES` (`public/app.js`) supplies whole URLs and response readers rather than a few flags. The rule is that a per-host difference lives in that descriptor, never as an `if` inside `CloudStore`, so index reconciliation and tombstones stay host-agnostic. `test/forge-adapters.test.mjs` enforces both halves of that.
 
-| | GitHub | Gitea / Forgejo |
-|---|---|---|
-| Sign-in | fine-grained token, or OAuth on the Worker deploy | access token, or OAuth (PKCE) from any deploy |
-| Token scope | can be limited to the one repo | **account-wide** - no per-repo scoping exists |
-| Repo creation | fine-grained tokens can't create repos, so you make it first | `write:repository` creates it for you - one step fewer |
-| Version history | ✅ commits | ✅ commits |
-| Live collaboration / `#shared=` | ✅ on the Worker deploy | ❌ not yet - the collab worker's identity is GitHub-only |
+| | GitHub | Gitea / Forgejo | GitLab |
+|---|---|---|---|
+| Sign-in | fine-grained token, or OAuth on the Worker deploy | access token, or OAuth (PKCE) from any deploy | access token, or OAuth (PKCE) from any deploy |
+| Token scope | can be limited to the one repo | **account-wide** - no per-repo scoping exists | **account-wide** - the Files API needs `api`; `write_repository` covers only git over HTTP |
+| Repo creation | fine-grained tokens can't create repos, so you make it first | `write:repository` creates it for you - one step fewer | `api` creates it for you - one step fewer |
+| Version history | ✅ commits | ✅ commits | ✅ commits |
+| Concurrent-write check | ✅ blob `sha` sent with every write | ✅ blob `sha` sent with every write | ❌ no token survives a write, so writes are unconditional |
+| Live collaboration / `#shared=` | ✅ on the Worker deploy | ❌ not yet - the collab worker's identity is GitHub-only | ❌ same |
 
-**Self-hosted instances need one extra step.** `connect-src` is a fixed allowlist and can't learn a new origin at runtime, so only `codeberg.org` and `gitea.com` work out of the box. For your own instance, add its origin to the three CSP copies (`public/index.html`, `public/_headers`, `server.js`) and redeploy - the app checks this *before* it makes a request and tells you exactly what's missing rather than failing as an opaque network error.
+On that missing concurrent-write check: GitLab returns only `{file_path, branch}` from a successful write, so there is nothing to carry into the next one. What actually protects your maps is host-agnostic and unaffected - every save re-reads the server index and merges into it, so a second device can never drop the first one's maps.
+
+**Self-hosted instances need one extra step.** `connect-src` is a fixed allowlist and can't learn a new origin at runtime, so only `codeberg.org`, `gitea.com` and `gitlab.com` work out of the box. For your own instance, add its origin to the three CSP copies (`public/index.html`, `public/_headers`, `server.js`) and redeploy - the app checks this *before* it makes a request and tells you exactly what's missing rather than failing as an opaque network error.
 
 #### OAuth
 
-The two hosts get there by different routes, because GitHub OAuth Apps have no PKCE support:
+The hosts get there by different routes, because GitHub OAuth Apps have no PKCE support:
 
 - **GitHub** - authorization code with a client *secret*, so the exchange has to happen server-side. That is what `worker/oauth-worker.js` is for, and why the button only appears on the Worker deploy.
-- **Gitea / Forgejo** - authorization code with **PKCE and a public client**: no secret, so the whole exchange runs in the browser and works from a purely static deploy, GitHub Pages included. `public/oauth-callback.html` is the redirect target; it never sees a token, only the one-time code, which it posts to the opener (the only window holding the verifier).
+- **Gitea / Forgejo and GitLab** - authorization code with **PKCE and a public client**: no secret, so the whole exchange runs in the browser and works from a purely static deploy, GitHub Pages included. `public/oauth-callback.html` is the redirect target; it never sees a token, only the one-time code, which it posts to the opener (the only window holding the verifier).
 
-Because nobody can pre-register an OAuth app on *your* server, Gitea/Forgejo sign-in asks for a client ID once, remembered per instance. To create one: **Settings → Applications → Create a new OAuth2 application** on your instance, set the redirect URI to the exact string the login screen shows you (`…/oauth-callback.html`), and **leave "Confidential Client" unchecked**.
+Because nobody can pre-register an OAuth app on *your* server, both PKCE hosts ask for a client ID once, remembered per host and per instance. Set the redirect URI to the exact string the login screen shows you (`…/oauth-callback.html`):
 
-One instance-side setting is required: the token exchange is a cross-origin POST, so `[cors] ENABLED = true` must be set in `app.ini`. Codeberg has had this on [since February 2024](https://codeberg.org/Codeberg/Community/issues/1379); self-hosted instances default to off. If it isn't enabled, MindSpark says exactly that and opens the access-token flow instead, which needs no instance configuration at all.
+- **Gitea / Forgejo** - **Settings → Applications → Create a new OAuth2 application**, and **leave "Confidential Client" unchecked**.
+- **GitLab** - **Preferences → Applications → Add new application**, scope `api`, and **leave "Confidential" unchecked**.
+
+Gitea and Forgejo need one instance-side setting: the token exchange is a cross-origin POST, so `[cors] ENABLED = true` must be set in `app.ini`. Codeberg has had this on [since February 2024](https://codeberg.org/Codeberg/Community/issues/1379); self-hosted instances default to off. GitLab allows the exchange from a browser out of the box. Either way, if it fails MindSpark names the likely cause and opens the access-token flow instead, which needs no instance configuration at all.
 
 A classic `repo`-scoped token still works and skips the repo-creation step (fine-grained tokens can't create repositories), but `repo` grants read/write to **every** private repository on the account - so a token that leaked would reach all of them, not just the maps. The login screen offers it as a labelled fallback, not the default.
 
