@@ -3,7 +3,8 @@
    - ServerStore: when running with `node server.js` locally (SQLite)
    - CloudStore : when deployed as static files (GitHub Pages, CF Pages,
                   Netlify, etc.). User logs in with an access token for a git
-                  forge - GitHub, or Gitea/Forgejo (Codeberg included) - and we
+                  forge - GitHub, Gitea/Forgejo (Codeberg included) or GitLab
+                  (gitlab.com or self-managed) - and we
                   store each map as a JSON file inside their own private
                   `mindspark-maps` repo. See FORGES. No backend required.
    `initStore()` probes /healthz, then picks one.
@@ -56,7 +57,10 @@ const ServerStore = {
    Gitea deliberately mirrors GitHub's contents API and Forgejo is a Gitea
    fork, so ONE descriptor covers both of those: same `/repos/{owner}/{repo}/
    contents/{path}` shape, same base64 + `sha` write/delete semantics, same
-   `Authorization: token <t>`. What genuinely differs is captured below.
+   `Authorization: token <t>`. GitLab shares none of that - URL-encoded project
+   paths, a separate endpoint for listing, a branch named on every call, no sha
+   returned from a write - which is why a descriptor holds whole URLs and
+   response readers rather than a handful of flags.
 
    The rule that keeps this from rotting: a difference belongs in a field or
    method HERE, never as an `if(forge.id==='github')` inside CloudStore. The
@@ -64,6 +68,11 @@ const ServerStore = {
    tombstones, orphan recovery, the local backup cache - is provider-agnostic
    and must stay that way, because that is the code that loses maps if it
    grows a per-forge branch nobody tests.
+
+   Adding a forge is therefore: one entry below implementing every method the
+   contract test names, its origin in the three CSP copies, a pane in
+   index.html plus a row in SELF_HOSTED_PANES, and a case in
+   test/forge-adapters.test.mjs. Nothing in CloudStore should need to change.
 
    `selfHosted:true` means the API origin comes from the user, which collides
    with the Content-Security-Policy: connect-src is a fixed allowlist and
@@ -92,7 +101,56 @@ const FORGES = {
     // needs email verification and a CAPTCHA. Both sign-in paths just point at
     // it, so someone arriving without an account has somewhere to go.
     signupUrl(){ return 'https://github.com/signup'; },
-    tokenPlaceholder:'github_pat_\u2026'
+    tokenPlaceholder:'github_pat_\u2026',
+    // Which scope the user is missing, per forge, for the two failures
+    // _ensureRepo() can actually diagnose.
+    createScopeHint:'A classic token needs the `repo` scope.',
+    repoAccessHint:'If it is fine-grained, check it lists that repository under Repository access and has Contents: Read and write.',
+    // ---- URL and payload shaping ----------------------------------------
+    // Everything below exists so CloudStore never has to know the shape of a
+    // forge's REST surface. `r` is the coordinate object CloudStore._ref()
+    // builds: {api, owner, repo, branch}.
+    repoUrl(r){ return `${r.api}/repos/${r.owner}/${r.repo}`; },
+    createRepoBody(repo){ return {name:repo, description:'My MindSpark mind maps', private:true, auto_init:true}; },
+    // `ref` is a commit to read the file AT; absent means the default branch,
+    // which GitHub and Gitea both supply implicitly.
+    contentsUrl(r, path, ref){ return this.repoUrl(r)+'/contents/'+path+(ref?'?ref='+encodeURIComponent(ref):''); },
+    // Reads and writes hit the same endpoint here; a forge that names the
+    // target branch in the query on reads and in the body on writes needs them
+    // split, so the two targets are asked for separately.
+    writeUrl(r, path){ return this.contentsUrl(r, path); },
+    treeUrl(r, path){ return this.contentsUrl(r, path); },
+    treeFiles(json){ return (json||[]).filter(f=>f.type==='file').map(f=>f.name); },
+    commitsUrl(r, path, limit){ return `${this.repoUrl(r)}/commits?path=${path}&${this.commitsLimitParam}=${limit}`; },
+    parseCommits(json){
+      return (json||[]).map(c=>({
+        ref: c.sha,
+        ts: Date.parse(c.commit?.author?.date || c.commit?.committer?.date || 0) || 0,
+        message: c.commit?.message || ''
+      }));
+    },
+    normalizeUser(u){ return (u && u.id!=null && u.login) ? {id:u.id, login:u.login, avatar_url:u.avatar_url} : null; },
+    // No branch is ever named: every call falls through to the repo default.
+    defaultBranch(){ return null; },
+    writeBody(r, path, encoded, sha){ return {message:`MindSpark: update ${path}`, content:encoded, ...(sha?{sha}:{})}; },
+    deleteBody(r, path, sha){ return {message:`MindSpark: delete ${path}`, sha}; },
+    // The version token CloudStore caches in `shas` and sends back on the next
+    // write. For GitHub and Gitea it is a real blob sha, read from a GET and
+    // returned by a write - see FORGES.gitlab for a forge where it is neither.
+    readVersion(d){ return d.sha; },
+    writeVersion(d){ return d.content.sha; },
+    // The Contents API only inlines base64 for files up to 1 MB; past that the
+    // content comes back empty with encoding "none" and must be read elsewhere.
+    isInlined(d){ return !!(d.content && d.content.trim() && d.encoding!=='none'); },
+    // Fallbacks for a file the primary read did not inline, tried in order.
+    // `json:true` means the body is {content:<base64>}; otherwise the body IS
+    // the file text. The Blobs API handles up to 100 MB.
+    blobSources(r, d){
+      const out=[];
+      if(d.git_url) out.push({url:d.git_url, json:true});
+      if(d.download_url) out.push({url:d.download_url, json:false});
+      return out;
+    }
   },
   gitea: {
     // Covers Gitea AND Forgejo (Codeberg included) - the API surface MindSpark
@@ -129,7 +187,156 @@ const FORGES = {
       authorizeUrl(instance){ return FORGES.gitea.webBase(instance) + '/login/oauth/authorize'; },
       tokenUrl(instance){ return FORGES.gitea.webBase(instance) + '/login/oauth/access_token'; },
       newAppUrl(instance){ return FORGES.gitea.webBase(instance) + '/user/settings/applications'; },
-      scope:'write:repository read:user'
+      scope:'write:repository read:user',
+      // Gitea's handler takes a JSON body. That is the proven-working shape
+      // here and is deliberately not "corrected" to the RFC's form encoding.
+      bodyFormat:'json',
+      corsHint:'That is almost always CORS: on Gitea/Forgejo set `[cors] ENABLED = true` (and list this page\'s origin in ALLOW_DOMAIN) in app.ini, then retry.'
+    },
+    createScopeHint:'The token needs the `write:repository` scope.',
+    repoAccessHint:'Check the token has the `write:repository` scope.',
+    // Gitea mirrors GitHub's contents API, so these are deliberately identical
+    // to GitHub's. They are spelled out rather than shared because the moment
+    // one of them stops being identical - as createFileMethod already has -
+    // the divergence has somewhere to live that isn't an `if` in CloudStore.
+    repoUrl(r){ return `${r.api}/repos/${r.owner}/${r.repo}`; },
+    createRepoBody(repo){ return {name:repo, description:'My MindSpark mind maps', private:true, auto_init:true}; },
+    contentsUrl(r, path, ref){ return this.repoUrl(r)+'/contents/'+path+(ref?'?ref='+encodeURIComponent(ref):''); },
+    // Reads and writes hit the same endpoint here; a forge that names the
+    // target branch in the query on reads and in the body on writes needs them
+    // split, so the two targets are asked for separately.
+    writeUrl(r, path){ return this.contentsUrl(r, path); },
+    treeUrl(r, path){ return this.contentsUrl(r, path); },
+    treeFiles(json){ return (json||[]).filter(f=>f.type==='file').map(f=>f.name); },
+    commitsUrl(r, path, limit){ return `${this.repoUrl(r)}/commits?path=${path}&${this.commitsLimitParam}=${limit}`; },
+    parseCommits(json){
+      return (json||[]).map(c=>({
+        ref: c.sha,
+        ts: Date.parse(c.commit?.author?.date || c.commit?.committer?.date || 0) || 0,
+        message: c.commit?.message || ''
+      }));
+    },
+    normalizeUser(u){ return (u && u.id!=null && u.login) ? {id:u.id, login:u.login, avatar_url:u.avatar_url} : null; },
+    // No branch is ever named: every call falls through to the repo default.
+    defaultBranch(){ return null; },
+    writeBody(r, path, encoded, sha){ return {message:`MindSpark: update ${path}`, content:encoded, ...(sha?{sha}:{})}; },
+    deleteBody(r, path, sha){ return {message:`MindSpark: delete ${path}`, sha}; },
+    readVersion(d){ return d.sha; },
+    writeVersion(d){ return d.content.sha; },
+    isInlined(d){ return !!(d.content && d.content.trim() && d.encoding!=='none'); },
+    blobSources(r, d){
+      const out=[];
+      if(d.git_url) out.push({url:d.git_url, json:true});
+      if(d.download_url) out.push({url:d.download_url, json:false});
+      return out;
+    }
+  },
+  gitlab: {
+    // GitLab is why the descriptors above are shaped the way they are. It
+    // shares the idea with GitHub and Gitea and almost none of the surface:
+    // projects are addressed by URL-encoded path rather than owner/repo
+    // segments, files live under /repository/files with a SEPARATE
+    // /repository/tree for listing, and a branch must be named explicitly on
+    // every single call.
+    //
+    // gitlab.com and self-managed are the same v4 API at a different origin,
+    // which is exactly what selfHosted:true already expresses - so one
+    // descriptor covers both, as it does for Gitea and Forgejo.
+    id:'gitlab', label:'GitLab', selfHosted:true,
+    apiBase(instance){ return String(instance||'').replace(/\/+$/,'') + '/api/v4'; },
+    webBase(instance){ return String(instance||'').replace(/\/+$/,''); },
+    // Bearer, not `token`: it is the one form that works for BOTH a personal
+    // access token and an OAuth token. GitLab's own PRIVATE-TOKEN header
+    // accepts only the former, which would fork the two sign-in paths.
+    headers(t){ return {Authorization:`Bearer ${t}`,Accept:'application/json'}; },
+    createRepoPath:'/projects',
+    // Same split as Gitea: POST creates, PUT updates. A PUT at a path that does
+    // not exist is an error, not an implicit create.
+    createFileMethod:'POST',
+    commitsLimitParam:'per_page',
+    // The Repository Files API is gated on the broad `api` scope -
+    // read_repository/write_repository only cover git over HTTP - so any token
+    // that can read a map at all can already create a project. There is no
+    // repo-first step to offer here, and no narrow-scope option either; the
+    // login copy says so rather than implying GitHub's per-repo scoping exists.
+    canCreateRepo(){ return true; },
+    newRepoUrl(instance){ return this.webBase(instance) + '/projects/new'; },
+    newTokenUrl(instance){ return this.webBase(instance) + '/-/user_settings/personal_access_tokens'; },
+    signupUrl(instance){ return this.webBase(instance) + '/users/sign_up'; },
+    tokenPlaceholder:'glpat-\u2026',
+    createScopeHint:'The token needs the `api` scope.',
+    repoAccessHint:'Check the token has the `api` scope - `read_repository` and `write_repository` only cover git over HTTP, not the Files API this uses.',
+    oauth:{
+      pkce:true,
+      authorizeUrl(instance){ return FORGES.gitlab.webBase(instance) + '/oauth/authorize'; },
+      tokenUrl(instance){ return FORGES.gitlab.webBase(instance) + '/oauth/token'; },
+      newAppUrl(instance){ return FORGES.gitlab.webBase(instance) + '/-/user_settings/applications'; },
+      scope:'api',
+      // RFC 6749's form encoding, which this endpoint expects.
+      bodyFormat:'form',
+      corsHint:'GitLab allows this exchange from a browser, so this usually means the application was registered as Confidential (it must not be), or an intermediate proxy is stripping CORS headers.'
+    },
+    // ---- Everything below is divergence the shared code must never see. ----
+    _project(r){ return `${r.api}/projects/${encodeURIComponent(r.owner+'/'+r.repo)}`; },
+    repoUrl(r){ return this._project(r); },
+    createRepoBody(repo){ return {name:repo, path:repo, description:'My MindSpark mind maps', visibility:'private', initialize_with_readme:true}; },
+    // Read from the project rather than assumed: a project created by hand
+    // years ago is as likely to be on `master` as on `main`, and every read
+    // below would 404 against the wrong one.
+    defaultBranch(json){ return (json && json.default_branch) || 'main'; },
+    // The file path is a path PARAMETER, so its slashes are encoded too:
+    // maps/x.json arrives as maps%2Fx.json. And `ref` is mandatory - omitting
+    // it is an error, not a fallback to the default branch.
+    contentsUrl(r, path, ref){
+      return `${this._project(r)}/repository/files/${encodeURIComponent(path)}?ref=${encodeURIComponent(ref || r.branch)}`;
+    },
+    // Writes name their branch in the body instead, so they must not carry the
+    // read query - hence writeUrl existing at all.
+    writeUrl(r, path){ return `${this._project(r)}/repository/files/${encodeURIComponent(path)}`; },
+    treeUrl(r, path){
+      return `${this._project(r)}/repository/tree?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(r.branch)}&per_page=100`;
+    },
+    // GitLab calls a file a "blob"; `tree` is a subdirectory.
+    treeFiles(json){ return (json||[]).filter(f=>f.type==='blob').map(f=>f.name); },
+    commitsUrl(r, path, limit){
+      return `${this._project(r)}/repository/commits?path=${encodeURIComponent(path)}&ref_name=${encodeURIComponent(r.branch)}&${this.commitsLimitParam}=${limit}`;
+    },
+    parseCommits(json){
+      return (json||[]).map(c=>({
+        ref: c.id,
+        ts: Date.parse(c.created_at || c.committed_date || 0) || 0,
+        message: c.message || c.title || ''
+      }));
+    },
+    // `username` is the handle; `name` is a display name and is not unique, so
+    // it must never become the owner segment of a project path.
+    normalizeUser(u){ return (u && u.id!=null && u.username) ? {id:u.id, login:u.username, avatar_url:u.avatar_url} : null; },
+    // `encoding` must be declared: the default is text, which mangles any map
+    // whose content is not plain ASCII.
+    writeBody(r, path, encoded, sha){
+      return {branch:r.branch, content:encoded, encoding:'base64', commit_message:`MindSpark: update ${path}`};
+    },
+    deleteBody(r, path, sha){ return {branch:r.branch, commit_message:`MindSpark: delete ${path}`}; },
+    // There is no blob sha to thread through a write here: a GET answers
+    // blob_id and last_commit_id, but a SUCCESSFUL write answers only
+    // {file_path, branch}. CloudStore uses this value for exactly one thing -
+    // "does this path already exist", i.e. which method to send next - so a
+    // marker is the honest representation. Returning null instead would make
+    // every second save a doomed POST plus a recovery round trip.
+    //
+    // The cost is that GitLab writes carry no optimistic-concurrency check
+    // (last_commit_id would give one, but nothing in the write response can
+    // refresh it afterwards). What actually protects against a concurrent edit
+    // is forge-agnostic and unaffected: _saveIndex re-reads and merges the
+    // server index on every write, so another device's maps cannot be dropped.
+    readVersion(d){ return (d && (d.blob_id || d.last_commit_id)) || null; },
+    writeVersion(){ return 'exists'; },
+    // This endpoint base64-inlines content at any size, so unlike GitHub there
+    // is no >1 MB cliff and no second read path to fall back to.
+    isInlined(d){ return !!(d && d.content); },
+    blobSources(r, d){
+      if(!d || !d.file_path) return [];
+      return [{url:`${this._project(r)}/repository/files/${encodeURIComponent(d.file_path)}/raw?ref=${encodeURIComponent(d.ref || r.branch)}`, json:false}];
     }
   }
 };
@@ -191,10 +398,15 @@ const CloudStore = {
   // Which forge this session is signed in to, and (self-hosted only) where it
   // lives. Both are restored from localStorage by tryInit() before any request
   // is made, because _apiBase() is meaningless without them.
-  forge:FORGES[DEFAULT_FORGE], instance:null,
+  // `branch` matters only to forges that refuse to default it (GitLab wants it
+  // on every read and every write); GitHub and Gitea ignore it entirely.
+  forge:FORGES[DEFAULT_FORGE], instance:null, branch:null,
 
   _apiBase(){ return this.forge.apiBase(this.instance); },
   _api(path){ return this._apiBase() + path; },
+  // The coordinates every forge request needs, assembled in ONE place so a
+  // descriptor method can never be handed a half-populated set.
+  _ref(){ return {api:this._apiBase(), owner:this.user && this.user.login, repo:this.repo, branch:this.branch}; },
   // Per-forge token storage. GitHub deliberately keeps its original key so
   // every existing session survives this change without a migration step.
   _tokenKey(f=this.forge){ return f.id==='github' ? 'mindspark:gh:token' : 'mindspark:'+f.id+':token'; },
@@ -253,10 +465,13 @@ const CloudStore = {
     }
     if(!r.ok) throw new Error('Invalid '+this.forge.label+' token (HTTP '+r.status+')');
     const u=await r.json();
-    // GitHub and Gitea both answer {id, login, avatar_url}; assert the shape so
-    // a future forge fails loudly here rather than half-working later.
-    if(!u || u.id==null || !u.login) throw new Error('That token authenticated, but '+this.forge.label+' returned no usable account identity.');
-    return u;
+    // The identity payload is NOT common: GitHub and Gitea answer `login`,
+    // GitLab `username`. Each descriptor normalises to {id, login, avatar_url}
+    // and returns null for "authenticated, but nobody we can name" - so a new
+    // forge fails loudly here rather than half-working later.
+    const me=this.forge.normalizeUser(u);
+    if(!me) throw new Error('That token authenticated, but '+this.forge.label+' returned no usable account identity.');
+    return me;
   },
   async tryInit(){
     const forgeId=localStorage.getItem('mindspark:forge') || DEFAULT_FORGE;
@@ -297,7 +512,7 @@ const CloudStore = {
   },
   logout(){
     const key=this._tokenKey();
-    this.token=null; this.user=null;
+    this.token=null; this.user=null; this.branch=null;
     this.shas={}; this.indexSha=null; this.index=[];
     this.deleted=[]; this.deletedSha=null;
     localStorage.removeItem(key);
@@ -312,37 +527,48 @@ const CloudStore = {
   // happily, so those users get the one-step flow. Either way we still attempt
   // the create and report which case the user is actually in.
   async _ensureRepo(){
-    const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}`,{headers:this._headers()});
+    const r=await fetch(this.forge.repoUrl(this._ref()),{headers:this._headers()});
     if(r.status===404){
       const cr=await fetch(this._api(this.forge.createRepoPath),{
         method:'POST',
         headers:{...this._headers(),'Content-Type':'application/json'},
-        body:JSON.stringify({name:this.repo,description:'My MindSpark mind maps',private:true,auto_init:true})
+        body:JSON.stringify(this.forge.createRepoBody(this.repo))
       });
       if(!cr.ok){
         const t=await cr.text();
         throw new Error(!this.forge.canCreateRepo(this.token)
           ? 'Signed in, but there is no `'+this.repo+'` repository yet, and a fine-grained token can\'t create one. Create it on '+this.forge.label+' (private, with a README), then sign in again.'
           : 'Could not create '+this.repo+' on '+this.forge.label+' (HTTP '+cr.status+'). '
-            + (this.forge.id==='github' ? 'A classic token needs the `repo` scope. ' : 'The token needs the `write:repository` scope. ')
-            + t.slice(0,140));
+            + this.forge.createScopeHint+' '+t.slice(0,140));
       }
+      // A forge that requires a branch on every call needs one before the very
+      // first read, and a freshly created repo reports its own.
+      await this._useBranchFrom(cr);
       await new Promise(res=>setTimeout(res,800));
     } else if(r.status===403){
       throw new Error('Token was accepted but can\'t reach `'+this.repo+'` on '+this.forge.label+'. '
-        + (this.forge.id==='github'
-            ? 'If it is fine-grained, check it lists that repository under Repository access and has Contents: Read and write.'
-            : 'Check the token has the `write:repository` scope.'));
+        + this.forge.repoAccessHint);
     } else if(!r.ok){
       throw new Error('Could not access repo (HTTP '+r.status+')');
+    } else {
+      await this._useBranchFrom(r);
     }
+  },
+  // Which branch this session reads and writes. Only forges that refuse to
+  // default it server-side return one; for the rest this stays null and never
+  // reaches a URL. Never guessed from the response being unreadable: the
+  // descriptor's own fallback decides, because a wrong branch 404s every read.
+  async _useBranchFrom(res){
+    let json=null;
+    try{ json=await res.clone().json(); }catch(e){}
+    this.branch=this.forge.defaultBranch(json);
   },
   // Raw read of _index.json (updates indexSha). Returns [] on 404 or parse error.
   async _fetchIndexRaw(){
-    const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/_index.json`,{headers:this._headers()});
+    const r=await fetch(this.forge.contentsUrl(this._ref(), '_index.json'),{headers:this._headers()});
     if(r.status===404){ this.indexSha=null; return []; }
     if(!r.ok) throw new Error('Could not load index (HTTP '+r.status+')');
-    const data=await r.json(); this.indexSha=data.sha;
+    const data=await r.json(); this.indexSha=this.forge.readVersion(data);
     try{ const a=JSON.parse(this._decode(data.content)); return Array.isArray(a)?a:[]; }catch(e){ return []; }
   },
   async _loadIndex(){ this.index=await this._fetchIndexRaw(); },
@@ -350,9 +576,9 @@ const CloudStore = {
   // map file (e.g. a delete whose file-removal failed) is never resurrected.
   async _loadDeleted(){
     try{
-      const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/_deleted.json`,{headers:this._headers()});
+      const r=await fetch(this.forge.contentsUrl(this._ref(), '_deleted.json'),{headers:this._headers()});
       if(!r.ok){ this.deleted=[]; this.deletedSha=null; return; }
-      const data=await r.json(); this.deletedSha=data.sha;
+      const data=await r.json(); this.deletedSha=this.forge.readVersion(data);
       const a=JSON.parse(this._decode(data.content)); this.deleted=Array.isArray(a)?a:[];
     }catch(e){ this.deleted=[]; this.deletedSha=null; }
   },
@@ -361,11 +587,10 @@ const CloudStore = {
   },
   // List map ids present in the maps/ folder.
   async _listMapFiles(){
-    const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/maps`,{headers:this._headers()});
+    const r=await fetch(this.forge.treeUrl(this._ref(), 'maps'),{headers:this._headers()});
     if(r.status===404) return [];
     if(!r.ok) throw new Error('Could not list maps (HTTP '+r.status+')');
-    const arr=await r.json();
-    return arr.filter(f=>f.type==='file'&&/\.json$/.test(f.name)).map(f=>f.name.replace(/\.json$/,''));
+    return this.forge.treeFiles(await r.json()).filter(n=>/\.json$/.test(n)).map(n=>n.replace(/\.json$/,''));
   },
   // Map files that exist but are absent from the index AND not tombstoned - i.e.
   // maps lost to a damaged/clobbered index. Returns ready-to-restore entries.
@@ -377,9 +602,9 @@ const CloudStore = {
     const out=[];
     for(const id of ids){
       try{
-        const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/maps/${id}.json`,{headers:this._headers()});
+        const r=await fetch(this.forge.contentsUrl(this._ref(), `maps/${id}.json`),{headers:this._headers()});
         if(!r.ok) continue;
-        const data=await r.json(); this.shas[id]=data.sha;
+        const data=await r.json(); this.shas[id]=this.forge.readVersion(data);
         const m=JSON.parse(this._decode(data.content));
         const e={id:m.id||id, title:m.title||'(untitled)', color:m.color, updated:m.updated||0}; if(m.pinned) e.pinned=true; out.push(e);
       }catch(e){}
@@ -407,41 +632,41 @@ const CloudStore = {
   // practice: a map written from another device makes our "create" a conflict,
   // and a deleted-then-resaved map makes our "update" a 404.
   async _writeFile(path, content, sha){
-    const url=`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/${path}`;
+    const url=this.forge.writeUrl(this._ref(), path);
+    const readUrl=this.forge.contentsUrl(this._ref(), path);
     const encoded=this._encode(content);
     const send=(method, extra)=>fetch(url,{
       method, headers:{...this._headers(),'Content-Type':'application/json'},
-      body:JSON.stringify({message:`MindSpark: update ${path}`, content:encoded, ...extra})
+      body:JSON.stringify(this.forge.writeBody(this._ref(), path, encoded, extra.sha))
     });
     // A create must not carry a sha at all: Forgejo's CreateFileOptions has no
     // such property and rejects the request rather than ignoring it.
     let r = sha ? await send('PUT',{sha}) : await send(this.forge.createFileMethod,{});
     if(!r.ok && (r.status===409 || r.status===422 || r.status===404)){
-      const cur=await fetch(url,{headers:this._headers()});
+      const cur=await fetch(readUrl,{headers:this._headers()});
       if(cur.status===404){
         r = await send(this.forge.createFileMethod,{});     // it really is new
       } else if(cur.ok){
         const d=await cur.json();
-        r = await send('PUT',{sha:d.sha});                  // it exists - update it
+        r = await send('PUT',{sha:this.forge.readVersion(d)});   // it exists - update it
       }
     }
     if(!r.ok){
       const t=await r.text();
       throw new Error('Write '+path+' failed on '+this.forge.label+' (HTTP '+r.status+') '+t.slice(0,140));
     }
-    const data=await r.json();
-    return data.content.sha;
+    return this.forge.writeVersion(await r.json());
   },
   async _deleteFile(path, sha){
-    const url=`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/${path}`;
+    const url=this.forge.writeUrl(this._ref(), path);
     const del=(s)=>fetch(url,{method:'DELETE', headers:{...this._headers(),'Content-Type':'application/json'},
-      body:JSON.stringify({message:`MindSpark: delete ${path}`, sha:s})});
+      body:JSON.stringify(this.forge.deleteBody(this._ref(), path, s))});
     let r=await del(sha);
     if(r.ok || r.status===404) return;            // deleted, or already gone
     if(r.status===409 || r.status===422){          // missing/stale sha → refresh and retry
-      const gh=await fetch(url,{headers:this._headers()});
-      if(gh.status===404) return;
-      if(gh.ok){ const d=await gh.json(); const r2=await del(d.sha); if(r2.ok||r2.status===404) return; r=r2; }
+      const cur=await fetch(this.forge.contentsUrl(this._ref(), path),{headers:this._headers()});
+      if(cur.status===404) return;
+      if(cur.ok){ const d=await cur.json(); const r2=await del(this.forge.readVersion(d)); if(r2.ok||r2.status===404) return; r=r2; }
     }
     throw new Error('Delete '+path+' failed (HTTP '+r.status+')');
   },
@@ -462,17 +687,15 @@ const CloudStore = {
   async list(){ return this.index.slice(); },
   async get(id){
     try{
-      const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/maps/${id}.json`,{headers:this._headers()});
+      const r=await fetch(this.forge.contentsUrl(this._ref(), `maps/${id}.json`),{headers:this._headers()});
       if(r.status===404){ const b=this._localBackup(id); if(b) return b; return null; }
       if(!r.ok) throw new Error('Could not load map (HTTP '+r.status+')');
       const data=await r.json();
-      this.shas[id]=data.sha;
-      let json;
-      // The Contents API only inlines base64 content for files up to 1 MB. Larger
-      // files come back with empty content (and encoding "none"), so we must read
-      // them another way - via the Git Blobs API (handles up to 100 MB).
-      const inlined = data.content && data.content.trim() && data.encoding!=='none';
-      json = inlined ? this._decode(data.content) : await this._readLargeBlob(data);
+      this.shas[id]=this.forge.readVersion(data);
+      // Not every file read comes back with its content inline - GitHub's
+      // Contents API stops inlining past 1 MB - so the descriptor decides, and
+      // supplies somewhere else to read it from when it hasn't.
+      const json = this.forge.isInlined(data) ? this._decode(data.content) : await this._readLargeBlob(data);
       const parsed=JSON.parse(json);
       try{ localStorage.setItem('mindspark:backup:'+id, json); }catch(e){}   // refresh local copy
       return parsed;
@@ -483,22 +706,18 @@ const CloudStore = {
       return null;
     }
   },
-  // Read a file too large for the Contents API to inline (>1 MB). Prefer the Git
-  // Blobs API (returns base64, up to 100 MB); fall back to the raw download_url
-  // (plain text, no decode) if the blob endpoint is unavailable.
+  // Read a file the primary response did not inline. The candidate sources and
+  // their body shapes are per-forge (GitHub and Gitea offer the Git Blobs API
+  // then a raw download URL); each is tried in order until one answers.
   async _readLargeBlob(data){
-    if(data.git_url){
-      const br=await fetch(data.git_url,{headers:this._headers()});
-      if(br.ok){
-        const blob=await br.json();
-        if(blob && blob.content) return this._decode(blob.content);
-      }
+    for(const src of this.forge.blobSources(this._ref(), data)){
+      const br=await fetch(src.url,{headers:this._headers()});
+      if(!br.ok) continue;
+      if(!src.json) return await br.text();          // raw file text - already decoded
+      const blob=await br.json();
+      if(blob && blob.content) return this._decode(blob.content);
     }
-    if(data.download_url){
-      const dr=await fetch(data.download_url,{headers:this._headers()});
-      if(dr.ok) return await dr.text();   // raw JSON - already decoded
-    }
-    throw new Error('Could not read large map content (Blobs API + raw both failed)');
+    throw new Error('Could not read large map content (no blob source answered)');
   },
   _localBackup(id){
     try{ const s=localStorage.getItem('mindspark:backup:'+id); return s?JSON.parse(s):null; }catch(e){ return null; }
@@ -533,23 +752,17 @@ const CloudStore = {
   // Version history = the forge's commit history for the map's JSON file.
   async history(id){
     try{
-      const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/commits?path=maps/${id}.json&${this.forge.commitsLimitParam}=50`,{headers:this._headers()});
+      const r=await fetch(this.forge.commitsUrl(this._ref(), `maps/${id}.json`, 50),{headers:this._headers()});
       if(!r.ok) return [];
-      const commits=await r.json();
-      return commits.map(c=>({
-        ref: c.sha,
-        ts: Date.parse(c.commit?.author?.date || c.commit?.committer?.date || 0) || 0,
-        message: c.commit?.message || ''
-      }));
+      return this.forge.parseCommits(await r.json());
     }catch(e){ console.warn('history', e); return []; }
   },
   async version(id, ref){
     try{
-      const r=await fetch(`${this._apiBase()}/repos/${this.user.login}/${this.repo}/contents/maps/${id}.json?ref=${encodeURIComponent(ref)}`,{headers:this._headers()});
+      const r=await fetch(this.forge.contentsUrl(this._ref(), `maps/${id}.json`, ref),{headers:this._headers()});
       if(!r.ok) return null;
       const data=await r.json();
-      const inlined = data.content && data.content.trim() && data.encoding!=='none';
-      const json = inlined ? this._decode(data.content) : await this._readLargeBlob(data);
+      const json = this.forge.isInlined(data) ? this._decode(data.content) : await this._readLargeBlob(data);
       return JSON.parse(json);
     }catch(e){ console.warn('version', e); return null; }
   }
@@ -12728,29 +12941,52 @@ function startGithubLogin(){
 // an OAuth application has to exist on the user's own instance, so the client id
 // is something they paste once - it is public by design, not a credential.
 // ============================================================
-const GITEA_OAUTH_STATE = 'mindspark:gitea:oauthstate';   // {state, verifier, instance, clientId}
+// One key for the flow, not one per forge: only ever one popup is in flight,
+// and the forge it belongs to is recorded inside. (Transient - it exists only
+// between opening the popup and redeeming the code.)
+const FORGE_OAUTH_STATE = 'mindspark:forge:oauthstate';   // {forgeId, state, verifier, instance, clientId}
 
-// Every message from the OAuth path lands in #giteaError, which lives inside the
-// token <details> - collapsed by default, exactly like GitHub's. Writing there
-// without opening it puts the error where nobody can see it, so the reveal is
-// part of saying it. It doubles as the way out: any OAuth failure surfaces the
-// token flow, which needs no instance configuration.
-function giteaSay(errEl, m){
+// Every self-hosted forge's pane is the same shape - instance box, OAuth button
+// with a client id, token fallback - so they are described once here instead of
+// duplicated in the wiring. Adding a forge means markup plus one row.
+const SELF_HOSTED_PANES = [
+  {forgeId:'gitea', instance:'#giteaInstance', pat:'#giteaPat', sign:'#giteaSignIn', err:'#giteaError',
+   tokenLink:'#giteaTokenLink', signup:'#giteaSignupLink', clientId:'#giteaClientId',
+   oauth:'#giteaOauthBtn', redirect:'#giteaRedirect', details:'#giteaTokenDetails'},
+  {forgeId:'gitlab', instance:'#glInstance', pat:'#glPat', sign:'#glSignIn', err:'#glError',
+   tokenLink:'#glTokenLink', signup:'#glSignupLink', clientId:'#glClientId',
+   oauth:'#glOauthBtn', redirect:'#glRedirect', details:'#glTokenDetails'}
+];
+function paneFor(forgeId){ return SELF_HOSTED_PANES.find(pn=>pn.forgeId===forgeId) || null; }
+
+// Every message from the OAuth path lands in that forge's error line, which
+// lives inside its token <details> - collapsed by default, exactly like
+// GitHub's. Writing there without opening it puts the error where nobody can
+// see it, so the reveal is part of saying it. It doubles as the way out: any
+// OAuth failure surfaces the token flow, which needs no instance configuration.
+function forgeSay(forgeId, m){
+  const pn=paneFor(forgeId); if(!pn) return;
+  const errEl=$(pn.err);
   if(errEl) errEl.textContent = m || '';
-  if(m){ const d=$('#giteaTokenDetails'); if(d) d.open=true; }
+  if(m){ const d=$(pn.details); if(d) d.open=true; }
 }
-function giteaClientIdFor(instance){
-  try{ return JSON.parse(localStorage.getItem('mindspark:gitea:clients')||'{}')[instance] || ''; }
+// Client ids are remembered per forge AND per instance. Gitea keeps its
+// original key so existing users don't have to re-paste one.
+function forgeClientsKey(forgeId){ return 'mindspark:'+forgeId+':clients'; }
+function forgeClientIdFor(forgeId, instance){
+  try{ return JSON.parse(localStorage.getItem(forgeClientsKey(forgeId))||'{}')[instance] || ''; }
   catch(e){ return ''; }
 }
-function rememberGiteaClientId(instance, clientId){
-  let m={}; try{ m=JSON.parse(localStorage.getItem('mindspark:gitea:clients')||'{}'); }catch(e){}
+function rememberForgeClientId(forgeId, instance, clientId){
+  let m={}; try{ m=JSON.parse(localStorage.getItem(forgeClientsKey(forgeId))||'{}'); }catch(e){}
   m[instance]=clientId;
-  CloudStore._setItemSafe('mindspark:gitea:clients', JSON.stringify(m));
+  CloudStore._setItemSafe(forgeClientsKey(forgeId), JSON.stringify(m));
 }
 
-async function startGiteaLogin(instance, clientId, errEl){
-  const say=(m)=>giteaSay(errEl, m);
+async function startForgeLogin(forgeId, instance, clientId){
+  const say=(m)=>forgeSay(forgeId, m);
+  const f=FORGES[forgeId];
+  if(!f || !f.oauth) return say('This git host has no in-browser sign-in; use an access token.');
   const base=String(instance||'').trim().replace(/\/+$/,'');
   if(!/^https:\/\/.+/.test(base)) return say('Enter your instance URL first (https://…).');
   if(!clientId) return say('Enter the client ID of the OAuth application you registered on your instance.');
@@ -12763,11 +12999,11 @@ async function startGiteaLogin(instance, clientId, errEl){
   const challenge=await pkceChallenge(verifier);
   // Persisted rather than held in a closure: the popup can outlive a reload of
   // the opener, and losing the verifier makes the returning code unusable.
-  if(!CloudStore._setItemSafe(GITEA_OAUTH_STATE, JSON.stringify({state, verifier, instance:base, clientId}))){
+  if(!CloudStore._setItemSafe(FORGE_OAUTH_STATE, JSON.stringify({forgeId, state, verifier, instance:base, clientId}))){
     return say('Could not start sign-in - your browser\'s local storage is full. Clear site data and try again.');
   }
-  rememberGiteaClientId(base, clientId);
-  const o=FORGES.gitea.oauth;
+  rememberForgeClientId(forgeId, base, clientId);
+  const o=f.oauth;
   const url=o.authorizeUrl(base)
     + '?client_id='             + encodeURIComponent(clientId)
     + '&redirect_uri='          + encodeURIComponent(oauthRedirectUri())
@@ -12777,7 +13013,7 @@ async function startGiteaLogin(instance, clientId, errEl){
     + '&code_challenge='        + encodeURIComponent(challenge)
     + '&state='                 + encodeURIComponent(state);
   const w=620,h=760, left=Math.max(0,(screen.width-w)/2), top=Math.max(0,(screen.height-h)/2);
-  const pop=window.open(url, 'mindspark_gitea_oauth', `width=${w},height=${h},left=${left},top=${top}`);
+  const pop=window.open(url, 'mindspark_forge_oauth', `width=${w},height=${h},left=${left},top=${top}`);
   if(!pop) say('Popup blocked - allow popups for this site, or use an access token below.');
   else say('');
 }
@@ -12785,28 +13021,38 @@ async function startGiteaLogin(instance, clientId, errEl){
 // Redeem the authorization code. This is the step that needs CORS on the
 // instance: it is a cross-origin POST from the page. Gitea/Forgejo ship the
 // handler (upstream PR #28184) but gate it behind `[cors] ENABLED`, which is off
-// by default - so a network-level failure here almost always means that setting,
-// and saying so is far more useful than "Failed to fetch".
-async function finishGiteaLogin(code, state, errEl){
-  const say=(m)=>giteaSay(errEl, m);
+// by default - so a network-level failure there almost always means that
+// setting. The diagnosis differs per forge, so each descriptor carries its own.
+async function finishForgeLogin(code, state){
   let saved=null;
-  try{ saved=JSON.parse(localStorage.getItem(GITEA_OAUTH_STATE)||'null'); }catch(e){}
-  localStorage.removeItem(GITEA_OAUTH_STATE);
+  try{ saved=JSON.parse(localStorage.getItem(FORGE_OAUTH_STATE)||'null'); }catch(e){}
+  localStorage.removeItem(FORGE_OAUTH_STATE);
+  // With the state gone there is no pane to report into either, so fall back to
+  // whichever one is on screen rather than swallowing the failure.
+  const forgeId=(saved && saved.forgeId) || 'gitea';
+  const say=(m)=>forgeSay(forgeId, m);
   if(!saved) return say('Sign-in could not be completed - the request this reply belongs to is gone. Try again.');
   if(!state || state!==saved.state) return say('Sign-in could not be verified - please try again.');
+  const f=FORGES[saved.forgeId];
+  if(!f || !f.oauth) return say('Sign-in came back for a git host this build does not know.');
 
   let r;
   try{
-    r=await fetch(FORGES.gitea.oauth.tokenUrl(saved.instance),{
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        client_id: saved.clientId, code, grant_type:'authorization_code',
-        redirect_uri: oauthRedirectUri(), code_verifier: saved.verifier
-      })
+    // Gitea takes JSON here; GitLab takes RFC 6749's form encoding. Sending the
+    // wrong one is an opaque 400 with no hint which half is wrong.
+    const params={
+      client_id: saved.clientId, code, grant_type:'authorization_code',
+      redirect_uri: oauthRedirectUri(), code_verifier: saved.verifier
+    };
+    const form = f.oauth.bodyFormat==='form';
+    r=await fetch(f.oauth.tokenUrl(saved.instance),{
+      method:'POST',
+      headers:{'Content-Type': form ? 'application/x-www-form-urlencoded' : 'application/json'},
+      body: form ? new URLSearchParams(params).toString() : JSON.stringify(params)
     });
   }catch(e){
     return say('The instance accepted the sign-in but refused the token exchange from this page. '
-      + 'That is almost always CORS: on Gitea/Forgejo set `[cors] ENABLED = true` (and list '+location.origin+' in ALLOW_DOMAIN) in app.ini, then retry. '
+      + f.oauth.corsHint + ' '
       + 'An access token works without any instance configuration.');
   }
   if(!r.ok){
@@ -12815,7 +13061,7 @@ async function finishGiteaLogin(code, state, errEl){
   }
   const d=await r.json();
   if(!d || !d.access_token) return say('The instance returned no access token.');
-  try{ await completeCloudLogin(d.access_token, 'gitea', saved.instance); }
+  try{ await completeCloudLogin(d.access_token, saved.forgeId, saved.instance); }
   catch(e){ say(e.message || String(e)); }
 }
 
@@ -12826,10 +13072,15 @@ window.addEventListener('message', (ev)=>{
   if(ev.origin !== location.origin) return;
   const d=ev.data;
   if(!d || d.type !== 'mindspark-oauth-pkce') return;
-  const errEl=$('#giteaError');
-  if(d.error){ giteaSay(errEl, 'Sign-in failed: '+d.error); return; }
-  if(!d.code){ giteaSay(errEl, 'Sign-in returned no authorization code.'); return; }
-  finishGiteaLogin(d.code, d.state, errEl);
+  // Which pane is waiting is read from the state WE stored before opening the
+  // popup. The callback page never carries it: it is the one part of this the
+  // remote instance influences, so it must not choose where errors surface.
+  let waiting=null;
+  try{ waiting=JSON.parse(localStorage.getItem(FORGE_OAUTH_STATE)||'null'); }catch(e){}
+  const forgeId=(waiting && waiting.forgeId) || 'gitea';
+  if(d.error){ forgeSay(forgeId, 'Sign-in failed: '+d.error); return; }
+  if(!d.code){ forgeSay(forgeId, 'Sign-in returned no authorization code.'); return; }
+  finishForgeLogin(d.code, d.state);
 });
 
 // Receive the token from the Worker popup. Validated by (a) message origin ===
@@ -12871,74 +13122,13 @@ function showLoginOverlay(opts){
   // ---- forge picker ----
   const tabs=[...document.querySelectorAll('.forge-tab')];
   const panes=[...document.querySelectorAll('.forge-pane')];
-  const inst=$('#giteaInstance'), gPat=$('#giteaPat'), gSign=$('#giteaSignIn'),
-        gErr=$('#giteaError'), gLink=$('#giteaTokenLink'), gSignup=$('#giteaSignupLink'),
-        gClient=$('#giteaClientId'), gOauth=$('#giteaOauthBtn'),
-        gRedirect=$('#giteaRedirect'),
-        ghDetails=$('#ghTokenDetails'), gDetails=$('#giteaTokenDetails');
-  // The exact string the user must register on their instance. Derived, never
-  // typed, because a one-character mismatch fails the exchange with a generic
-  // OAuth error that gives no hint where to look.
-  if(gRedirect) gRedirect.textContent = oauthRedirectUri();
+  const ghDetails=$('#ghTokenDetails');
   // Collapse the token flow only when the other method is actually usable -
   // otherwise the card would open with no sign-in control in sight. On GitHub
   // that turns on the deployment: a PAT-only build hides the OAuth box entirely.
   if(ghDetails) ghDetails.open = !oauthConfigured();
-  // Gitea's pane always renders its OAuth button and client-id field, so
-  // collapsing can never strand the user - it starts closed, matching GitHub.
-  // giteaSay() opens it on any OAuth failure, which is the way back out.
-  if(gDetails) gDetails.open = false;
-  // Remember the last forge used so a returning user whose token expired lands
-  // back on their own tab instead of GitHub's.
-  let active = localStorage.getItem('mindspark:forge') || 'github';
-  if(!FORGES[active]) active='github';
-  const selectForge=(id)=>{
-    active=id;
-    tabs.forEach(t=>{ const on=t.dataset.forge===id; t.classList.toggle('is-on',on); t.setAttribute('aria-selected', on?'true':'false'); });
-    panes.forEach(pn=>{ pn.hidden = pn.dataset.forgePane!==id; });
-    if(id==='github') pat && pat.focus(); else inst && inst.focus();
-  };
-  tabs.forEach(t=> t.onclick=()=>selectForge(t.dataset.forge));
 
-  // The token page lives on the user's own instance, so the link only becomes
-  // real once they've typed one.
-  if(inst){
-    const savedInstance=localStorage.getItem('mindspark:forge:instance');
-    if(savedInstance && !inst.value) inst.value=savedInstance;
-    const syncLink=()=>{
-      const base=(inst.value||'').trim().replace(/\/+$/,'');
-      const ok=/^https:\/\/.+/.test(base);
-      // Both links live on the user's instance: no URL, no target. Left
-      // href-less rather than hidden so the option is visible before it works.
-      const point=(el, url)=>{
-        if(!el) return;
-        if(ok){ el.href=url; el.removeAttribute('aria-disabled'); }
-        else { el.removeAttribute('href'); el.setAttribute('aria-disabled','true'); }
-      };
-      point(gLink,   ok?FORGES.gitea.newTokenUrl(base):'');
-      point(gSignup, ok?FORGES.gitea.signupUrl(base):'');
-    };
-    inst.addEventListener('input', syncLink);
-    syncLink();
-  }
-
-  // ---- Gitea/Forgejo OAuth (PKCE, no worker) ----
-  if(gOauth && inst && gClient){
-    // A client id is per-instance, so remember it per-instance and restore it
-    // when the user switches back - re-registering an OAuth app to sign in
-    // again would be an absurd amount of friction.
-    const syncClient=()=>{
-      const base=(inst.value||'').trim().replace(/\/+$/,'');
-      const known=base?giteaClientIdFor(base):'';
-      if(known && !gClient.value) gClient.value=known;
-    };
-    inst.addEventListener('input', syncClient);
-    syncClient();
-    gOauth.onclick=()=>startGiteaLogin(inst.value, (gClient.value||'').trim(), gErr);
-    gClient.addEventListener('keydown', e=>{ if(e.key==='Enter') gOauth.click(); });
-  }
-
-  // One sign-in path for both panes - only the inputs differ.
+  // One sign-in path for every pane - only the inputs differ.
   const attempt=async(btn, errEl, tokenEl, forgeId, instanceEl)=>{
     const tok=(tokenEl.value||'').trim();
     if(!tok){ errEl.textContent='Paste your token first.'; return; }
@@ -12955,16 +13145,87 @@ function showLoginOverlay(opts){
   sign.onclick = doLogin;
   pat.addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
 
-  if(gSign && gPat){
-    const doGitea=()=>attempt(gSign, gErr, gPat, 'gitea', inst);
-    gSign.onclick = doGitea;
-    gPat.addEventListener('keydown', e=>{ if(e.key==='Enter') doGitea(); });
-    if(inst) inst.addEventListener('keydown', e=>{
-      if(e.key!=='Enter') return;
-      const cid=$('#giteaClientId');
-      if(cid && !cid.value) cid.focus(); else if(gOauth) gOauth.click();
-    });
+  // Every self-hosted pane is wired from SELF_HOSTED_PANES rather than by hand,
+  // because they are the same three controls pointed at a different instance.
+  // A pane whose markup is absent is skipped, so the table can name a forge a
+  // given deployment chose not to ship.
+  const firstInput={};
+  for(const pn of SELF_HOSTED_PANES){
+    const f=FORGES[pn.forgeId]; if(!f) continue;
+    const inst=$(pn.instance); if(!inst) continue;
+    const tPat=$(pn.pat), tSign=$(pn.sign), tErr=$(pn.err), tLink=$(pn.tokenLink),
+          tSignup=$(pn.signup), tClient=$(pn.clientId), tOauth=$(pn.oauth),
+          tRedirect=$(pn.redirect), tDetails=$(pn.details);
+    firstInput[pn.forgeId]=inst;
+    // The exact string the user must register on their instance. Derived, never
+    // typed, because a one-character mismatch fails the exchange with a generic
+    // OAuth error that gives no hint where to look.
+    if(tRedirect) tRedirect.textContent = oauthRedirectUri();
+    // These panes always render their OAuth button and client-id field, so
+    // collapsing the token flow can never strand the user - it starts closed,
+    // matching GitHub. forgeSay() opens it on any OAuth failure: the way out.
+    if(tDetails) tDetails.open = false;
+    if(tPat && f.tokenPlaceholder) tPat.placeholder=f.tokenPlaceholder;
+
+    // Restore only the instance that belongs to THIS forge - one saved value is
+    // shared by all of them, and pasting a GitLab URL into the Gitea box would
+    // send the token somewhere it means nothing.
+    const savedForge=localStorage.getItem('mindspark:forge');
+    const savedInstance=localStorage.getItem('mindspark:forge:instance');
+    if(savedForge===pn.forgeId && savedInstance && !inst.value) inst.value=savedInstance;
+
+    // The token and signup pages live on the user's own instance, so those
+    // links only become real once they've typed one.
+    const syncLinks=()=>{
+      const base=(inst.value||'').trim().replace(/\/+$/,'');
+      const ok=/^https:\/\/.+/.test(base);
+      // No URL, no target. Left href-less rather than hidden so the option is
+      // visible before it works.
+      const point=(el, url)=>{
+        if(!el) return;
+        if(ok){ el.href=url; el.removeAttribute('aria-disabled'); }
+        else { el.removeAttribute('href'); el.setAttribute('aria-disabled','true'); }
+      };
+      point(tLink,   ok?f.newTokenUrl(base):'');
+      point(tSignup, ok?f.signupUrl(base):'');
+      // A client id is per-instance, so remember it per-instance and restore it
+      // when the user comes back - re-registering an OAuth app just to sign in
+      // again would be an absurd amount of friction.
+      if(tClient && base && !tClient.value){
+        const known=forgeClientIdFor(pn.forgeId, base);
+        if(known) tClient.value=known;
+      }
+    };
+    inst.addEventListener('input', syncLinks);
+    syncLinks();
+
+    if(tOauth && tClient){
+      tOauth.onclick=()=>startForgeLogin(pn.forgeId, inst.value, (tClient.value||'').trim());
+      tClient.addEventListener('keydown', e=>{ if(e.key==='Enter') tOauth.click(); });
+    }
+    if(tSign && tPat){
+      const go=()=>attempt(tSign, tErr, tPat, pn.forgeId, inst);
+      tSign.onclick = go;
+      tPat.addEventListener('keydown', e=>{ if(e.key==='Enter') go(); });
+      inst.addEventListener('keydown', e=>{
+        if(e.key!=='Enter') return;
+        if(tClient && !tClient.value) tClient.focus(); else if(tOauth) tOauth.click();
+      });
+    }
   }
+
+  // Remember the last forge used so a returning user whose token expired lands
+  // back on their own tab instead of GitHub's.
+  let active = localStorage.getItem('mindspark:forge') || 'github';
+  if(!FORGES[active]) active='github';
+  const selectForge=(id)=>{
+    active=id;
+    tabs.forEach(t=>{ const on=t.dataset.forge===id; t.classList.toggle('is-on',on); t.setAttribute('aria-selected', on?'true':'false'); });
+    panes.forEach(pane=>{ pane.hidden = pane.dataset.forgePane!==id; });
+    const focusEl = id==='github' ? pat : firstInput[id];
+    if(focusEl) focusEl.focus();
+  };
+  tabs.forEach(t=> t.onclick=()=>selectForge(t.dataset.forge));
   selectForge(active);
 }
 
