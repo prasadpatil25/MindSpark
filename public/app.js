@@ -779,6 +779,28 @@ function execCmd(cmd, value){
   catch(e){ console.warn('execCommand failed:', cmd, e); return false; }
 }
 
+// ---- IME composition -------------------------------------------------------
+// Chinese, Japanese and Korean text is COMPOSED: several keystrokes build a
+// pre-edit string, a candidate list opens, and Enter / Escape / the arrow keys
+// drive THAT list. They belong to the input method, not to us, and the pre-edit
+// string sitting in the DOM is not yet what the user means to type.
+//
+// A handler that acts on those keys anyway commits half-finished input - the
+// raw pinyin - and re-renders the element out from under an open composition.
+// That is how this first surfaced (issue #39): "it keeps inexplicably changing
+// the Chinese I type", reported as if an autocorrect feature were doing it.
+// There is no such feature; the editor was simply stealing the IME's confirm
+// key. So the answer is never a setting, it is this guard.
+//
+// `isComposing` is the spec answer. Firefox reports key:'Process' rather than
+// the real key, and every engine sets keyCode 229 for a composing keydown, so
+// both are checked - one alone leaves a browser unfixed.
+//
+// Note this is for KEY handlers. An `input` event during composition also has
+// isComposing set, and anything that rewrites the DOM there must bail too, then
+// catch up on 'compositionend' - see startEdit().
+function isComposingKey(e){ return !!e && (e.isComposing || e.keyCode===229); }
+
 async function initStore(){
   try{
     const r=await fetch('/healthz', {cache:'no-store'});
@@ -3054,6 +3076,7 @@ function ensureMdPane(){
   ed.addEventListener('input', mdAfterEdit);
   ed.addEventListener('scroll', mdSyncScroll);
   ed.addEventListener('keydown',e=>{
+    if(isComposingKey(e)) return;
     if(e.key==='Escape'){ e.preventDefault(); toggleMdMode(false); return; }
     if((e.ctrlKey||e.metaKey) && !e.altKey){ const k=(e.key||'').toLowerCase();
       if(k==='z' && !e.shiftKey){ e.preventDefault(); undo(); return; }
@@ -4113,6 +4136,7 @@ function showMarkerPicker(anchor, id){
     input.addEventListener('input',refresh);
     input.addEventListener('keydown',ev=>{
       ev.stopPropagation();
+      if(isComposingKey(ev)) return;
       if(ev.key==='Enter' && valid()){ setMarker(id, input.value.trim()); p.remove(); }
     });
     apply.onclick=ev=>{
@@ -4248,7 +4272,7 @@ function showLayoutImportForm(){
   m.querySelector('.vf-cancel').onclick=close;
   m.querySelector('.vf-close').onclick=close;
   m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
 }
 function showLayoutConfigForm(){
   if(!map || READONLY) return;
@@ -4304,7 +4328,7 @@ function showLayoutConfigForm(){
   m.querySelector('.vf-cancel').onclick=close;
   m.querySelector('.vf-close').onclick=close;
   m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
 }
 function showStyleConfigForm(){
   if(!map || READONLY) return;
@@ -4360,7 +4384,7 @@ function showStyleConfigForm(){
   m.querySelector('.vf-cancel').onclick=close;
   m.querySelector('.vf-close').onclick=close;
   m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
 }
 function showLookConfigForm(){
   if(!map || READONLY) return;
@@ -4415,7 +4439,7 @@ function showLookConfigForm(){
   m.querySelector('.vf-cancel').onclick=close;
   m.querySelector('.vf-close').onclick=close;
   m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
 }
 function showThemeConfigForm(){
   if(!map || READONLY) return;
@@ -4481,7 +4505,7 @@ function showThemeConfigForm(){
   m.querySelector('.vf-cancel').onclick=close;
   m.querySelector('.vf-close').onclick=close;
   m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
 }
 function showCitationForm(id){
   const n=map.nodes[id]; if(!n) return;
@@ -4542,7 +4566,7 @@ function showCitationForm(id){
     finally{ doiGo.disabled=false; doiGo.textContent=old; }
   };
   doiGo.onclick=fetchDoi;
-  doiIn.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); fetchDoi(); } });
+  doiIn.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Enter'){ e.preventDefault(); fetchDoi(); } });
   m.querySelector('.vf-go').onclick=()=>{
     const cit={}; m.querySelectorAll('.vf-input').forEach(ta=>{ if(ta.value.trim()) cit[ta.dataset.f]=ta.value.trim(); });
     n.citation=cit; n.ref=true;
@@ -4554,7 +4578,7 @@ function showCitationForm(id){
   m.querySelector('.vf-cancel').onclick=close;
   m.querySelector('.vf-close').onclick=close;
   m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(e.key==='Escape'){e.preventDefault();close();} });
+  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){e.preventDefault();close();} });
 }
 // Collect every reference node and copy a formatted list to the clipboard.
 function exportReferences(){
@@ -4881,6 +4905,7 @@ function startBlockEdit(id, el){
   const onBlur=()=>finish(true);
   const onKey=e=>{
     e.stopPropagation();
+    if(isComposingKey(e)) return;      // Esc is the IME's "dismiss candidates"
     if(e.key==='Escape'){ e.preventDefault(); finish(false); box.blur(); }
     else if(e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); finish(true); box.blur(); }
   };
@@ -4974,6 +4999,9 @@ function updateFormulaAutocomplete(textEl, nodeId){
 // (so the caller should stop - e.g. Enter selects a suggestion instead of finishing the edit).
 function formulaAutocompleteKeydown(e){
   if(!_formulaAC) return false;
+  // Arrow keys page the IME's candidate list, and Enter/Tab pick from it. This
+  // popup must not race the input method for any of them.
+  if(isComposingKey(e)) return false;
   if(e.key==='ArrowDown'){ e.preventDefault(); _formulaAC.activeIndex=Math.min(_formulaAC.matches.length-1, _formulaAC.activeIndex+1); _renderFormulaAcActive(); return true; }
   if(e.key==='ArrowUp'){ e.preventDefault(); _formulaAC.activeIndex=Math.max(0, _formulaAC.activeIndex-1); _renderFormulaAcActive(); return true; }
   if(e.key==='Tab' || e.key==='Enter'){ e.preventDefault(); _insertFormulaSuggestion(); return true; }
@@ -5009,6 +5037,7 @@ function startEdit(id){
     textEl.contentEditable='false'; el.classList.remove('editing');
     textEl.removeEventListener('blur',onBlur); textEl.removeEventListener('keydown',onKey);
     textEl.removeEventListener('input',onInput);
+    textEl.removeEventListener('compositionend',onCompositionEnd);
     if(commit){
       // Capture as HTML so the user's inline B/I/U is preserved.
       const html = textEl.innerHTML.trim();
@@ -5048,16 +5077,29 @@ function startEdit(id){
     autoLayout();
   };
   const onBlur=()=>finish(true);
-  const onInput=()=>{
-    tryMarkdownShortcut();
-    updateFormulaAutocomplete(textEl, id);
+  const onInput=(e)=>{
+    // `input` fires for every keystroke of an IME composition too. Both calls
+    // below can rewrite this element - tryMarkdownShortcut() replaces the very
+    // text node being composed into - so they wait for the composition to end.
+    // The layout reflow is only cosmetic, so it stays live either way.
+    if(!(e && e.isComposing)){
+      tryMarkdownShortcut();
+      updateFormulaAutocomplete(textEl, id);
+    }
     // Keep the map tidy as the node grows (GitMind-style live reflow), throttled
     // to one re-layout per animation frame so typing stays smooth.
     if(_editRAF) cancelAnimationFrame(_editRAF);
     _editRAF=requestAnimationFrame(()=>{ _editRAF=0; relayoutDuringEdit(id); });
   };
+  // The composed text lands as one chunk here, and no `input` event follows it
+  // in every browser - so this is where the skipped work is made up.
+  const onCompositionEnd=()=>{ tryMarkdownShortcut(); updateFormulaAutocomplete(textEl, id); };
   const onKey=e=>{
     e.stopPropagation();
+    // Mid-composition, Enter CONFIRMS the IME candidate and Escape dismisses it.
+    // Committing here would store the pre-edit text - the raw pinyin - and tear
+    // down the node while the composition is still open.
+    if(isComposingKey(e)) return;
     if(formulaAutocompleteKeydown(e)) return;   // popup open: let it handle nav/select/dismiss first
     // Standard contentEditable shortcuts: Ctrl/Cmd+B / I / U toggle inline
     if((e.ctrlKey||e.metaKey) && !e.shiftKey){
@@ -5069,6 +5111,7 @@ function startEdit(id){
   };
   textEl.addEventListener('blur',onBlur); textEl.addEventListener('keydown',onKey);
   textEl.addEventListener('input',onInput);
+  textEl.addEventListener('compositionend',onCompositionEnd);
 }
 
 /* ---------- node context toolbar ---------- */
@@ -5897,6 +5940,8 @@ function navTarget(id, key){
 }
 
 window.addEventListener('keydown',e=>{
+  // ime-exempt: bails on every text field, contentEditable and open editor
+  // below, so a composition is never live by the time a key test is reached.
   if(['INPUT','TEXTAREA'].includes(e.target.tagName)||e.target.isContentEditable||document.querySelector('.node.editing')) return;
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();return;}
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='y'){e.preventDefault();redo();return;}
@@ -5995,10 +6040,12 @@ $('#searchBtn').onclick=()=>{
 $('#replaceToggle').onclick=()=>{ $('#searchWrap').classList.toggle('replace-mode'); $('#replace').focus(); };
 $('#search').addEventListener('input',e=>{ if(globalSearchMode) runGlobalSearch(e.target.value); else doSearch(e.target.value); });
 $('#search').addEventListener('keydown',e=>{
+  if(isComposingKey(e)) return;   // Enter is confirming a candidate, not searching
   if(e.key==='Escape'){ e.preventDefault(); closeSearch(); }
   if(e.key==='Enter'){ e.preventDefault(); focusNextMatch(); }
 });
 $('#replace').addEventListener('keydown',e=>{
+  if(isComposingKey(e)) return;
   if(e.key==='Escape'){ e.preventDefault(); closeSearch(); }
   if(e.key==='Enter'){ e.preventDefault(); e.shiftKey ? replaceAll() : replaceNext(); }
 });
@@ -6008,6 +6055,8 @@ $('#replaceAll').onclick=replaceAll;
 // Global shortcuts: Ctrl/⌘+F opens find, Ctrl/⌘+H opens find+replace.
 // Registered separately so they fire even when a node is being edited.
 window.addEventListener('keydown', e=>{
+  // ime-exempt: needs Ctrl/Cmd, which no input method binds, and is deliberately
+  // live during editing so Ctrl+F can commit the node and open find.
   if(!(e.ctrlKey||e.metaKey)) return;
   const k = e.key.toLowerCase();
   if(k === 'f'){
@@ -6424,6 +6473,7 @@ function showNotesEditor(nodeId){
   });
   editor.addEventListener('keydown',e=>{
     e.stopPropagation();
+    if(isComposingKey(e)) return;
     if(e.key==='Escape'){ e.preventDefault(); close(); }
     if(e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); save(); }
   });
@@ -7100,6 +7150,7 @@ function startPresentation(){
   presGo(0);
 }
 function presKey(e){
+  // ime-exempt: presentation mode has no text entry at all.
   if(!_pres) return;
   if(e.key==='ArrowRight'||e.key==='ArrowDown'||e.key===' '||e.key==='PageDown'){ e.preventDefault(); e.stopPropagation(); presStep(1); }
   else if(e.key==='ArrowLeft'||e.key==='ArrowUp'||e.key==='PageUp'){ e.preventDefault(); e.stopPropagation(); presStep(-1); }
@@ -8465,6 +8516,7 @@ function showVariableForm(varNames, defaults, mapId, done){
   m.querySelector('.vf-close').onclick  = close;
   m.querySelector('.vf-backdrop').onclick = close;
   m.addEventListener('keydown', e => {
+    if(isComposingKey(e)) return;
     if(e.key==='Escape'){ e.preventDefault(); close(); }
     if(e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); m.querySelector('.vf-go').click(); }
   });
@@ -8579,6 +8631,7 @@ function showMapVariables(){
   m.querySelector('.vf-close').onclick = close;
   m.querySelector('.vf-backdrop').onclick = close;
   m.addEventListener('keydown', e => {
+    if(isComposingKey(e)) return;
     if(e.key==='Escape'){ e.preventDefault(); close(); }
     if(e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); m.querySelector('.vf-go').click(); }
   });
@@ -9775,6 +9828,7 @@ $('#minimap')?.addEventListener('click', e=>e.stopPropagation());
   zv.addEventListener('blur',apply);
   zv.addEventListener('keydown',e=>{
     e.stopPropagation();
+    if(isComposingKey(e)) return;
     if(e.key==='Enter'){ e.preventDefault(); zv.blur(); }
     if(e.key==='Escape'){ e.preventDefault(); applyView(); zv.blur(); }
   });
@@ -10199,13 +10253,13 @@ function openColorPicker(anchor, initial, opts){
     hsv = rgbToHsv(c); alpha = c.a;
     paint(true);
   });
-  txt.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); closeColorPicker(); } });
+  txt.addEventListener('keydown', e=>{ if(isComposingKey(e)) return; if(e.key==='Enter'){ e.preventDefault(); closeColorPicker(); } });
   pop._done = opts.onClose;
   pop._owner = opts.owner;
   pop._out = e=>{ if(!pop.contains(e.target) && !anchor.contains(e.target)) closeColorPicker(); };
   // Capture phase: the dialogs stop mousedown from bubbling out of the card, so
   // a bubble phase listener here would never see a click inside one.
-  pop._key = e=>{ if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); closeColorPicker(); } };
+  pop._key = e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); closeColorPicker(); } };
   document.addEventListener('mousedown', pop._out, true);
   document.addEventListener('keydown', pop._key, true);
   _csPop = pop;
@@ -11823,7 +11877,7 @@ function minimalSubPlacement(rect, subW, subH, vw, vh, menuLeft, menuRight){
     }
   });
   document.addEventListener('click',e=>{ if(!e.target.closest('#minimalMenuBtn, #minimalMenu, .minimal-sub')) closeLauncher(); });
-  document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeLauncher(); });
+  document.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape') closeLauncher(); });
 }
 // Zen chrome reveal: sliding the mouse near the top edge of the canvas shows
 // the floating toolbar (and hides it again once the pointer moves back into
@@ -12496,6 +12550,7 @@ function showDonateModal(){
     else { navigator.clipboard?.writeText(url); toast('Link copied'); }
   });
   document.addEventListener('keydown', function esc(e){
+    if(isComposingKey(e)) return;
     if(e.key==='Escape'){ close(); document.removeEventListener('keydown', esc); }
   });
 }
@@ -12612,6 +12667,7 @@ $('#presentBtn')?.addEventListener('click', enterDeck);
 // Deck keys are captured (phase 1) so the map's own arrow/Esc handlers don't
 // also fire while presenting.
 document.addEventListener('keydown',e=>{
+  // ime-exempt: deck mode has no text entry at all.
   if(!document.body.classList.contains('ui-deck')) return;
   if(e.key==='ArrowRight'){ e.preventDefault(); e.stopPropagation(); deckStep(1); }
   else if(e.key==='ArrowLeft'){ e.preventDefault(); e.stopPropagation(); deckStep(-1); }
@@ -12671,9 +12727,11 @@ function showKeyboardHelp(){
   const close=()=>m.remove();
   m.querySelector('.kb-close').onclick = close;
   m.querySelector('.kb-backdrop').onclick = close;
-  m.addEventListener('keydown', e=>{ if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  m.addEventListener('keydown', e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
 }
 window.addEventListener('keydown', e=>{
+  // ime-exempt: '?' is not a key any candidate window consumes, and every text
+  // field is skipped below anyway.
   if(e.key !== '?') return;
   // Don't intercept when typing inside a text field / contentEditable
   if(e.target.isContentEditable) return;
@@ -12685,6 +12743,7 @@ window.addEventListener('keydown', e=>{
 });
 // Esc exits focus mode (only when nothing else is open/focused)
 window.addEventListener('keydown', e=>{
+  if(isComposingKey(e)) return;
   if(e.key!=='Escape') return;
   if(!document.body.classList.contains('focus-mode')) return;
   // Don't fight with editing/notes/login overlay - they handle Esc themselves
@@ -13143,7 +13202,7 @@ function showLoginOverlay(opts){
   };
   const doLogin=()=>attempt(sign, err, pat, 'github', null);
   sign.onclick = doLogin;
-  pat.addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+  pat.addEventListener('keydown', e=>{ if(isComposingKey(e)) return; if(e.key==='Enter') doLogin(); });
 
   // Every self-hosted pane is wired from SELF_HOSTED_PANES rather than by hand,
   // because they are the same three controls pointed at a different instance.
@@ -13201,13 +13260,14 @@ function showLoginOverlay(opts){
 
     if(tOauth && tClient){
       tOauth.onclick=()=>startForgeLogin(pn.forgeId, inst.value, (tClient.value||'').trim());
-      tClient.addEventListener('keydown', e=>{ if(e.key==='Enter') tOauth.click(); });
+      tClient.addEventListener('keydown', e=>{ if(isComposingKey(e)) return; if(e.key==='Enter') tOauth.click(); });
     }
     if(tSign && tPat){
       const go=()=>attempt(tSign, tErr, tPat, pn.forgeId, inst);
       tSign.onclick = go;
-      tPat.addEventListener('keydown', e=>{ if(e.key==='Enter') go(); });
+      tPat.addEventListener('keydown', e=>{ if(isComposingKey(e)) return; if(e.key==='Enter') go(); });
       inst.addEventListener('keydown', e=>{
+        if(isComposingKey(e)) return;
         if(e.key!=='Enter') return;
         if(tClient && !tClient.value) tClient.focus(); else if(tOauth) tOauth.click();
       });
