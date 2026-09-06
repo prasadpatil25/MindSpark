@@ -8919,6 +8919,11 @@ async function exportPNG(){
   });
   const imgMap={};
   await Promise.all(ids.filter(i=>map.nodes[i].image).map(async i=>{ imgMap[i]=await loadImg(map.nodes[i].image); }));
+  // Groot look background image - exact face as SVG (converted from PNG)
+  let grootImg=null;
+  if((document.documentElement.getAttribute('data-look')||'office')==='groot'){
+    const _gu=await grootFaceUri(); if(_gu) grootImg=await loadImg(_gu);
+  }
 
   // Favicons for link nodes, so the export matches what the live canvas shows.
   // crossOrigin='anonymous' is the whole safety story here: favicons come from
@@ -9032,6 +9037,19 @@ async function exportPNG(){
       ctx.fillStyle=css('--ink')||themeInk; ctx.globalAlpha=0.09;
       for(let dx=12; dx<W; dx+=46){ for(let dy=12; dy<H; dy+=46){ ctx.beginPath(); ctx.arc(dx,dy,1,0,Math.PI*2); ctx.fill(); }}
       for(let dx=34; dx<W; dx+=52){ for(let dy=28; dy<H; dy+=52){ ctx.beginPath(); ctx.arc(dx,dy,0.9,0,Math.PI*2); ctx.fill(); }}
+      ctx.globalAlpha=1; ctx.lineCap='round'; ctx.lineJoin='round';
+    } else if(look==='groot'){
+      // Drawn as-is: groot.svg carries its own greys now, so no tint here or
+      // the export would not match what the CSS paints on screen.
+      if(grootImg){
+        const sz=180;
+        ctx.globalAlpha=1;
+        ctx.drawImage(grootImg, -12, H-sz+8, sz, sz);
+      }
+      // vine/leaf speckle - subtle like CSS radial gradients
+      ctx.fillStyle=css('--ink')||themeInk; ctx.globalAlpha=0.06;
+      for(let dx=20; dx<W; dx+=58){ for(let dy=20; dy<H; dy+=58){ ctx.beginPath(); ctx.arc(dx,dy,1.1,0,Math.PI*2); ctx.fill(); }}
+      for(let dx=40; dx<W; dx+=64){ for(let dy=36; dy<H; dy+=64){ ctx.beginPath(); ctx.arc(dx,dy,0.8,0,Math.PI*2); ctx.fill(); }}
       ctx.globalAlpha=1; ctx.lineCap='round'; ctx.lineJoin='round';
     } else {
       // office / default, sketchpad, etc. - dot grid
@@ -10495,7 +10513,8 @@ const LOOKS = [
   {id:'beach',       name:'at the<br>Beach',    font:'"Oswald",system-ui,sans-serif'},
   {id:'studio',      name:'in the<br>Studio',   font:'"Fraunces",serif'},
   {id:'mountain',    name:'on the<br>Mountain',font:'"Roboto Condensed",system-ui,sans-serif'},
-  {id:'desert',      name:'in the<br>Desert',     font:'"Nunito",system-ui,sans-serif'}
+  {id:'desert',      name:'in the<br>Desert',     font:'"Nunito",system-ui,sans-serif'},
+  {id:'groot',       name:'Groot',         font:'"Fredoka",system-ui,sans-serif'}
 ];
 const MAP_STYLES = [
   {id:'modern',  name:'Modern',  desc:'Soft cards, curved branches'},
@@ -10603,6 +10622,7 @@ const LOOK_CONFIG_DEFAULTS = {
   studio:       { font:'"Fraunces",serif',                           nodeSize:1, radius:8  },
   mountain:     { font:'"Roboto Condensed",system-ui,sans-serif',    nodeSize:1, radius:10 },
   desert:       { font:'"Nunito",system-ui,sans-serif',               nodeSize:1, radius:12 },
+  groot:        { font:'"Fredoka",system-ui,sans-serif',              nodeSize:1, radius:16 },
   sketchpad:    { font:'system-ui,sans-serif',                        nodeSize:1, radius:14 },
 };
 const LOOK_CONFIG_BOUNDS = { nodeSize:[0.8,1.6], radius:[0,60] };
@@ -11174,10 +11194,80 @@ function importLibraryTheme(id){
 // isHandwrittenTheme() this needs no JS-side helper at all. Independent of
 // applyTheme() (colors) and applyMapStyle() (card/branch shape) - all three
 // are separate attributes that never override each other.
+// ---- Groot's face -----------------------------------------------------------
+// One compressed blob holding the whole drawing: a 5-byte header, a 28-entry
+// tone table, then the grid of tone indices. Rebuilt into an SVG data URI on
+// first use and handed to CSS as --groot-face.
+//
+// The alternative was ~25 KB of SVG inlined into styles.css AND app.js - 50 KB
+// every visitor downloaded whatever look they had picked. What made the SVG
+// large was never the drawing: a dithered 5,261-pixel image needs ~3,600
+// separate path elements however tightly they are packed, and no path syntax
+// fits that under ~18 KB. Stored as bytes it is 3.9 KB, because that is what
+// the image actually contains.
+//
+// Three things shrank the blob, each measured rather than assumed:
+//   - cropped to the ink's bounding box, 145x162 rather than the full 200x200
+//   - stored COLUMN-major, which beat row-major by ~9%: the wood grain runs
+//     vertically, so columns hold longer runs than rows do
+//   - serpentine column order, every other column stored bottom-up, so a
+//     column's end sits next to its neighbour's start
+//   - deflate's Z_RLE strategy, and the zlib container rather than gzip's
+// Delta-encoding, nibble-packing and per-tone bitplanes were all tried and all
+// came out larger - dithered data has no gradient to exploit.
+const GROOT_FACE = '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';
+let _grootFaceUri = null;
+async function grootFaceUri(){
+  if(_grootFaceUri !== null) return _grootFaceUri;
+  // No DecompressionStream means no face, not a broken one. The rest of the
+  // look is plain CSS and still works.
+  if(typeof DecompressionStream !== 'function'){ _grootFaceUri = ''; return ''; }
+  try{
+    const bin = atob(GROOT_FACE);
+    const bytes = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+    const b = new Uint8Array(await new Response(stream).arrayBuffer());
+    const cw=b[0], ch=b[1], ox=b[2], oy=b[3], nt=b[4];
+    const grid = 5 + nt*2;                       // tone table sits between header and grid
+    const hex = n => n.toString(16).padStart(2,'0');
+    // Horizontal runs per tone. Deliberately the simplest decomposition rather
+    // than the tightest: this string is built in memory and never shipped, so
+    // only the grid has to be right, not how neatly the runs are packed.
+    const runs = new Map();
+    for(let y=0;y<ch;y++){
+      let x=0;
+      while(x<cw){
+        const cell = (cx,cy) => b[grid + cx*ch + ((cx&1) ? ch-1-cy : cy)];
+        const t = cell(x,y);
+        let n=1; while(x+n<cw && cell(x+n,y)===t) n++;
+        if(t) runs.set(t, (runs.get(t)||'') + 'M' + (x+ox) + ',' + (y+oy) + 'h' + n + 'v1h-' + n);
+        x += n;
+      }
+    }
+    let paths='';
+    for(const [t,d] of runs){
+      const g=hex(b[5+(t-1)*2]), a=hex(b[6+(t-1)*2]);
+      paths += "%3Cpath fill='%23" + g+g+g+a + "' d='" + d + "'/%3E";
+    }
+    _grootFaceUri = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' shape-rendering='crispEdges'%3E" + paths + "%3C/svg%3E";
+  }catch(e){ console.warn('groot face could not be rebuilt:', e); _grootFaceUri = ''; }
+  return _grootFaceUri;
+}
+// Handed to CSS as --groot-face; the stage rule lists it as its first
+// background layer and falls back to `none` until this resolves.
+async function applyGrootFace(){
+  const root = document.documentElement;
+  if((root.getAttribute('data-look')||'office') !== 'groot'){ root.style.removeProperty('--groot-face'); return; }
+  const u = await grootFaceUri();
+  if(u && (root.getAttribute('data-look')||'') === 'groot') root.style.setProperty('--groot-face', 'url("' + u + '")');
+}
+
 function applyLook(id){
   if(id && id!=='office') document.documentElement.setAttribute('data-look', id);
   else document.documentElement.removeAttribute('data-look');
   try{ localStorage.setItem('mindspark:look', id||'office'); }catch(e){}
+  applyGrootFace();
   // Two things need to happen here, not just a re-render:
   // 1) Web fonts load asynchronously - the very first time Caveat/Patrick
   //    Hand gets used in a session, the font file may still be downloading
