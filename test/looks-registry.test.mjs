@@ -57,12 +57,12 @@ function looksWithStageTexture() {
   });
 }
 
-// Pre-existing when this file was written: each sets a .stage texture in CSS
-// that the export painter does not reproduce, so their PNGs lose it. Listed so
-// the gap is visible and cannot grow. Shrink this list, never extend it.
-const EXPORT_TEXTURE_MISSING = ['scientist', 'architect', 'alien', 'psycho'];
-// Pre-existing too: a config entry with no Look to belong to, so unreachable.
-const ORPHAN_CONFIG = ['sketchpad'];
+// Empty, and it should stay that way: every look that textures .stage now
+// reproduces it in the PNG export. scientist, architect, alien and psycho sat
+// here until their painter branches were written.
+const EXPORT_TEXTURE_MISSING = [];
+// Empty: `sketchpad` sat here with no look to belong to until it was deleted.
+const ORPHAN_CONFIG = [];
 // Names that deliberately do NOT carry a <br>. Every other look reads as a
 // phrase that wants breaking ("in the / Office", "back to / School"), so the
 // rule is worth keeping by default. "I am Groot" is the whole joke in two
@@ -217,6 +217,67 @@ describe('look registry', () => {
         return `  ${id}: ${mine.length} fixed colour${mine.length === 1 ? '' : 's'}, e.g. ` +
                `${[...new Set(mine.map(h => h.hex))].slice(0, 3).join(', ')}`;
       }).join('\n'));
+  });
+});
+
+describe('look animations stay off the main thread', () => {
+  // A Look's animation runs for as long as someone has that look selected, so
+  // it has to be free. Only transform and opacity are composited; everything
+  // else repaints, and a full-viewport layer repainting every frame is the
+  // difference between 0ms and 859ms of main thread per 5s on a throttled CPU.
+  // That was measured, not assumed - the sailboat waves used to animate
+  // background-position and cost exactly that.
+  const COMPOSITED = new Set(['transform', 'opacity']);
+
+  /** @keyframes bodies, brace-matched (a regex on `}` bleeds into the next rule). */
+  function keyframes() {
+    const out = new Map();
+    let i = 0;
+    while ((i = CSS.indexOf('@keyframes', i)) !== -1) {
+      const name = CSS.slice(i).match(/@keyframes\s+([\w-]+)/)[1];
+      let j = CSS.indexOf('{', i), depth = 0, k = j;
+      for (; k < CSS.length; k++) { if (CSS[k] === '{') depth++; else if (CSS[k] === '}') { depth--; if (!depth) break; } }
+      out.set(name, CSS.slice(j + 1, k));
+      i = k;
+    }
+    return out;
+  }
+
+  test('any animation a look runs touches only composited properties', () => {
+    const kf = keyframes();
+    const offenders = [];
+    for (const m of CSS.matchAll(/:root\[data-look="([a-z-]+)"\][^{]*\{([^}]*)\}/g)) {
+      const decl = m[2].match(/animation\s*:\s*([^;]+)/);
+      if (!decl) continue;
+      const name = decl[1].trim().split(/\s+/)[0];
+      const body = kf.get(name);
+      assert.ok(body, `${m[1]} runs @keyframes ${name}, which does not exist`);
+      const props = [...new Set([...body.matchAll(/(?:^|[;{]\s*)([a-z-]+)\s*:/g)].map(x => x[1]))];
+      const bad = props.filter(x => !COMPOSITED.has(x));
+      if (bad.length) offenders.push(`${m[1]} / ${name}: ${bad.join(', ')}`);
+    }
+    assert.deepEqual(offenders, [],
+      'a look animates a property the compositor cannot handle, so every frame repaints:\n  ' +
+      offenders.join('\n  ') + '\nAnimate transform/opacity instead.');
+  });
+
+  test('an animated look layer is promoted and contained', () => {
+    // will-change:transform gives it its own compositing layer; contain:paint
+    // stops invalidation escaping into the stage around it.
+    const at = CSS.indexOf('.wave-layer{');
+    assert.notEqual(at, -1, 'the sailboat wave layer is gone');
+    const rule = CSS.slice(at, CSS.indexOf('}', at));
+    assert.match(rule, /will-change:\s*transform/, 'the wave layer must be promoted');
+    assert.ok(!/will-change:[^;]*background/.test(rule),
+      'will-change on background-position promotes nothing and just costs memory');
+    assert.match(rule, /contain:\s*paint/);
+  });
+
+  test('nothing drives the wave from a rAF loop any more', () => {
+    assert.ok(!/_tickWave|_waveRAF/.test(APP),
+      'the wave is CSS-driven now; a rAF loop writing styles puts it back on the main thread');
+    assert.ok(!/\.style\.backgroundPosition/.test(APP),
+      'background-position cannot be composited - animate transform instead');
   });
 });
 
