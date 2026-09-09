@@ -1138,12 +1138,47 @@ function applyView(){
   }
   updateMinimapViewport();
 }
-function clearNodes(){ document.querySelectorAll('.node').forEach(n=>n.remove()); }
+// ---- Node element reuse -----------------------------------------------------
+// render() used to remove every .node and build them all again. That is what
+// forced every node to be re-measured, and measurement was 64% of render time
+// on an 800-node map (profiled), with another 8% in the removals themselves.
+//
+// A node whose rendered content is unchanged keeps its element AND its cached
+// w/h; only its position and selection class are touched. The signature below
+// decides "unchanged", so it has to cover everything that can alter the element:
+// the node's own fields, and the outside state the construction reads -
+// rollups, child count, zebra depth, and the font metrics the look imposes.
+//
+// It stringifies the whole node rather than listing the fields that matter,
+// deliberately: a missed field shows up as a node that silently never updates,
+// which is far worse than an occasional redundant rebuild.
+const _nodeEls=new Map();    // id -> element currently in the DOM
+const _nodeSig=new Map();    // id -> signature it was built from
+// Bumped whenever a web font finishes loading. A node's cached size was
+// measured against whatever font was resolved at build time, and a font
+// swapping in later changes that size without changing any field of the node,
+// so nothing else in the signature can see it. See applyLook().
+let _fontEpoch=0;
+function _nodeSignature(id, n, hasKids, roll, zd, key){
+  const own=JSON.stringify(n, (k,v)=> (k==='x'||k==='y'||k==='w'||k==='h') ? undefined : v);
+  // A formula node shows a value derived from OTHER nodes, so its own fields
+  // can be identical while what it displays has changed.
+  let extra='';
+  try{
+    if(nodeTextPlain(n.text||'').trim().startsWith('=')) extra='|f:'+JSON.stringify(computeNodeValue(id));
+  }catch(e){ extra='|f:err'; }
+  return key+'|'+own+'|'+hasKids+'|'+(zd[id]||0)+'|'+roll.desc[id]+'|'+roll.tdone[id]+'|'+roll.ttot[id]+extra;
+}
+function clearNodes(){
+  document.querySelectorAll('.node').forEach(n=>n.remove());
+  _nodeEls.clear(); _nodeSig.clear();
+}
 
 function render(){
-  clearNodes(); edges.innerHTML='';
+  edges.innerHTML='';
   clearFormulaCache();
   if(!map){
+    clearNodes();
     $('#empty').style.display='grid';
     $('#nodebar')?.remove();              // no node toolbar on a blank canvas
     if(activePicker){ activePicker.remove(); activePicker=null; }
@@ -1169,11 +1204,36 @@ function render(){
   const roll=computeRollups();                // O(n) descendant + task totals
   const hidden=hiddenSet();
   const toMeasure=[];
+  // Anything that changes text metrics or the shell every node is drawn into.
+  // Built from the inputs, never from getComputedStyle: the apply*Vars calls just
+  // above write custom properties, so a computed read here forces a style recalc
+  // mid-render. This used to read --sans, --look-node-size and --look-radius, all
+  // three written only by applyLookConfigVars (look defaults plus map.lookConfig)
+  // or by a :root[data-look] rule, so the look id and lookConfig already cover
+  // them. Themes cannot move them, being colours only. An attribute read is free.
+  const _metricsKey=[map.id, map.rootId, map.color, mapStyle, map.layout,
+    document.documentElement.getAttribute('data-look')||'office', _fontEpoch,
+    JSON.stringify(map.styleConfig||{}), JSON.stringify(map.lookConfig||{})].join('|');
+  const _seen=new Set();
   // nodes
   for(const id in map.nodes){
     if(hidden.has(id)) continue;
     const n=map.nodes[id];
     const hasKids=childrenOf(id).length>0;
+    _seen.add(id);
+    const _sig=_nodeSignature(id, n, hasKids, roll, zd, _metricsKey);
+    const _old=_nodeEls.get(id);
+    if(_old && _nodeSig.get(id)===_sig){
+      // Unchanged: keep the element and its measured size. Position and the
+      // selection class are the only things that can differ, and neither needs
+      // a re-measure. Re-appended so DOM order still follows map.nodes, which
+      // is what decides stacking when two nodes overlap.
+      _old.style.left=n.x+'px'; _old.style.top=n.y+'px';
+      _old.classList.toggle('sel', id===sel);
+      viewport.appendChild(_old);
+      continue;
+    }
+    if(_old) _old.remove();
     const el=document.createElement('div');
     el.className='node'+(id===map.rootId?' root':'')+(id===sel?' sel':'')+(hasKids&&n.collapsed?' collapsed':'')+(n.side==='left'?' left':'');
     el.dataset.id=id;
@@ -1363,7 +1423,13 @@ function render(){
       el.appendChild(tb);
     }
     viewport.appendChild(el);
+    _nodeEls.set(id, el); _nodeSig.set(id, _sig);
     toMeasure.push({el, n});
+  }
+  // Elements for nodes that were deleted, or have just become hidden under a
+  // collapsed parent. Without this they would linger in the DOM forever.
+  for(const [id, el] of _nodeEls){
+    if(!_seen.has(id)){ el.remove(); _nodeEls.delete(id); _nodeSig.delete(id); }
   }
   // Measure ALL nodes in one pass AFTER appending - reading getBoundingClientRect
   // interleaved with appends forces a layout reflow per node (O(n) thrash). One
@@ -3126,7 +3192,10 @@ function syncTextFromMap(){
   const oldLines=_mdLines, oldFolds=_mdFolds;   // remember before rebuilding, to carry fold state across the resync
   const newLines=[];
   _mdSyncing=true;
-  try{ _mdFullText=buildMarkdown(undefined,{rich:true,meta:true,lineMap:newLines}); }catch(e){ _mdFullText=''; }
+  // Indexed: this runs on every canvas edit while the Markdown editor is open, and
+  // buildMarkdown walks the tree with childrenOf, which is O(n) per call without an
+  // index. Unindexed it cost 471 ms per edit on a 2000 node map, against 1.5 ms here.
+  try{ _mdFullText=withChildIndex(()=>buildMarkdown(undefined,{rich:true,meta:true,lineMap:newLines})); }catch(e){ _mdFullText=''; }
   _mdSyncing=false;
   _mdLines=newLines;
   // Carry folds over by node identity - a section folded before a canvas-side style
@@ -4206,8 +4275,30 @@ function formatCitation(c){
 // Import / manage layout presets. Shows the current map's layout as JSON so a
 // user can copy it, tweak it, and paste it back as a new preset - which is the
 // realistic way anyone produces one of these.
-function showLayoutImportForm(){
+// Every settings dialog is the same shell: a backdrop, a card, a close button,
+// and three ways out (Cancel, the X, the backdrop) plus Escape. Six copies of
+// that had drifted apart in whitespace and in one case in the close button's
+// escape sequence. This owns the shell; each caller supplies only its card body
+// and its own close.
+//
+// dismissOn() is separate from creation on purpose: the colour-theme dialog
+// needs a close that undoes the preview it painted onto :root, and it can only
+// build that after its own state exists. Wiring the dismissers here instead of
+// in openVarForm keeps every caller's close semantics exactly its own.
+function openVarForm(inner){
   document.querySelectorAll('.var-form').forEach(p=>p.remove());
+  const m=document.createElement('div'); m.className='var-form';
+  m.innerHTML='<div class="vf-backdrop"></div><div class="vf-card">'
+    +'<button class="vf-close" aria-label="Close">\u00d7</button>'+inner+'</div>';
+  document.body.appendChild(m);
+  m.addEventListener('mousedown',e=>e.stopPropagation());
+  const dismissOn=close=>{
+    m.querySelectorAll('.vf-cancel, .vf-close, .vf-backdrop').forEach(el=>{ el.onclick=close; });
+    m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  };
+  return { m, dismissOn };
+}
+function showLayoutImportForm(){
   const cur = map ? (findLayout(map.layoutPreset || map.layout) || BUILTIN_LAYOUTS[0]) : BUILTIN_LAYOUTS[0];
   const sample = JSON.stringify({
     v:1, id:'my-timeline', name:'My timeline', desc:'Wider spacing',
@@ -4215,11 +4306,7 @@ function showLayoutImportForm(){
     options: validateLayoutConfig(map && map.layoutConfig),
   }, null, 2);
   const customs = loadCustomLayouts();
-  const m=document.createElement('div'); m.className='var-form';
-  m.innerHTML=`
-    <div class="vf-backdrop"></div>
-    <div class="vf-card">
-      <button class="vf-close" aria-label="Close">\u00d7</button>
+  const {m, dismissOn}=openVarForm(`
       <h2>Import a layout</h2>
       <div class="vf-hint">A layout picks one of the built-in engines
         (${LAYOUT_ENGINES.join(', ')}) and tunes it - it cannot define a new
@@ -4237,9 +4324,7 @@ function showLayoutImportForm(){
         <button class="vf-cancel">Cancel</button>
         <button class="vf-go primary">Import</button>
       </div>
-    </div>`;
-  document.body.appendChild(m);
-  m.addEventListener('mousedown',e=>e.stopPropagation());
+  `);
   const ta=m.querySelector('.vf-json'), err=m.querySelector('.vf-err');
   ta.focus();
   const close=()=>m.remove();
@@ -4269,23 +4354,15 @@ function showLayoutImportForm(){
     close(); toast('Layout removed');
     try{ $('#themeBtn').click(); }catch(_){}
   });
-  m.querySelector('.vf-cancel').onclick=close;
-  m.querySelector('.vf-close').onclick=close;
-  m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  dismissOn(close);
 }
 function showLayoutConfigForm(){
   if(!map || READONLY) return;
-  document.querySelectorAll('.var-form').forEach(p=>p.remove());
   // Only the active engine's knobs - showing timeline's settings while
   // 'balanced' is selected was both confusing and inapplicable.
   const engine = map.layout || 'balanced';
   const current = JSON.stringify(layoutConfigFor(engine, map.layoutConfig), null, 2);
-  const m=document.createElement('div'); m.className='var-form';
-  m.innerHTML=`
-    <div class="vf-backdrop"></div>
-    <div class="vf-card">
-      <button class="vf-close" aria-label="Close">\u00d7</button>
+  const {m, dismissOn}=openVarForm(`
       <h2>Layout settings - ${escapeHtml((findLayout(map.layoutPreset||engine)||{name:engine}).name)}</h2>
       <div class="vf-hint">Saved with this map and included in share links. Out-of-range
         values are clamped and unknown keys ignored, so what you get back may differ
@@ -4299,9 +4376,7 @@ function showLayoutConfigForm(){
         <button class="vf-cancel">Cancel</button>
         <button class="vf-go primary">Apply</button>
       </div>
-    </div>`;
-  document.body.appendChild(m);
-  m.addEventListener('mousedown',e=>e.stopPropagation());
+  `);
   const ta=m.querySelector('.vf-json'), err=m.querySelector('.vf-err');
   ta.focus();
   const close=()=>m.remove();
@@ -4325,22 +4400,14 @@ function showLayoutConfigForm(){
     apply(layoutConfigFor(engine, parsed));
   };
   m.querySelector('.vf-unref').onclick=()=>apply(layoutConfigFor(engine, null));
-  m.querySelector('.vf-cancel').onclick=close;
-  m.querySelector('.vf-close').onclick=close;
-  m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  dismissOn(close);
 }
 function showStyleConfigForm(){
   if(!map || READONLY) return;
-  document.querySelectorAll('.var-form').forEach(p=>p.remove());
   // Only the active style's knobs - same rule as the layout dialog.
   const style = map.style || 'modern';
   const current = JSON.stringify(styleConfigFor(style, map.styleConfig), null, 2);
-  const m=document.createElement('div'); m.className='var-form';
-  m.innerHTML=`
-    <div class="vf-backdrop"></div>
-    <div class="vf-card">
-      <button class="vf-close" aria-label="Close">\u00d7</button>
+  const {m, dismissOn}=openVarForm(`
       <h2>Map style settings - ${escapeHtml((MAP_STYLES.find(s=>s.id===style)||{name:style}).name)}</h2>
       <div class="vf-hint">Saved with this map and included in share links.
         edgeColor is any CSS color ("" = the theme default); cardPad is a
@@ -4357,9 +4424,7 @@ function showStyleConfigForm(){
         <button class="vf-cancel">Cancel</button>
         <button class="vf-go primary">Apply</button>
       </div>
-    </div>`;
-  document.body.appendChild(m);
-  m.addEventListener('mousedown',e=>e.stopPropagation());
+  `);
   const ta=m.querySelector('.vf-json'), err=m.querySelector('.vf-err');
   ta.focus();
   const close=()=>m.remove();
@@ -4381,22 +4446,14 @@ function showStyleConfigForm(){
     apply(styleConfigFor(style, parsed));
   };
   m.querySelector('.vf-unref').onclick=()=>apply(styleConfigFor(style, null));
-  m.querySelector('.vf-cancel').onclick=close;
-  m.querySelector('.vf-close').onclick=close;
-  m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  dismissOn(close);
 }
 function showLookConfigForm(){
   if(!map || READONLY) return;
-  document.querySelectorAll('.var-form').forEach(p=>p.remove());
   // Only the active look's knobs - same rule as the style and layout dialogs.
   const look = document.documentElement.getAttribute('data-look') || 'office';
   const current = JSON.stringify(lookConfigFor(look, map.lookConfig), null, 2);
-  const m=document.createElement('div'); m.className='var-form';
-  m.innerHTML=`
-    <div class="vf-backdrop"></div>
-    <div class="vf-card">
-      <button class="vf-close" aria-label="Close">\u00d7</button>
+  const {m, dismissOn}=openVarForm(`
       <h2>Look settings - ${escapeHtml(((LOOKS.find(l=>l.id===look)||{name:look}).name).replace(/<br\s*\/?>/gi, ' '))}</h2>
       <div class="vf-hint">Saved with this map and included in share links. font is
         any CSS font family ("" keeps the look's own default font); nodeSize
@@ -4414,9 +4471,7 @@ function showLookConfigForm(){
         <button class="vf-cancel">Cancel</button>
         <button class="vf-go primary">Apply</button>
       </div>
-    </div>`;
-  document.body.appendChild(m);
-  m.addEventListener('mousedown',e=>e.stopPropagation());
+  `);
   const ta=m.querySelector('.vf-json'), err=m.querySelector('.vf-err');
   ta.focus();
   const close=()=>m.remove();
@@ -4436,22 +4491,14 @@ function showLookConfigForm(){
     apply(lookConfigFor(look, parsed));
   };
   m.querySelector('.vf-unref').onclick=()=>apply(lookConfigFor(look, null));
-  m.querySelector('.vf-cancel').onclick=close;
-  m.querySelector('.vf-close').onclick=close;
-  m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  dismissOn(close);
 }
 function showThemeConfigForm(){
   if(!map || READONLY) return;
-  document.querySelectorAll('.var-form').forEach(p=>p.remove());
   // Only the active theme's knobs - same rule as the other dialogs.
   const theme = document.documentElement.getAttribute('data-theme') || 'light';
   const current = spaceForSwatches(JSON.stringify(themeConfigFor(theme, map.themeConfig), null, 2));
-  const m=document.createElement('div'); m.className='var-form';
-  m.innerHTML=`
-    <div class="vf-backdrop"></div>
-    <div class="vf-card">
-      <button class="vf-close" aria-label="Close">\u00d7</button>
+  const {m, dismissOn}=openVarForm(`
       <h2>Colour theme settings - ${escapeHtml(((THEMES.find(t=>t.id===theme)||{name:theme}).name).replace(/<br\s*\/?>/gi, ' '))}</h2>
       <div class="vf-hint">Saved with this map and included in share links. Each
         key is any CSS colour: paper (canvas background), ink (text), accent
@@ -4470,9 +4517,7 @@ function showThemeConfigForm(){
         <button class="vf-cancel">Cancel</button>
         <button class="vf-go primary">Apply</button>
       </div>
-    </div>`;
-  document.body.appendChild(m);
-  m.addEventListener('mousedown',e=>e.stopPropagation());
+  `);
   const ta=m.querySelector('.vf-json'), err=m.querySelector('.vf-err');
   let previewed = false;
   attachColorSwatches(ta, text=>{ previewed = true; previewThemeConfig(theme, text); });
@@ -4502,20 +4547,12 @@ function showThemeConfigForm(){
     apply(themeConfigFor(theme, parsed));
   };
   m.querySelector('.vf-unref').onclick=()=>apply(themeConfigFor(theme, null));
-  m.querySelector('.vf-cancel').onclick=close;
-  m.querySelector('.vf-close').onclick=close;
-  m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){ e.preventDefault(); close(); } });
+  dismissOn(close);
 }
 function showCitationForm(id){
   const n=map.nodes[id]; if(!n) return;
-  document.querySelectorAll('.var-form').forEach(p=>p.remove());
   const c = (n.citation && typeof n.citation==='object') ? n.citation : {};
-  const m=document.createElement('div'); m.className='var-form';
-  m.innerHTML=`
-    <div class="vf-backdrop"></div>
-    <div class="vf-card">
-      <button class="vf-close" aria-label="Close">×</button>
+  const {m, dismissOn}=openVarForm(`
       <h2>Reference / citation</h2>
       <p class="vf-sub">Fill the fields, or paste a full citation into "Authors". The node will show the formatted reference and be included in <b>Export → References</b>.</p>
       <div class="vf-doi-lookup">
@@ -4534,9 +4571,7 @@ function showCitationForm(id){
         <button class="vf-cancel">Cancel</button>
         <button class="vf-go primary">Save reference</button>
       </div>
-    </div>`;
-  document.body.appendChild(m);
-  m.addEventListener('mousedown',e=>e.stopPropagation());
+  `);
   m.querySelectorAll('.vf-input').forEach(ta=>{ const g=()=>{ta.style.height='auto';ta.style.height=Math.min(ta.scrollHeight,120)+'px';}; ta.addEventListener('input',g); g(); });
   m.querySelector('.vf-input')?.focus();
   const close=()=>m.remove();
@@ -4575,10 +4610,7 @@ function showCitationForm(id){
     pushHistory(); render(); close(); toast('Reference saved');
   };
   m.querySelector('.vf-unref')?.addEventListener('click',()=>{ delete n.ref; delete n.citation; pushHistory(); render(); close(); toast('Reference removed'); });
-  m.querySelector('.vf-cancel').onclick=close;
-  m.querySelector('.vf-close').onclick=close;
-  m.querySelector('.vf-backdrop').onclick=close;
-  m.addEventListener('keydown',e=>{ if(isComposingKey(e)) return; if(e.key==='Escape'){e.preventDefault();close();} });
+  dismissOn(close);
 }
 // Collect every reference node and copy a formatted list to the clipboard.
 function exportReferences(){
@@ -8229,7 +8261,7 @@ function buildMermaid(startId){
 function exportMermaid(){
   if(!map) return;
   const startId = (sel && sel !== map.rootId) ? sel : map.rootId;
-  const code = buildMermaid(startId);
+  const code = withChildIndex(()=>buildMermaid(startId));
   // Wrap in a fenced ```mermaid block so it pastes straight into Markdown
   const fenced = '```mermaid\n' + code + '\n```\n';
   if(navigator.clipboard?.writeText){
@@ -8527,9 +8559,9 @@ function showVariableForm(varNames, defaults, mapId, done){
 function exportAsPrompt(){
   if(!map) return;
   const startId = (sel && sel !== map.rootId) ? sel : map.rootId;
-  const vars = findVariables(startId);
+  const vars = withChildIndex(()=>findVariables(startId));
   const finish = (values) => {
-    const text = buildPrompt(startId, values);
+    const text = withChildIndex(()=>buildPrompt(startId, values));
     if(navigator.clipboard?.writeText){
       navigator.clipboard.writeText(text).then(
         () => toast(`Prompt copied (${text.length} chars)`),
@@ -8570,7 +8602,7 @@ function exportAsPrompt(){
 function showMapVariables(){
   if(!map) return;
   document.querySelectorAll('.var-form').forEach(p => p.remove());
-  const vars = findVariables(map.rootId);
+  const vars = withChildIndex(()=>findVariables(map.rootId));
   const cur = map.vars || {};
   const m = document.createElement('div');
   m.className = 'var-form';
@@ -8641,7 +8673,7 @@ function exportMarkdown(toClipboard, rich){
   // If a non-root node is selected, export *that branch* - perfect for
   // pulling out a single prompt or section from a larger map.
   const startId = (sel && sel !== map.rootId) ? sel : map.rootId;
-  const md = buildMarkdown(startId, {rich:!!rich, meta:!!rich});
+  const md = withChildIndex(()=>buildMarkdown(startId, {rich:!!rich, meta:!!rich}));
   const scope = startId === map.rootId ? '' : ' (selected branch)';
   if(toClipboard){
     if(navigator.clipboard?.writeText){
@@ -8755,7 +8787,7 @@ function buildDoc(){
 }
 function exportDoc(){
   if(!map) return;
-  const html = buildDoc();
+  const html = withChildIndex(buildDoc);
   // .doc extension + msword MIME → Word, Google Docs, LibreOffice all open it
   const filename = (map.title||'mindmap')+'.doc';
   const blob = new Blob(['\ufeff', html], {type:'application/msword'});
@@ -8924,6 +8956,24 @@ async function exportPNG(){
   if((document.documentElement.getAttribute('data-look')||'office')==='groot'){
     const _gu=await grootFaceUri(); if(_gu) grootImg=await loadImg(_gu);
   }
+  // A look may paint its texture as a mask on .stage::before (see alien and
+  // psycho). Read it off the live computed style rather than keeping a second
+  // copy of the SVG in here - one source, and the export cannot drift from the
+  // screen. Generic on purpose: any future masked look exports for free.
+  let maskImg=null, maskTile=null, maskTint=null;
+  {
+    const cs=getComputedStyle(stage,'::before');
+    const mi=cs.maskImage||cs.webkitMaskImage||'';
+    const mm=mi.match(/url\(\"?(data:[^\")]+)\"?\)/);
+    if(mm){
+      try{
+        maskImg=await loadImg(mm[1]);
+        const sz=(cs.maskSize||cs.webkitMaskSize||'').split(/\s+/);
+        maskTile=[parseFloat(sz[0])||maskImg.width, parseFloat(sz[1])||parseFloat(sz[0])||maskImg.height];
+        maskTint=cs.backgroundColor;
+      }catch(e){ maskImg=null; }
+    }
+  }
 
   // Favicons for link nodes, so the export matches what the live canvas shows.
   // crossOrigin='anonymous' is the whole safety story here: favicons come from
@@ -8973,6 +9023,18 @@ async function exportPNG(){
   const tealColor = css('--teal') || '#2f6f6a';
   const accentColor = accent;
   const drawLookBg = ()=>{
+    // The masked texture first, tinted the way CSS tints it: the SVG is a
+    // silhouette, so drawing it raw would put black on a themed canvas.
+    if(maskImg && maskTile && maskTint){
+      const [tw,th]=maskTile;
+      const off=document.createElement('canvas'); off.width=Math.max(1,Math.round(tw)); off.height=Math.max(1,Math.round(th));
+      const octx=off.getContext('2d');
+      octx.drawImage(maskImg, 0, 0, off.width, off.height);
+      octx.globalCompositeOperation='source-in';
+      octx.fillStyle=maskTint; octx.fillRect(0,0,off.width,off.height);
+      const pat=ctx.createPattern(off,'repeat');
+      if(pat){ ctx.fillStyle=pat; ctx.fillRect(0,0,W,H); }
+    }
     if(look==='handwritten'){
       // repeating-linear-gradient(var(--paper) 0, var(--paper) 27px, var(--line) 28px) 100% 28px
       ctx.strokeStyle=lineColor; ctx.lineWidth=1;
@@ -9051,8 +9113,76 @@ async function exportPNG(){
       for(let dx=20; dx<W; dx+=58){ for(let dy=20; dy<H; dy+=58){ ctx.beginPath(); ctx.arc(dx,dy,1.1,0,Math.PI*2); ctx.fill(); }}
       for(let dx=40; dx<W; dx+=64){ for(let dy=36; dy<H; dy+=64){ ctx.beginPath(); ctx.arc(dx,dy,0.8,0,Math.PI*2); ctx.fill(); }}
       ctx.globalAlpha=1; ctx.lineCap='round'; ctx.lineJoin='round';
+    } else if(look==='sailboat'){
+      // wave lines - horizontal sine curves
+      ctx.strokeStyle=css('--teal')||'#2980b9'; ctx.globalAlpha=0.06; ctx.lineWidth=1.5; ctx.lineCap='round';
+      for(let wave=0;wave<4;wave++){
+        const baseY=40+wave*40;
+        ctx.beginPath();
+        for(let x=0;x<=W;x+=4){
+          const y=baseY+Math.sin((x+wave*20)*0.026)*10;
+          x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+        }
+        ctx.stroke();
+      }
+      ctx.globalAlpha=1; ctx.lineCap='round'; ctx.lineJoin='round';
+    } else if(look==='architect'){
+      // blueprint: minor 8px grid, major 32px over it, 45-degree construction
+      // haze, the title-block rules down the left and top, and two ghost
+      // component blocks. Mirrors the nine background layers in the CSS.
+      const inkCol = css('--ink') || themeInk;
+      ctx.strokeStyle=lineColor; ctx.lineWidth=1;
+      ctx.globalAlpha=0.20;
+      for(let x=0;x<=W;x+=8){ ctx.beginPath(); ctx.moveTo(x+0.5,0); ctx.lineTo(x+0.5,H); ctx.stroke(); }
+      for(let y=0;y<=H;y+=8){ ctx.beginPath(); ctx.moveTo(0,y+0.5); ctx.lineTo(W,y+0.5); ctx.stroke(); }
+      ctx.globalAlpha=0.48;
+      for(let x=0;x<=W;x+=32){ ctx.beginPath(); ctx.moveTo(x+0.5,0); ctx.lineTo(x+0.5,H); ctx.stroke(); }
+      for(let y=0;y<=H;y+=32){ ctx.beginPath(); ctx.moveTo(0,y+0.5); ctx.lineTo(W,y+0.5); ctx.stroke(); }
+      ctx.globalAlpha=0.09;
+      for(let d=-H; d<W+H; d+=64){ ctx.beginPath(); ctx.moveTo(d,0); ctx.lineTo(d+H,H); ctx.stroke(); }
+      ctx.globalAlpha=0.14; ctx.fillStyle=inkCol;
+      ctx.fillRect(0,0,2,H); ctx.fillRect(0,0,W,2);
+      ctx.globalAlpha=0.045; ctx.strokeStyle=accentColor;
+      [[0.18,0.42],[0.72,0.68]].forEach(([rx,ry])=>{
+        const x=W*rx, y=H*ry;
+        ctx.beginPath(); ctx.moveTo(x,y+0.5); ctx.lineTo(x+220,y+0.5); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x+0.5,y); ctx.lineTo(x+0.5,y+140); ctx.stroke();
+      });
+      ctx.globalAlpha=1;
+    } else if(look==='scientist'){
+      // measurement grid, interference fringes tilted 14 degrees, and the
+      // pinpoint lattice at every other intersection.
+      ctx.strokeStyle=lineColor; ctx.lineWidth=1; ctx.globalAlpha=0.52;
+      for(let x=0;x<=W;x+=28){ ctx.beginPath(); ctx.moveTo(x+0.5,0); ctx.lineTo(x+0.5,H); ctx.stroke(); }
+      for(let y=0;y<=H;y+=28){ ctx.beginPath(); ctx.moveTo(0,y+0.5); ctx.lineTo(W,y+0.5); ctx.stroke(); }
+      ctx.strokeStyle=accentColor; ctx.globalAlpha=0.07;
+      const rise=W*Math.tan(14*Math.PI/180);
+      for(let y=-rise; y<H+rise; y+=36){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y+rise); ctx.stroke(); }
+      ctx.fillStyle=accentColor; ctx.globalAlpha=0.18;
+      for(let x=26;x<W;x+=52) for(let y=26;y<H;y+=52){ ctx.beginPath(); ctx.arc(x,y,1.2,0,Math.PI*2); ctx.fill(); }
+      ctx.globalAlpha=1;
+    } else if(look==='alien'){
+      // starfield, the saucer's beam wash and the crop-circle grid. The
+      // creatures themselves come from the mask drawn above.
+      ctx.fillStyle=css('--ink')||themeInk;
+      [[0.18,0.22,1.4,0.88],[0.73,0.18,1.2,0.74],[0.42,0.38,1,0.62],[0.85,0.52,1.2,0.78],[0.28,0.68,1,0.58]]
+        .forEach(([rx,ry,r,a])=>{ ctx.globalAlpha=a*0.5; ctx.beginPath(); ctx.arc(W*rx,H*ry,r,0,Math.PI*2); ctx.fill(); });
+      const beam=ctx.createRadialGradient(W*0.5,H*0.07,0,W*0.5,H*0.07,Math.max(W,H)*0.5);
+      beam.addColorStop(0, accentColor); beam.addColorStop(1,'transparent');
+      ctx.globalAlpha=0.06; ctx.fillStyle=beam; ctx.fillRect(0,0,W,H);
+      ctx.strokeStyle=lineColor; ctx.globalAlpha=0.16; ctx.lineWidth=1;
+      for(let x=0;x<=W;x+=38){ ctx.beginPath(); ctx.moveTo(x+0.5,0); ctx.lineTo(x+0.5,H); ctx.stroke(); }
+      for(let y=0;y<=H;y+=38){ ctx.beginPath(); ctx.moveTo(0,y+0.5); ctx.lineTo(W,y+0.5); ctx.stroke(); }
+      ctx.globalAlpha=1;
+    } else if(look==='psycho'){
+      // VHS tracking lines and the vertical hold, over the masked spatter.
+      ctx.strokeStyle=accentColor; ctx.globalAlpha=0.05; ctx.lineWidth=1;
+      for(let y=0;y<H;y+=4){ ctx.beginPath(); ctx.moveTo(0,y+0.5); ctx.lineTo(W,y+0.5); ctx.stroke(); }
+      ctx.strokeStyle=lineColor; ctx.globalAlpha=0.10;
+      for(let x=0;x<=W;x+=40){ ctx.beginPath(); ctx.moveTo(x+0.5,0); ctx.lineTo(x+0.5,H); ctx.stroke(); }
+      ctx.globalAlpha=1;
     } else {
-      // office / default, sketchpad, etc. - dot grid
+      // office / default - dot grid
       if(canvasDot){
         ctx.fillStyle = canvasDot;
         ctx.beginPath();
@@ -9232,7 +9362,10 @@ async function exportPNG(){
   const _styleCfg = (typeof STYLE_CONFIG_DEFAULTS!=='undefined' && STYLE_CONFIG_DEFAULTS[mapStyle])
     ? { ...STYLE_CONFIG_DEFAULTS[mapStyle], ...((map.styleConfig||{})[mapStyle]||{}) } : null;
   const _baseRadius = _styleCfg ? _styleCfg.radius : (mapStyle==='bubble'?999: mapStyle==='classic'?4: mapStyle==='sketch'?3: mapStyle==='dashed'?14: mapStyle==='minimal'?6: mapStyle==='zigzag'?2: mapStyle==='neon'?10:12);
-  const roll = computeRollups();
+  // Indexed like the zebraDepth call above: computeRollups walks the tree with
+  // childrenOf, which is O(n) per call without an index, so this was quadratic and
+  // cost 874 ms of a 2000 node export on its own.
+  const roll = withChildIndex(computeRollups);
   // Small pill badge (task-progress / token-count), matching the on-screen corner style.
   const drawPillBadge = (text, x, yTop, bg, fg) => {
     ctx.font = 'bold 10px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
@@ -9318,7 +9451,7 @@ async function exportPNG(){
       ctx.restore();
     }
     // Text - pick a color that contrasts with the node background, and exact font
-    // matching the live look - --sans/--serif + handwritten/sketchpad scale + lookConfig nodeSize
+    // matching the live look - --sans/--serif + handwritten scale + lookConfig nodeSize
     const _hasColor2 = n.color && n.color!=='#fff' && n.color!=='#ffffff';
     const _zebraBg = zd[i] && zd[i]%2===1 ? zebraA : (zd[i] ? zebraB : themeNodeBg);
     const bg = isRoot ? (map.color || accent) : (_hasColor2 ? n.color : _zebraBg);
@@ -9327,7 +9460,7 @@ async function exportPNG(){
     const serif = css('--serif') || sans;
     let fontPx = n.fontSize || (isRoot ? 19 : 15);
     // look font-size scaling (handwritten 1.2em) + lookConfig nodeSize
-    const lookScale = (look==='handwritten' ? 1.2 : look==='sketchpad' ? 1.15 : 1) * (parseFloat(css('--look-node-size')) || 1);
+    const lookScale = (look==='handwritten' ? 1.2 : 1) * (parseFloat(css('--look-node-size')) || 1);
     if(!n.fontSize) fontPx = Math.round(fontPx * lookScale);
     const fontFamily = isRoot ? serif : sans;
     ctx.textBaseline='middle';
@@ -9766,8 +9899,16 @@ $('#layout').onclick=autoLayout;            // re-tidies node positions (does NO
 // again. The map's actual root is never itself a candidate to collapse - that would
 // hide the whole map - only its descendants are.
 let _collapseAllDir=null;
+// Wrapper only. Both walks in the body below call childrenOf once per branch node,
+// and childrenOf without an index scans every node in the map, so the pass was O(n^2):
+// one click on a 2000 node map cost 759 ms, of which 717 ms was this function. The only
+// mutation in the body is `collapsed`, which moves no parent->child link, so a single
+// index stays valid throughout.
 function stepCollapseAll(){
   if(!map) return null;
+  return withChildIndex(_stepCollapseAll);
+}
+function _stepCollapseAll(){
   // Unconditional walk: how many depth levels the WHOLE tree has, regardless of the
   // current fold state - this is only for reporting progress ("expanded 2/4"), not for
   // deciding what to fold/unfold below (that still only ever looks at what's currently
@@ -10514,7 +10655,8 @@ const LOOKS = [
   {id:'studio',      name:'in the<br>Studio',   font:'"Fraunces",serif'},
   {id:'mountain',    name:'on the<br>Mountain',font:'"Roboto Condensed",system-ui,sans-serif'},
   {id:'desert',      name:'in the<br>Desert',     font:'"Nunito",system-ui,sans-serif'},
-  {id:'groot',       name:'Groot',         font:'"Fredoka",system-ui,sans-serif'}
+  {id:'groot',       name:'Groot',         font:'"Fredoka",system-ui,sans-serif'},
+  {id:'sailboat',    name:'on a<br>Sailboat',     font:'"Quicksand",sans-serif'},
 ];
 const MAP_STYLES = [
   {id:'modern',  name:'Modern',  desc:'Soft cards, curved branches'},
@@ -10623,7 +10765,7 @@ const LOOK_CONFIG_DEFAULTS = {
   mountain:     { font:'"Roboto Condensed",system-ui,sans-serif',    nodeSize:1, radius:10 },
   desert:       { font:'"Nunito",system-ui,sans-serif',               nodeSize:1, radius:12 },
   groot:        { font:'"Fredoka",system-ui,sans-serif',              nodeSize:1, radius:16 },
-  sketchpad:    { font:'system-ui,sans-serif',                        nodeSize:1, radius:14 },
+  sailboat:     { font:'"Quicksand",sans-serif',                       nodeSize:1, radius:20 },
 };
 const LOOK_CONFIG_BOUNDS = { nodeSize:[0.8,1.6], radius:[0,60] };
 // Repairs rather than rejects, like validateStyleConfig: numbers are clamped
@@ -11054,18 +11196,13 @@ function previewCustomThemeVars(text){
 // theme is pasted as JSON, exactly as it appears in the themes/ folder. Only
 // one imported theme can exist - pasting another replaces it.
 function showThemeImportForm(){
-  document.querySelectorAll('.var-form').forEach(p=>p.remove());
   const cur = loadCustomTheme();
   const live = getComputedStyle(document.documentElement);
   const sample = spaceForSwatches(JSON.stringify({
     v:1, id:'my-theme', name:'My theme',
     vars: Object.fromEntries(CUSTOM_THEME_VARS.map(k=>[k, live.getPropertyValue(k).trim()])),
   }, null, 2));
-  const m=document.createElement('div'); m.className='var-form';
-  m.innerHTML=`
-    <div class="vf-backdrop"></div>
-    <div class="vf-card">
-      <button class="vf-close" aria-label="Close">\u00d7</button>
+  const {m, dismissOn}=openVarForm(`
       <h2>Add a theme</h2>
       <div class="vf-hint">A theme is a palette of ${CUSTOM_THEME_VARS.length} colour
         variables, exactly the format of the files in the themes/ folder. Paste
@@ -11089,9 +11226,7 @@ function showThemeImportForm(){
         <button class="vf-cancel">Cancel</button>
         <button class="vf-go primary">Import</button>
       </div>
-    </div>`;
-  document.body.appendChild(m);
-  m.addEventListener('mousedown',e=>e.stopPropagation());
+  `);
   // Also stop clicks bubbling: the Import button reopens the theme panel, and
   // without this the same click's bubble phase would hit the document-level
   // outside-click handler and close it again a frame later.
@@ -11145,8 +11280,7 @@ function showThemeImportForm(){
     close(); toast('Theme removed');
     try{ $('#themeBtn').click(); }catch(_){}
   };
-  m.querySelector('.vf-cancel').onclick=close;
-  m.querySelector('.vf-close').onclick=close;
+  dismissOn(close);
   m.querySelectorAll('.lib-card').forEach(b=> b.onclick=()=>{
     importLibraryTheme(b.dataset.lib);
   });
@@ -11297,8 +11431,16 @@ function applyLook(id){
     const fontName = look.font.split(',')[0];   // '"Caveat"' from '"Caveat",cursive' - the
                                                   // actual web font; the rest is just a
                                                   // fallback keyword that needs no loading
-    document.fonts.load('1em '+fontName).then(()=>{ if(map){ render(); autoLayout(); } }).catch(()=>{});
+    document.fonts.load('1em '+fontName).then(()=>{
+      // render() reuses a node element whose signature is unchanged, and keeps
+      // its measured size with it. The font landing is exactly the case where
+      // that size is wrong while every field feeding the signature is right,
+      // so the epoch has to move or this re-render measures nothing.
+      _fontEpoch++;
+      if(map){ render(); autoLayout(); }
+    }).catch(()=>{});
   }
+  _syncLookFx();
 }
 // Interface layout: how the chrome itself is arranged. 'modern' is the local
 // shell (full-width top bar + status bar with hint/overview); 'classic' is
@@ -12693,7 +12835,7 @@ function deckBuildList(){
 }
 function enterDeck(){
   if(!map || _deck) return;
-  const list=deckBuildList();
+  const list=withChildIndex(deckBuildList);
   if(!list.length) return;
   _deck={list, idx:0};
   document.body.classList.add('ui-deck');
@@ -14358,6 +14500,27 @@ async function loadQotd(){
 // init after DOM ready (side-foot exists at parse time, but fetch after load)
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', loadQotd);
 else loadQotd();
+
+// ---- Per-look effect layer ----
+// Some looks need one real element to animate. The motion itself is always a
+// CSS keyframe animation on transform/opacity (see styles.css) so it runs on
+// the compositor and costs no main-thread work; this only creates and removes
+// the element, so every other look carries no extra DOM. prefers-reduced-motion
+// is handled in CSS, which hides the layer.
+const LOOK_FX = { sailboat:'wave-layer' };
+let _fxEl=null, _fxClass=null;
+function _syncLookFx(){
+  const cls = LOOK_FX[document.documentElement.getAttribute('data-look')||'office'] || null;
+  if(cls === _fxClass) return;                 // nothing to do on most look changes
+  if(_fxEl){ _fxEl.remove(); _fxEl=null; }
+  _fxClass = cls;
+  if(cls){
+    _fxEl=document.createElement('div');
+    _fxEl.className=cls;
+    stage.appendChild(_fxEl);
+  }
+}
+_syncLookFx();
 
 (async()=>{
   // The inline <head> script guesses the auto scale before any page content exists,

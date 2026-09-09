@@ -1732,19 +1732,44 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   /* ===== "An Alien" - close encounter =====
       Abducted: night void, starfield, crop-circle grid and a saucer's beam.
       Space Mono is stark and modular like an alien console. No palette override. */
-   :root[data-look="alien"]{ --sans:"Space Mono",monospace; --serif:"Space Mono",monospace; }
-   :root[data-look="alien"] .stage{
+   :root[data-look="alien"]{ --sans:"Space Mono",monospace; --serif:"Space Mono",monospace;
+    --look-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg transform='translate(62 62)'%3E%3Cellipse cx='0' cy='0' rx='22' ry='14'/%3E%3Cpath d='M -18 -2 C -12 -14 12 -14 18 -2'/%3E%3Cellipse cx='0' cy='-4' rx='10' ry='12' fill='%23000' fill-opacity='0.04'/%3E%3Cellipse cx='-4' cy='-2' r='2.2' fill='%23000'/%3E%3Cellipse cx='4' cy='-2' r='2.2' fill='%23000'/%3E%3Cpath d='M -22 6 L -28 10 L -18 12 Z'/%3E%3Cpath d='M 22 6 L 28 10 L 18 12 Z'/%3E%3C/g%3E%3Cg transform='translate(168 58)'%3E%3Cellipse cx='0' cy='0' rx='28' ry='16'/%3E%3Cpath d='M -20 -4 C -14 -12 14 -12 20 -4'/%3E%3Cellipse cx='-8' cy='-1' rx='1.5' ry='1.2' fill='%23000'/%3E%3Cellipse cx='8' cy='-1' rx='1.5' ry='1.2' fill='%23000'/%3E%3Cpath d='M -6 6 L -8 12 M 0 7 L 0 13 M 6 6 L 8 12'/%3E%3C/g%3E%3Cg transform='translate(268 62)'%3E%3Cellipse cx='0' cy='-6' rx='14' ry='18'/%3E%3Cellipse cx='-5' cy='-4' r='3.2' fill='%23000'/%3E%3Cellipse cx='5' cy='-4' r='3.2' fill='%23000'/%3E%3Cpath d='M -4 6 Q 0 9 4 6' stroke='%23000'/%3E%3Cpath d='M 0 -22 Q 4 -26 2 -30'/%3E%3Ccircle cx='2' cy='-30' r='2' fill='none'/%3E%3Cpath d='M -8 12 L -10 28 L -6 28 Z'/%3E%3Cpath d='M 8 12 L 10 28 L 6 28 Z'/%3E%3C/g%3E%3Cg transform='translate(348 62)'%3E%3Cellipse cx='0' cy='0' rx='32' ry='18'/%3E%3Cellipse cx='0' cy='-8' rx='16' ry='12'/%3E%3Ccircle cx='-6' cy='-8' r='1.2' fill='%23000'/%3E%3Ccircle cx='6' cy='-8' r='1.2' fill='%23000'/%3E%3Cpath d='M -10 4 L -12 8 M -4 5 L -4 9 M 4 5 L 4 9 M 10 4 L 12 8'/%3E%3C/g%3E%3Cg transform='translate(78 148)'%3E%3Ccircle cx='0' cy='0' r='26' stroke-dasharray='2 3'/%3E%3Cpath d='M -18 -6 Q -12 -10 -8 -6 Q -4 -2 -8 2 Q -12 6 -18 2 Q -16 -2 -18 -6'/%3E%3Cpath d='M 6 -8 Q 12 -6 14 -2 Q 10 2 6 -2'/%3E%3Cpath d='M -6 8 Q 0 12 6 8'/%3E%3C/g%3E%3Cg transform='translate(200 158)'%3E%3Cellipse cx='0' cy='0' rx='34' ry='20'/%3E%3Cpath d='M -24 -6 C -18 -14 18 -14 24 -6'/%3E%3Cellipse cx='-8' cy='-2' r='2' fill='%23000'/%3E%3Cellipse cx='8' cy='-2' r='2' fill='%23000'/%3E%3Cpath d='M -10 8 L -12 16 M -2 10 L -2 18 M 2 10 L 2 18 M 10 8 L 12 16'/%3E%3C/g%3E%3Cg transform='translate(338 148)'%3E%3Ccircle cx='0' cy='-12' r='16' fill='%23000' fill-opacity='0.05'/%3E%3Cpath d='M -12 -8 L -14 -14 L -10 -16 L -6 -12 Z'/%3E%3Cpath d='M 0 -18 L 0 -24'/%3E%3Ccircle cx='0' cy='-26' r='2' fill='none'/%3E%3Cpath d='M -18 6 L -24 14 L -18 16 Z'/%3E%3Cpath d='M 18 6 L 24 14 L 18 16 Z'/%3E%3Crect x='-4' y='8' width='8' height='6' rx='1' fill='none'/%3E%3Cpath d='M -8 14 L -10 22 L -6 22 Z'/%3E%3Cpath d='M 8 14 L 10 22 L 6 22 Z'/%3E%3C/g%3E%3Cg transform='translate(48 268)'%3E%3Ccircle cx='0' cy='-14' r='12'/%3E%3Cpath d='M -8 -10 Q -12 -14 -8 -18 Q -4 -16 0 -18 Q 4 -16 8 -18 Q 12 -14 8 -10'/%3E%3Ccircle cx='-4' cy='-6' r='1.8' fill='%23000'/%3E%3Ccircle cx='4' cy='-6' r='1.8' fill='%23000'/%3E%3Cpath d='M -5 2 Q 0 6 5 2 L 0 8 Z'/%3E%3Cpath d='M -14 4 L -18 18 L -12 16 M 14 4 L 18 18 L 12 16'/%3E%3Cpath d='M 0 12 L -2 28 L 2 28 Z'/%3E%3C/g%3E%3Cg transform='translate(128 288)'%3E%3Cellipse cx='0' cy='0' rx='20' ry='12'/%3E%3Cpath d='M -14 -4 C -10 -8 10 -8 14 -4'/%3E%3Ccircle cx='-4' cy='-1' r='1.2' fill='%23000'/%3E%3Ccircle cx='4' cy='-1' r='1.2' fill='%23000'/%3E%3Cpath d='M -6 6 L -8 12 M 6 6 L 8 12'/%3E%3C/g%3E%3Cg transform='translate(218 292)'%3E%3Cellipse cx='0' cy='-6' rx='12' ry='15'/%3E%3Cellipse cx='-4.5' cy='-4' r='3.5' ry='5' fill='%23000'/%3E%3Cellipse cx='4.5' cy='-4' r='3.5' ry='5' fill='%23000'/%3E%3Cpath d='M -4 6 Q 0 10 4 6'/%3E%3Cpath d='M -8 10 L -10 22 L -6 22 Z'/%3E%3Cpath d='M 8 10 L 10 22 L 6 22 Z'/%3E%3Ctext x='14' y='2' font-size='6' fill='%23000' opacity='0.7'%3E✌%3C/text%3E%3C/g%3E%3Cg transform='translate(348 298)'%3E%3Ccircle cx='0' cy='0' r='28'/%3E%3Cpath d='M -18 -8 Q -12 -12 -8 -8 Q -4 -4 -8 0 Q -12 4 -18 0 Q -16 -4 -18 -8'/%3E%3Cpath d='M 8 -10 Q 14 -8 16 -4 Q 12 0 8 -4'/%3E%3Ccircle cx='-8' cy='-2' r='1.5' fill='%23000'/%3E%3Ccircle cx='8' cy='-4' r='1.2' fill='%23000'/%3E%3Cellipse cx='0' cy='18' rx='36' ry='10' fill='none' stroke-dasharray='1 2'/%3E%3C/g%3E%3Ccircle cx='28' cy='28' r='1.1' fill='%23000' fill-opacity='0.9'/%3E%3Ccircle cx='88' cy='18' r='0.9' fill='%23000'/%3E%3Ccircle cx='188' cy='38' r='0.8' fill='%23000'/%3E%3Ccircle cx='320' cy='28' r='1' fill='%23000'/%3E%3C/g%3E%3C/svg%3E");
+    --look-mask-size:400px 400px;
+    --look-mask-ink:6.5%;
+  }
+   /* The starfield tints from --ink, not a fixed white: white stars vanish on a
+     light theme. Taking the ink means light specks on a dark paper and dark
+     ones on a light paper, which is what a starfield needs to read either way.
+     The stars inside the SVG data URI below are still fixed - an SVG in a data
+     URI cannot read var(), and changing that needs the mask treatment, which is
+     a bigger job than this. */
+:root[data-look="alien"] .stage{
      background-image:
-       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'%3E%3Cg opacity='0.08' fill='none' stroke='%231a1a1a' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg transform='translate(62 62)'%3E%3Cellipse cx='0' cy='0' rx='22' ry='14'/%3E%3Cpath d='M -18 -2 C -12 -14 12 -14 18 -2'/%3E%3Cellipse cx='0' cy='-4' rx='10' ry='12' fill='white' fill-opacity='0.04'/%3E%3Cellipse cx='-4' cy='-2' r='2.2' fill='black'/%3E%3Cellipse cx='4' cy='-2' r='2.2' fill='black'/%3E%3Cpath d='M -22 6 L -28 10 L -18 12 Z'/%3E%3Cpath d='M 22 6 L 28 10 L 18 12 Z'/%3E%3C/g%3E%3Cg transform='translate(168 58)'%3E%3Cellipse cx='0' cy='0' rx='28' ry='16'/%3E%3Cpath d='M -20 -4 C -14 -12 14 -12 20 -4'/%3E%3Cellipse cx='-8' cy='-1' rx='1.5' ry='1.2' fill='black'/%3E%3Cellipse cx='8' cy='-1' rx='1.5' ry='1.2' fill='black'/%3E%3Cpath d='M -6 6 L -8 12 M 0 7 L 0 13 M 6 6 L 8 12'/%3E%3C/g%3E%3Cg transform='translate(268 62)'%3E%3Cellipse cx='0' cy='-6' rx='14' ry='18'/%3E%3Cellipse cx='-5' cy='-4' r='3.2' fill='black'/%3E%3Cellipse cx='5' cy='-4' r='3.2' fill='black'/%3E%3Cpath d='M -4 6 Q 0 9 4 6' stroke='%231a1a1a'/%3E%3Cpath d='M 0 -22 Q 4 -26 2 -30'/%3E%3Ccircle cx='2' cy='-30' r='2' fill='none'/%3E%3Cpath d='M -8 12 L -10 28 L -6 28 Z'/%3E%3Cpath d='M 8 12 L 10 28 L 6 28 Z'/%3E%3C/g%3E%3Cg transform='translate(348 62)'%3E%3Cellipse cx='0' cy='0' rx='32' ry='18'/%3E%3Cellipse cx='0' cy='-8' rx='16' ry='12'/%3E%3Ccircle cx='-6' cy='-8' r='1.2' fill='black'/%3E%3Ccircle cx='6' cy='-8' r='1.2' fill='black'/%3E%3Cpath d='M -10 4 L -12 8 M -4 5 L -4 9 M 4 5 L 4 9 M 10 4 L 12 8'/%3E%3C/g%3E%3Cg transform='translate(78 148)'%3E%3Ccircle cx='0' cy='0' r='26' stroke-dasharray='2 3'/%3E%3Cpath d='M -18 -6 Q -12 -10 -8 -6 Q -4 -2 -8 2 Q -12 6 -18 2 Q -16 -2 -18 -6'/%3E%3Cpath d='M 6 -8 Q 12 -6 14 -2 Q 10 2 6 -2'/%3E%3Cpath d='M -6 8 Q 0 12 6 8'/%3E%3C/g%3E%3Cg transform='translate(200 158)'%3E%3Cellipse cx='0' cy='0' rx='34' ry='20'/%3E%3Cpath d='M -24 -6 C -18 -14 18 -14 24 -6'/%3E%3Cellipse cx='-8' cy='-2' r='2' fill='black'/%3E%3Cellipse cx='8' cy='-2' r='2' fill='black'/%3E%3Cpath d='M -10 8 L -12 16 M -2 10 L -2 18 M 2 10 L 2 18 M 10 8 L 12 16'/%3E%3C/g%3E%3Cg transform='translate(338 148)'%3E%3Ccircle cx='0' cy='-12' r='16' fill='white' fill-opacity='0.05'/%3E%3Cpath d='M -12 -8 L -14 -14 L -10 -16 L -6 -12 Z'/%3E%3Cpath d='M 0 -18 L 0 -24'/%3E%3Ccircle cx='0' cy='-26' r='2' fill='none'/%3E%3Cpath d='M -18 6 L -24 14 L -18 16 Z'/%3E%3Cpath d='M 18 6 L 24 14 L 18 16 Z'/%3E%3Crect x='-4' y='8' width='8' height='6' rx='1' fill='none'/%3E%3Cpath d='M -8 14 L -10 22 L -6 22 Z'/%3E%3Cpath d='M 8 14 L 10 22 L 6 22 Z'/%3E%3C/g%3E%3Cg transform='translate(48 268)'%3E%3Ccircle cx='0' cy='-14' r='12'/%3E%3Cpath d='M -8 -10 Q -12 -14 -8 -18 Q -4 -16 0 -18 Q 4 -16 8 -18 Q 12 -14 8 -10'/%3E%3Ccircle cx='-4' cy='-6' r='1.8' fill='black'/%3E%3Ccircle cx='4' cy='-6' r='1.8' fill='black'/%3E%3Cpath d='M -5 2 Q 0 6 5 2 L 0 8 Z'/%3E%3Cpath d='M -14 4 L -18 18 L -12 16 M 14 4 L 18 18 L 12 16'/%3E%3Cpath d='M 0 12 L -2 28 L 2 28 Z'/%3E%3C/g%3E%3Cg transform='translate(128 288)'%3E%3Cellipse cx='0' cy='0' rx='20' ry='12'/%3E%3Cpath d='M -14 -4 C -10 -8 10 -8 14 -4'/%3E%3Ccircle cx='-4' cy='-1' r='1.2' fill='black'/%3E%3Ccircle cx='4' cy='-1' r='1.2' fill='black'/%3E%3Cpath d='M -6 6 L -8 12 M 6 6 L 8 12'/%3E%3C/g%3E%3Cg transform='translate(218 292)'%3E%3Cellipse cx='0' cy='-6' rx='12' ry='15'/%3E%3Cellipse cx='-4.5' cy='-4' r='3.5' ry='5' fill='black'/%3E%3Cellipse cx='4.5' cy='-4' r='3.5' ry='5' fill='black'/%3E%3Cpath d='M -4 6 Q 0 10 4 6'/%3E%3Cpath d='M -8 10 L -10 22 L -6 22 Z'/%3E%3Cpath d='M 8 10 L 10 22 L 6 22 Z'/%3E%3Ctext x='14' y='2' font-size='6' fill='%231a1a1a' opacity='0.7'%3E✌%3C/text%3E%3C/g%3E%3Cg transform='translate(348 298)'%3E%3Ccircle cx='0' cy='0' r='28'/%3E%3Cpath d='M -18 -8 Q -12 -12 -8 -8 Q -4 -4 -8 0 Q -12 4 -18 0 Q -16 -4 -18 -8'/%3E%3Cpath d='M 8 -10 Q 14 -8 16 -4 Q 12 0 8 -4'/%3E%3Ccircle cx='-8' cy='-2' r='1.5' fill='black'/%3E%3Ccircle cx='8' cy='-4' r='1.2' fill='black'/%3E%3Cellipse cx='0' cy='18' rx='36' ry='10' fill='none' stroke-dasharray='1 2'/%3E%3C/g%3E%3Ccircle cx='28' cy='28' r='1.1' fill='white' fill-opacity='0.9'/%3E%3Ccircle cx='88' cy='18' r='0.9' fill='white'/%3E%3Ccircle cx='188' cy='38' r='0.8' fill='white'/%3E%3Ccircle cx='320' cy='28' r='1' fill='white'/%3E%3C/g%3E%3C/svg%3E"),
-        radial-gradient(ellipse 200px 70px at 50% 7%, color-mix(in srgb, var(--accent) 6%, transparent) 0, transparent 70%),
-        radial-gradient(circle at 18% 22%, rgba(255,255,255,.98) 1.4px, transparent 2px),
-       radial-gradient(circle at 73% 18%, rgba(255,255,255,.8) 1.2px, transparent 1.8px),
-       radial-gradient(circle at 42% 38%, rgba(255,255,255,.65) 1px, transparent 1.6px),
-       radial-gradient(circle at 85% 52%, rgba(255,255,255,.85) 1.2px, transparent 1.8px),
-       radial-gradient(circle at 28% 68%, rgba(255,255,255,.6) 1px, transparent 1.5px),
-       linear-gradient(color-mix(in srgb, var(--line) 16%, transparent) 1px, transparent 1px),
-       linear-gradient(90deg, color-mix(in srgb, var(--line) 16%, transparent) 1px, transparent 1px);
-     background-size: 400px 400px, 950px 950px, 240px 240px, 260px 260px, 220px 220px, 280px 280px, 230px 230px, 38px 38px, 38px 38px;
+      %3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400' viewBox='0 0 400 400'%3E%3Cg opacity='0.08' fill='none' stroke='%231a1a1a' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg transform='translate(62 62)'%3E%3Cellipse cx='0' cy='0' rx='22' ry='14'/%3E%3Cpath d='M -18 -2 C -12 -14 12 -14 18 -2'/%3E%3Cellipse cx='0' cy='-4' rx='10' ry='12' fill='white' fill-opacity='0.04'/%3E%3Cellipse cx='-4' cy='-2' r='2.2' fill='black'/%3E%3Cellipse cx='4' cy='-2' r='2.2' fill='black'/%3E%3Cpath d='M -22 6 L -28 10 L -18 12 Z'/%3E%3Cpath d='M 22 6 L 28 10 L 18 12 Z'/%3E%3C/g%3E%3Cg transform='translate(168 58)'%3E%3Cellipse cx='0' cy='0' rx='28' ry='16'/%3E%3Cpath d='M -20 -4 C -14 -12 14 -12 20 -4'/%3E%3Cellipse cx='-8' cy='-1' rx='1.5' ry='1.2' fill='black'/%3E%3Cellipse cx='8' cy='-1' rx='1.5' ry='1.2' fill='black'/%3E%3Cpath d='M -6 6 L -8 12 M 0 7 L 0 13 M 6 6 L 8 12'/%3E%3C/g%3E%3Cg transform='translate(268 62)'%3E%3Cellipse cx='0' cy='-6' rx='14' ry='18'/%3E%3Cellipse cx='-5' cy='-4' r='3.2' fill='black'/%3E%3Cellipse cx='5' cy='-4' r='3.2' fill='black'/%3E%3Cpath d='M -4 6 Q 0 9 4 6' stroke='%231a1a1a'/%3E%3Cpath d='M 0 -22 Q 4 -26 2 -30'/%3E%3Ccircle cx='2' cy='-30' r='2' fill='none'/%3E%3Cpath d='M -8 12 L -10 28 L -6 28 Z'/%3E%3Cpath d='M 8 12 L 10 28 L 6 28 Z'/%3E%3C/g%3E%3Cg transform='translate(348 62)'%3E%3Cellipse cx='0' cy='0' rx='32' ry='18'/%3E%3Cellipse cx='0' cy='-8' rx='16' ry='12'/%3E%3Ccircle cx='-6' cy='-8' r='1.2' fill='black'/%3E%3Ccircle cx='6' cy='-8' r='1.2' fill='black'/%3E%3Cpath d='M -10 4 L -12 8 M -4 5 L -4 9 M 4 5 L 4 9 M 10 4 L 12 8'/%3E%3C/g%3E%3Cg transform='translate(78 148)'%3E%3Ccircle cx='0' cy='0' r='26' stroke-dasharray='2 3'/%3E%3Cpath d='M -18 -6 Q -12 -10 -8 -6 Q -4 -2 -8 2 Q -12 6 -18 2 Q -16 -2 -18 -6'/%3E%3Cpath d='M 6 -8 Q 12 -6 14 -2 Q 10 2 6 -2'/%3E%3Cpath d='M -6 8 Q 0 12 6 8'/%3E%3C/g%3E%3Cg transform='translate(200 158)'%3E%3Cellipse cx='0' cy='0' rx='34' ry='20'/%3E%3Cpath d='M -24 -6 C -18 -14 18 -14 24 -6'/%3E%3Cellipse cx='-8' cy='-2' r='2' fill='black'/%3E%3Cellipse cx='8' cy='-2' r='2' fill='black'/%3E%3Cpath d='M -10 8 L -12 16 M -2 10 L -2 18 M 2 10 L 2 18 M 10 8 L 12 16'/%3E%3C/g%3E%3Cg transform='translate(338 148)'%3E%3Ccircle cx='0' cy='-12' r='16' fill='white' fill-opacity='0.05'/%3E%3Cpath d='M -12 -8 L -14 -14 L -10 -16 L -6 -12 Z'/%3E%3Cpath d='M 0 -18 L 0 -24'/%3E%3Ccircle cx='0' cy='-26' r='2' fill='none'/%3E%3Cpath d='M -18 6 L -24 14 L -18 16 Z'/%3E%3Cpath d='M 18 6 L 24 14 L 18 16 Z'/%3E%3Crect x='-4' y='8' width='8' height='6' rx='1' fill='none'/%3E%3Cpath d='M -8 14 L -10 22 L -6 22 Z'/%3E%3Cpath d='M 8 14 L 10 22 L 6 22 Z'/%3E%3C/g%3E%3Cg transform='translate(48 268)'%3E%3Ccircle cx='0' cy='-14' r='12'/%3E%3Cpath d='M -8 -10 Q -12 -14 -8 -18 Q -4 -16 0 -18 Q 4 -16 8 -18 Q 12 -14 8 -10'/%3E%3Ccircle cx='-4' cy='-6' r='1.8' fill='black'/%3E%3Ccircle cx='4' cy='-6' r='1.8' fill='black'/%3E%3Cpath d='M -5 2 Q 0 6 5 2 L 0 8 Z'/%3E%3Cpath d='M -14 4 L -18 18 L -12 16 M 14 4 L 18 18 L 12 16'/%3E%3Cpath d='M 0 12 L -2 28 L 2 28 Z'/%3E%3C/g%3E%3Cg transform='translate(128 288)'%3E%3Cellipse cx='0' cy='0' rx='20' ry='12'/%3E%3Cpath d='M -14 -4 C -10 -8 10 -8 14 -4'/%3E%3Ccircle cx='-4' cy='-1' r='1.2' fill='black'/%3E%3Ccircle cx='4' cy='-1' r='1.2' fill='black'/%3E%3Cpath d='M -6 6 L -8 12 M 6 6 L 8 12'/%3E%3C/g%3E%3Cg transform='translate(218 292)'%3E%3Cellipse cx='0' cy='-6' rx='12' ry='15'/%3E%3Cellipse cx='-4.5' cy='-4' r='3.5' ry='5' fill='black'/%3E%3Cellipse cx='4.5' cy='-4' r='3.5' ry='5' fill='black'/%3E%3Cpath d='M -4 6 Q 0 10 4 6'/%3E%3Cpath d='M -8 10 L -10 22 L -6 22 Z'/%3E%3Cpath d='M 8 10 L 10 22 L 6 22 Z'/%3E%3Ctext x='14' y='2' font-size='6' fill='%231a1a1a' opacity='0.7'%3E✌%3C/text%3E%3C/g%3E%3Cg transform='translate(348 298)'%3E%3Ccircle cx='0' cy='0' r='28'/%3E%3Cpath d='M -18 -8 Q -12 -12 -8 -8 Q -4 -4 -8 0 Q -12 4 -18 0 Q -16 -4 -18 -8'/%3E%3Cpath d='M 8 -10 Q 14 -8 16 -4 Q 12 0 8 -4'/%3E%3Ccircle cx='-8' cy='-2' r='1.5' fill='black'/%3E%3Ccircle cx='8' cy='-4' r='1.2' fill='black'/%3E%3Cellipse cx='0' cy='18' rx='36' ry='10' fill='none' stroke-dasharray='1 2'/%3E%3C/g%3E%3Ccircle cx='28' cy='28' r='1.1' fill='white' fill-opacity='0.9'/%3E%3Ccircle cx='88' cy='18' r='0.9' fill='white'/%3E%3Ccircle cx='188' cy='38' r='0.8' fill='white'/%3E%3Ccircle cx='320' cy='28' r='1' fill='white'/%3E%3C/g%3E%3C/svg%3E"),
+      radial-gradient(ellipse 200px 70px at 50% 7%,
+      color-mix(in srgb,
+      var(--accent) 6%, transparent) 0, transparent 70%),
+      radial-gradient(circle at 18% 22%,
+      color-mix(in srgb,
+      var(--ink) 88%, transparent) 1.4px, transparent 2px),
+      radial-gradient(circle at 73% 18%,
+      color-mix(in srgb,
+      var(--ink) 74%, transparent) 1.2px, transparent 1.8px),
+      radial-gradient(circle at 42% 38%,
+      color-mix(in srgb,
+      var(--ink) 62%, transparent) 1px, transparent 1.6px),
+      radial-gradient(circle at 85% 52%,
+      color-mix(in srgb,
+      var(--ink) 78%, transparent) 1.2px, transparent 1.8px),
+      radial-gradient(circle at 28% 68%,
+      color-mix(in srgb,
+      var(--ink) 58%, transparent) 1px, transparent 1.5px),
+      linear-gradient(color-mix(in srgb,
+      var(--line) 16%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg,
+      color-mix(in srgb,
+      var(--line) 16%, transparent) 1px, transparent 1px);
+     background-size:950px 950px, 240px 240px, 260px 260px, 220px 220px, 280px 280px, 230px 230px, 38px 38px, 38px 38px;
      background-color:var(--paper);
    }
    :root[data-look="alien"] .node{
@@ -1780,13 +1805,23 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   /* ===== "A Psycho" - midnight slasher =====
       Grindhouse: high contrast, VHS tracking lines, blood spatter and a glitch.
       Oswald is condensed and tense like a thriller poster. No palette override. */
-   :root[data-look="psycho"]{ --sans:"Oswald",system-ui,sans-serif; --serif:"Oswald",system-ui,sans-serif; }
-    :root[data-look="psycho"] .stage{
+   :root[data-look="psycho"]{ --sans:"Oswald",system-ui,sans-serif; --serif:"Oswald",system-ui,sans-serif;
+    --look-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='480' viewBox='0 0 480 480'%3E%3Cg fill='none' stroke='%23000' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg transform='translate(88 96) rotate(-10)'%3E%3Cpath d='M -14 -8 Q -18 -18 0 -20 Q 18 -18 14 -8 Q 10 8 0 12 Q -10 8 -14 -8'/%3E%3Ccircle cx='-5' cy='-2' r='2.8' fill='%23000' stroke='none'/%3E%3Ccircle cx='5' cy='-2' r='2.8' fill='%23000' stroke='none'/%3E%3Cpath d='M -6 6 Q 0 9 6 6' fill='none' stroke='%23000' stroke-width='1'/%3E%3Cpath d='M -16 -12 L -18 -18 M -10 -14 L -12 -20 M 10 -14 L 12 -20 M 16 -12 L 18 -18'/%3E%3C/g%3E%3Cg transform='translate(318 64) rotate(14)'%3E%3Cpath d='M -22 0 Q 0 -14 22 0 Q 0 14 -22 0'/%3E%3Cpath d='M -10 0 A 10 10 0 0 0 10 0 A 7 7 0 0 1 -7 3 A 4 4 0 0 0 7 -1' stroke='%23000' stroke-width='0.9'/%3E%3Ccircle cx='0' cy='0' r='1.6' fill='%23000' stroke='none'/%3E%3C/g%3E%3Cg transform='translate(428 178) rotate(-16)'%3E%3Cpath d='M -9 -7 C -11 -11 -7 -15 0 -15 C 7 -15 11 -11 9 -7 L 7 4 L 5 8 L -5 8 L -7 4 Z'/%3E%3Ccircle cx='-3.5' cy='-2' r='1.9' fill='%23000' stroke='none'/%3E%3Ccircle cx='3.5' cy='-2' r='1.9' fill='%23000' stroke='none'/%3E%3Cpath d='M -1 2 L 0 4 L 1 2' fill='none'/%3E%3Cpath d='M -5 6 H -3 M -1 6 H 1 M 3 6 H 5'/%3E%3C/g%3E%3Cg transform='translate(196 214) rotate(8)'%3E%3Cpath d='M -7 -10 L -7 -4 L -10 -2 L -10 9 L 10 9 L 10 -2 L 7 -4 L 7 -10 Z'/%3E%3Crect x='-4.5' y='-13' width='9' height='3.2' rx='0.6'/%3E%3Ctext x='0' y='4' font-family='monospace' font-size='7' text-anchor='middle' fill='%23000' stroke='none' opacity='0.9'%3E×%3C/text%3E%3C/g%3E%3Cg transform='translate(72 322) rotate(-12)'%3E%3Cpath d='M -12 -28 C -14 -32 -8 -38 0 -38 C 8 -38 14 -32 12 -28 L 8 28 L -8 28 Z'/%3E%3Cline x1='-10' y1='-18' x2='10' y2='-16'/%3E%3Cline x1='-11' y1='-8' x2='11' y2='-6'/%3E%3Cline x1='-10' y1='2' x2='10' y2='4'/%3E%3Cline x1='-8' y1='12' x2='8' y2='14'/%3E%3Ccircle cx='0' cy='-32' r='7'/%3E%3Ccircle cx='-2.2' cy='-33' r='1' fill='%23000' stroke='none'/%3E%3Ccircle cx='2.2' cy='-33' r='1' fill='%23000' stroke='none'/%3E%3C/g%3E%3Cg transform='translate(356 348) rotate(18)'%3E%3Cpath d='M -11 -6 C -15 -10 -12 -16 0 -14 C 12 -16 15 -10 11 -6 C 15 -2 12 6 0 8 C -12 6 -15 -2 -11 -6' fill='none'/%3E%3Cpath d='M 0 -14 L 0 8' stroke='%23000' stroke-width='0.7'/%3E%3Cpath d='M -6 -8 C -8 -4 -6 0 -4 2'/%3E%3Cpath d='M 6 -8 C 8 -4 6 0 4 2'/%3E%3C/g%3E%3Cg transform='translate(250 30) rotate(20)'%3E%3Cpath d='M 0 -4 L 1.2 -1.2 L 4 0 L 1.2 1.2 L 0 4 L -1.2 1.2 L -4 0 L -1.2 -1.2 Z' fill='%23000' stroke='none' opacity='0.8'/%3E%3C/g%3E%3Cg transform='translate(30 210) rotate(-15)'%3E%3Cpath d='M -3 0 Q 0 -3 3 0 Q 0 3 -3 0' stroke='%23000' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(460 60) rotate(25)'%3E%3Cpath d='M -3 -3 L 3 3 M 3 -3 L -3 3' stroke='%23000' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(150 160) rotate(-8)'%3E%3Cpath d='M 0 -5 Q 2 0 0 5' stroke='%23000' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(390 260) rotate(12)'%3E%3Cpath d='M -4 0 H 4 M 0 -4 V 4' stroke='%23000' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(250 380) rotate(-20)'%3E%3Ccircle cx='0' cy='0' r='2.5' stroke='%23000' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(30 460) rotate(10)'%3E%3Cpath d='M -3 -2 Q 0 2 3 -2' stroke='%23000' stroke-width='0.7'/%3E%3C/g%3E%3Ctext x='150' y='448' font-family='monospace' font-size='11' fill='%23000' stroke='none' opacity='0.8' transform='rotate(-14 150 448)'%3EPSY%3C/text%3E%3Cpath d='M 452 440 Q 458 448 452 456 Q 446 448 452 440' stroke='%23000' stroke-width='0.8' opacity='0.8' fill='none'/%3E%3C/g%3E%3C/svg%3E");
+    --look-mask-size:480px 480px;
+    --look-mask-ink:7.5%;
+  }
+:root[data-look="psycho"] .stage{
       background-image:
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='480' viewBox='0 0 480 480'%3E%3Cg opacity='0.09' fill='none' stroke='%231a1a1a' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg transform='translate(88 96) rotate(-10)'%3E%3Cpath d='M -14 -8 Q -18 -18 0 -20 Q 18 -18 14 -8 Q 10 8 0 12 Q -10 8 -14 -8'/%3E%3Ccircle cx='-5' cy='-2' r='2.8' fill='black' stroke='none'/%3E%3Ccircle cx='5' cy='-2' r='2.8' fill='black' stroke='none'/%3E%3Cpath d='M -6 6 Q 0 9 6 6' fill='none' stroke='%231a1a1a' stroke-width='1'/%3E%3Cpath d='M -16 -12 L -18 -18 M -10 -14 L -12 -20 M 10 -14 L 12 -20 M 16 -12 L 18 -18'/%3E%3C/g%3E%3Cg transform='translate(318 64) rotate(14)'%3E%3Cpath d='M -22 0 Q 0 -14 22 0 Q 0 14 -22 0'/%3E%3Cpath d='M -10 0 A 10 10 0 0 0 10 0 A 7 7 0 0 1 -7 3 A 4 4 0 0 0 7 -1' stroke='%231a1a1a' stroke-width='0.9'/%3E%3Ccircle cx='0' cy='0' r='1.6' fill='black' stroke='none'/%3E%3C/g%3E%3Cg transform='translate(428 178) rotate(-16)'%3E%3Cpath d='M -9 -7 C -11 -11 -7 -15 0 -15 C 7 -15 11 -11 9 -7 L 7 4 L 5 8 L -5 8 L -7 4 Z'/%3E%3Ccircle cx='-3.5' cy='-2' r='1.9' fill='black' stroke='none'/%3E%3Ccircle cx='3.5' cy='-2' r='1.9' fill='black' stroke='none'/%3E%3Cpath d='M -1 2 L 0 4 L 1 2' fill='none'/%3E%3Cpath d='M -5 6 H -3 M -1 6 H 1 M 3 6 H 5'/%3E%3C/g%3E%3Cg transform='translate(196 214) rotate(8)'%3E%3Cpath d='M -7 -10 L -7 -4 L -10 -2 L -10 9 L 10 9 L 10 -2 L 7 -4 L 7 -10 Z'/%3E%3Crect x='-4.5' y='-13' width='9' height='3.2' rx='0.6'/%3E%3Ctext x='0' y='4' font-family='monospace' font-size='7' text-anchor='middle' fill='%231a1a1a' stroke='none' opacity='0.9'%3E%C3%97%3C/text%3E%3C/g%3E%3Cg transform='translate(72 322) rotate(-12)'%3E%3Cpath d='M -12 -28 C -14 -32 -8 -38 0 -38 C 8 -38 14 -32 12 -28 L 8 28 L -8 28 Z'/%3E%3Cline x1='-10' y1='-18' x2='10' y2='-16'/%3E%3Cline x1='-11' y1='-8' x2='11' y2='-6'/%3E%3Cline x1='-10' y1='2' x2='10' y2='4'/%3E%3Cline x1='-8' y1='12' x2='8' y2='14'/%3E%3Ccircle cx='0' cy='-32' r='7'/%3E%3Ccircle cx='-2.2' cy='-33' r='1' fill='black' stroke='none'/%3E%3Ccircle cx='2.2' cy='-33' r='1' fill='black' stroke='none'/%3E%3C/g%3E%3Cg transform='translate(356 348) rotate(18)'%3E%3Cpath d='M -11 -6 C -15 -10 -12 -16 0 -14 C 12 -16 15 -10 11 -6 C 15 -2 12 6 0 8 C -12 6 -15 -2 -11 -6' fill='none'/%3E%3Cpath d='M 0 -14 L 0 8' stroke='%231a1a1a' stroke-width='0.7'/%3E%3Cpath d='M -6 -8 C -8 -4 -6 0 -4 2'/%3E%3Cpath d='M 6 -8 C 8 -4 6 0 4 2'/%3E%3C/g%3E%3Cg transform='translate(250 30) rotate(20)'%3E%3Cpath d='M 0 -4 L 1.2 -1.2 L 4 0 L 1.2 1.2 L 0 4 L -1.2 1.2 L -4 0 L -1.2 -1.2 Z' fill='%231a1a1a' stroke='none' opacity='0.8'/%3E%3C/g%3E%3Cg transform='translate(30 210) rotate(-15)'%3E%3Cpath d='M -3 0 Q 0 -3 3 0 Q 0 3 -3 0' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(460 60) rotate(25)'%3E%3Cpath d='M -3 -3 L 3 3 M 3 -3 L -3 3' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(150 160) rotate(-8)'%3E%3Cpath d='M 0 -5 Q 2 0 0 5' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(390 260) rotate(12)'%3E%3Cpath d='M -4 0 H 4 M 0 -4 V 4' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(250 380) rotate(-20)'%3E%3Ccircle cx='0' cy='0' r='2.5' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(30 460) rotate(10)'%3E%3Cpath d='M -3 -2 Q 0 2 3 -2' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Ctext x='150' y='448' font-family='monospace' font-size='11' fill='%231a1a1a' stroke='none' opacity='0.8' transform='rotate(-14 150 448)'%3EPSY%3C/text%3E%3Cpath d='M 452 440 Q 458 448 452 456 Q 446 448 452 440' stroke='%231a1a1a' stroke-width='0.8' opacity='0.8' fill='none'/%3E%3C/g%3E%3C/svg%3E"),
-        repeating-linear-gradient(0deg, transparent 0 2px, color-mix(in srgb, var(--accent) 5%, transparent) 3px, transparent 4px),
-        linear-gradient(90deg, transparent 0 1px, color-mix(in srgb, var(--line) 10%, transparent) 1px);
-      background-size:480px 480px, 100% 100%, 40px 40px;
+      %3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='480' viewBox='0 0 480 480'%3E%3Cg opacity='0.09' fill='none' stroke='%231a1a1a' stroke-width='1.1' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg transform='translate(88 96) rotate(-10)'%3E%3Cpath d='M -14 -8 Q -18 -18 0 -20 Q 18 -18 14 -8 Q 10 8 0 12 Q -10 8 -14 -8'/%3E%3Ccircle cx='-5' cy='-2' r='2.8' fill='black' stroke='none'/%3E%3Ccircle cx='5' cy='-2' r='2.8' fill='black' stroke='none'/%3E%3Cpath d='M -6 6 Q 0 9 6 6' fill='none' stroke='%231a1a1a' stroke-width='1'/%3E%3Cpath d='M -16 -12 L -18 -18 M -10 -14 L -12 -20 M 10 -14 L 12 -20 M 16 -12 L 18 -18'/%3E%3C/g%3E%3Cg transform='translate(318 64) rotate(14)'%3E%3Cpath d='M -22 0 Q 0 -14 22 0 Q 0 14 -22 0'/%3E%3Cpath d='M -10 0 A 10 10 0 0 0 10 0 A 7 7 0 0 1 -7 3 A 4 4 0 0 0 7 -1' stroke='%231a1a1a' stroke-width='0.9'/%3E%3Ccircle cx='0' cy='0' r='1.6' fill='black' stroke='none'/%3E%3C/g%3E%3Cg transform='translate(428 178) rotate(-16)'%3E%3Cpath d='M -9 -7 C -11 -11 -7 -15 0 -15 C 7 -15 11 -11 9 -7 L 7 4 L 5 8 L -5 8 L -7 4 Z'/%3E%3Ccircle cx='-3.5' cy='-2' r='1.9' fill='black' stroke='none'/%3E%3Ccircle cx='3.5' cy='-2' r='1.9' fill='black' stroke='none'/%3E%3Cpath d='M -1 2 L 0 4 L 1 2' fill='none'/%3E%3Cpath d='M -5 6 H -3 M -1 6 H 1 M 3 6 H 5'/%3E%3C/g%3E%3Cg transform='translate(196 214) rotate(8)'%3E%3Cpath d='M -7 -10 L -7 -4 L -10 -2 L -10 9 L 10 9 L 10 -2 L 7 -4 L 7 -10 Z'/%3E%3Crect x='-4.5' y='-13' width='9' height='3.2' rx='0.6'/%3E%3Ctext x='0' y='4' font-family='monospace' font-size='7' text-anchor='middle' fill='%231a1a1a' stroke='none' opacity='0.9'%3E%C3%97%3C/text%3E%3C/g%3E%3Cg transform='translate(72 322) rotate(-12)'%3E%3Cpath d='M -12 -28 C -14 -32 -8 -38 0 -38 C 8 -38 14 -32 12 -28 L 8 28 L -8 28 Z'/%3E%3Cline x1='-10' y1='-18' x2='10' y2='-16'/%3E%3Cline x1='-11' y1='-8' x2='11' y2='-6'/%3E%3Cline x1='-10' y1='2' x2='10' y2='4'/%3E%3Cline x1='-8' y1='12' x2='8' y2='14'/%3E%3Ccircle cx='0' cy='-32' r='7'/%3E%3Ccircle cx='-2.2' cy='-33' r='1' fill='black' stroke='none'/%3E%3Ccircle cx='2.2' cy='-33' r='1' fill='black' stroke='none'/%3E%3C/g%3E%3Cg transform='translate(356 348) rotate(18)'%3E%3Cpath d='M -11 -6 C -15 -10 -12 -16 0 -14 C 12 -16 15 -10 11 -6 C 15 -2 12 6 0 8 C -12 6 -15 -2 -11 -6' fill='none'/%3E%3Cpath d='M 0 -14 L 0 8' stroke='%231a1a1a' stroke-width='0.7'/%3E%3Cpath d='M -6 -8 C -8 -4 -6 0 -4 2'/%3E%3Cpath d='M 6 -8 C 8 -4 6 0 4 2'/%3E%3C/g%3E%3Cg transform='translate(250 30) rotate(20)'%3E%3Cpath d='M 0 -4 L 1.2 -1.2 L 4 0 L 1.2 1.2 L 0 4 L -1.2 1.2 L -4 0 L -1.2 -1.2 Z' fill='%231a1a1a' stroke='none' opacity='0.8'/%3E%3C/g%3E%3Cg transform='translate(30 210) rotate(-15)'%3E%3Cpath d='M -3 0 Q 0 -3 3 0 Q 0 3 -3 0' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(460 60) rotate(25)'%3E%3Cpath d='M -3 -3 L 3 3 M 3 -3 L -3 3' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(150 160) rotate(-8)'%3E%3Cpath d='M 0 -5 Q 2 0 0 5' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(390 260) rotate(12)'%3E%3Cpath d='M -4 0 H 4 M 0 -4 V 4' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(250 380) rotate(-20)'%3E%3Ccircle cx='0' cy='0' r='2.5' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Cg transform='translate(30 460) rotate(10)'%3E%3Cpath d='M -3 -2 Q 0 2 3 -2' stroke='%231a1a1a' stroke-width='0.7'/%3E%3C/g%3E%3Ctext x='150' y='448' font-family='monospace' font-size='11' fill='%231a1a1a' stroke='none' opacity='0.8' transform='rotate(-14 150 448)'%3EPSY%3C/text%3E%3Cpath d='M 452 440 Q 458 448 452 456 Q 446 448 452 440' stroke='%231a1a1a' stroke-width='0.8' opacity='0.8' fill='none'/%3E%3C/g%3E%3C/svg%3E"),
+      repeating-linear-gradient(0deg,
+      transparent 0 2px,
+      color-mix(in srgb,
+      var(--accent) 5%, transparent) 3px, transparent 4px),
+      linear-gradient(90deg,
+      transparent 0 1px,
+      color-mix(in srgb,
+      var(--line) 10%, transparent) 1px);
+      background-size:100% 100%, 40px 40px;
       background-color:var(--paper);
     }
     :root[data-look="psycho"] .node{
@@ -2165,6 +2200,138 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
     background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 10'%3E%3Cpath d='M1 5 H15' stroke='%231a1a1a' stroke-width='1.2' stroke-linecap='round' opacity='0.7'/%3E%3Cpath d='M5 3 Q3 1 2 2 Q4 4 5 3' fill='%231a1a1a' opacity='0.55'/%3E%3Cpath d='M11 7 Q13 9 15 8 Q13 6 11 7' fill='%231a1a1a' opacity='0.55'/%3E%3C/svg%3E") center/contain no-repeat;
     opacity:1;
   }
+
+
+  /* Scanlines and pixel grid tint from --ink rather than a fixed black. Black
+     lines are invisible on a dark theme, and on one a CRT should glow light
+     anyway - taking the theme's ink gets both for free. */
+
+
+/* ===== "On a Sailboat" look - nautical: wave motion lines on the canvas,
+     compass rose watermark, rope-knot breadcrumb crumbs. Quicksand is
+     clean and rounded like sea-smoothed glass. */
+  :root[data-look="sailboat"]{ --sans:"Quicksand",sans-serif; --serif:"Quicksand",sans-serif; }
+  :root[data-look="sailboat"] .stage{
+    background:
+      radial-gradient(circle at 85% 15%, color-mix(in srgb, var(--teal) 4%, transparent) 0, transparent 40%);
+    background-size:100% 100%;
+    background-color:var(--paper);
+  }
+  /* Motion is a single compositor-only transform. background-position CANNOT be
+     composited, so animating it repainted this whole full-viewport layer every
+     frame: measured at 220 paints, 110 style recalcs and 859ms of main thread
+     over 5s on a 6x-throttled CPU, against 0/0/0 for a static look. A keyframed
+     translate3d runs on the compositor thread instead and touches neither.
+
+     The layer is oversized only where it actually travels: one tile to the LEFT
+     (the drift is rightward, so that is the edge that would be exposed) and a
+     few px top and bottom for the bob. Insetting a full tile on all four sides
+     also works but makes the compositing layer ~1680x1200 instead of ~1480x816
+     at this viewport, and that is GPU memory a low-end device does not have to
+     spare. contain:paint stops any invalidation escaping into the stage. */
+/* A look can paint a texture as a MASK here instead of a background image, so
+   its colour comes from --ink and follows the theme. The artwork itself lives
+   in --look-mask on the look's own :root rule, ONCE: writing the data URI into
+   both the prefixed and unprefixed property doubled it, which pushed alien past
+   the per-look CSS size guard on its own. --look-mask-ink defaults to 0%, so
+   this pseudo-element paints nothing for the looks that do not use it. */
+.stage::before{
+  content:""; position:absolute; inset:0; pointer-events:none; z-index:0;
+  background-color:color-mix(in srgb, var(--ink) var(--look-mask-ink, 0%), transparent);
+  -webkit-mask-image:var(--look-mask, none); mask-image:var(--look-mask, none);
+  -webkit-mask-repeat:repeat;               mask-repeat:repeat;
+  -webkit-mask-size:var(--look-mask-size, auto); mask-size:var(--look-mask-size, auto);
+}
+  .wave-layer{
+    position:absolute; inset:-8px 0 -8px -200px; pointer-events:none; z-index:1;
+    will-change:transform; contain:paint;
+    background:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cg opacity='0.06' fill='none' stroke='%231a1a1a' stroke-width='1.5' stroke-linecap='round'%3E%3Cpath d='M0 40 Q25 30 50 40 Q75 50 100 40 Q125 30 150 40 Q175 50 200 40'/%3E%3Cpath d='M0 80 Q25 70 50 80 Q75 90 100 80 Q125 70 150 80 Q175 90 200 80'/%3E%3Cpath d='M0 120 Q25 110 50 120 Q75 130 100 120 Q125 110 150 120 Q175 130 200 120'/%3E%3Cpath d='M0 160 Q25 150 50 160 Q75 170 100 160 Q125 150 150 160 Q175 170 200 160'/%3E%3C/g%3E%3C/svg%3E");
+    background-size:200px 200px;
+    display:none;
+  }
+  /* dx is linear 0 -> one tile; dy samples a 3px sine at the same 8s period,
+     matching what the old rAF loop computed frame by frame. */
+  @keyframes sailboat-swell{
+    0%    { transform:translate3d(0,0,0); }
+    12.5% { transform:translate3d(25px,2.1px,0); }
+    25%   { transform:translate3d(50px,3px,0); }
+    37.5% { transform:translate3d(75px,2.1px,0); }
+    50%   { transform:translate3d(100px,0,0); }
+    62.5% { transform:translate3d(125px,-2.1px,0); }
+    75%   { transform:translate3d(150px,-3px,0); }
+    87.5% { transform:translate3d(175px,-2.1px,0); }
+    100%  { transform:translate3d(200px,0,0); }
+  }
+  :root[data-look="sailboat"] .wave-layer{
+    display:block;
+    animation:sailboat-swell 8s linear infinite;
+  }
+  :root[data-look="sailboat"] .node{
+    border-radius:16px;
+    border:1.5px solid var(--teal);
+    box-shadow:0 2px 8px color-mix(in srgb, var(--teal) 12%, transparent);
+  }
+  :root[data-look="sailboat"] .node.root{
+    border-radius:20px;
+    border-width:2px;
+    box-shadow:0 2px 12px color-mix(in srgb, var(--teal) 18%, transparent);
+  }
+  :root[data-look="sailboat"] .nodebar{
+    border-radius:16px;
+    border:1.5px solid var(--teal); box-shadow:var(--shadow);
+  }
+  :root[data-look="sailboat"] .side{border-right:1.5px solid var(--teal)}
+  :root[data-look="sailboat"] .new-map{border:1.5px dashed var(--teal)}
+  :root[data-look="sailboat"] .vf-card{
+    border-radius:16px; border:1.5px solid var(--teal); box-shadow:var(--shadow-lg);
+  }
+  :root[data-look="sailboat"] .vf-card h2{font-weight:700}
+  :root[data-look="sailboat"] .row-pop,
+  :root[data-look="sailboat"] .picker,
+  :root[data-look="sailboat"] .donate-card,
+  :root[data-look="sailboat"] .export-pop,
+  :root[data-look="sailboat"] .tpl-pop{
+    border-radius:14px; border:1.5px solid var(--teal);
+  }
+  :root[data-look="sailboat"] .donate-card{ border-radius:18px; }
+  :root[data-look="sailboat"] .search-wrap{ border-radius:999px; border:1.5px solid var(--teal); }
+  :root[data-look="sailboat"] .minimap{
+    border-radius:999px; border:1.5px solid var(--teal);
+    box-shadow:0 0 12px color-mix(in srgb, var(--teal) 15%, transparent);
+  }
+  :root[data-look="sailboat"] .toast{ border-radius:999px; border:1.5px solid var(--teal); }
+  :root[data-look="sailboat"] .breadcrumb{
+    background:var(--paper); border:1.5px solid var(--teal);
+    font-family:"Quicksand",sans-serif; font-size:11px; font-weight:600;
+  }
+  :root[data-look="sailboat"] .breadcrumb .bc-crumb{
+    border-radius:999px; padding:3px 10px; font-weight:700;
+  }
+  :root[data-look="sailboat"] .breadcrumb .bc-crumb.current{
+    background:var(--teal); color:#fff;
+    box-shadow:0 0 8px color-mix(in srgb, var(--teal) 25%, transparent);
+  }
+  :root[data-look="sailboat"] .breadcrumb .bc-crumb:hover{
+    background:color-mix(in srgb, var(--teal) 12%, var(--paper));
+  }
+  :root[data-look="sailboat"] .breadcrumb .bc-sep{
+    color:var(--teal); opacity:.5; font-weight:900;
+  }
+
+  /* A sonar ping, because the static rings above are a DIAGRAM of sonar rather
+     than sonar: the whole idea is a pulse. One ring expands from the centre and
+     fades, every 5s, so the canvas is still for most of that.
+
+     scale() and opacity only, so it runs on the compositor like the sailboat
+     swell and costs no main thread. The ::after is the same ring at half phase,
+     which reads as a repeating sweep rather than a lonely blip, and costs one
+     more composited layer rather than any script.
+
+     It starts at scale .12 rather than 0 so the 1.5px border never renders
+     sub-pixel, which flickers at the start of each cycle. */
+
+
 /* Sketchpad - expressive, bold pen strokes on a clean canvas. Thick borders,
      very asymmetric radii for a hand-drawn feel, and slightly larger node text
      to give the writing more presence. */
@@ -4133,4 +4300,7 @@ input, textarea, select{
   input, textarea, select{
     transition: none !important;
   }
+}
+@media (prefers-reduced-motion: reduce){
+  .wave-layer{ display:none !important; }
 }
