@@ -189,6 +189,10 @@ Pure browser app, talks directly to the GitHub API. Each visitor stores their ow
 
 **User flow (per visitor):** create a **private** `mindspark-maps` repo, then a [fine-grained token](https://github.com/settings/personal-access-tokens/new) limited to that one repo with `Contents: Read and write`, paste it in, and sign in. Every save commits a small JSON file. Revoke at <https://github.com/settings/personal-access-tokens>.
 
+#### One repository per person, or one for the team
+
+The login screen has a **Repository** field. Left at `mindspark-maps`, every person gets a private repository of that name on their own account (created on first sign-in where the token allows it). Enter a full path instead - `acme/mindspark-maps` on GitHub or Gitea, `group/subgroup/mindspark-maps` on GitLab - and everyone who types the same path shares that one repository: each person still signs in as themselves, so every commit carries its author. A shared repository is never created by MindSpark - someone with the rights creates it once and grants write access - because creating it would silently land under the person signing in rather than the team. Deploying for a team? Set `DEFAULT_REPO` in `public/app.js` to the shared path and the field comes pre-filled.
+
 #### Git hosts: GitHub, Gitea/Forgejo and GitLab
 
 The login screen has a host picker. Gitea and Forgejo (Codeberg included) share one adapter, because Gitea mirrors GitHub's contents API and Forgejo is a Gitea fork - same `/contents/{path}` shape, same base64 + `sha` writes. GitLab shares none of it: projects are addressed by URL-encoded path, listing a directory is a different endpoint from reading a file, a branch must be named on every call, and a successful write returns no sha to reuse. So each descriptor in `FORGES` (`public/app.js`) supplies whole URLs and response readers rather than a few flags. The rule is that a per-host difference lives in that descriptor, never as an `if` inside `CloudStore`, so index reconciliation and tombstones stay host-agnostic. `test/forge-adapters.test.mjs` enforces both halves of that.

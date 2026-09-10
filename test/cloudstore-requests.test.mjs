@@ -24,12 +24,11 @@ const APP = readFileSync(join(ROOT, 'public', 'app.js'), 'utf8');
 // CloudStore can't be lifted with extractConst: its initialiser reads FORGES,
 // so the registry has to be in scope. Take the whole slice from the registry to
 // the end of the store and evaluate it with the browser globals it touches.
-function loadStore(fetchImpl) {
+function loadStore(fetchImpl, store = new Map()) {
   const start = APP.indexOf('const FORGES = {');
   const end = APP.indexOf('\nlet Store;', start);
   assert.ok(start !== -1 && end > start, 'FORGES..CloudStore block not found in app.js');
 
-  const store = new Map();
   const localStorage = {
     getItem: k => (store.has(k) ? store.get(k) : null),
     setItem: (k, v) => store.set(k, String(v)),
@@ -258,5 +257,93 @@ describe('CloudStore over GitHub is unchanged by the refactor', () => {
     const { CloudStore } = loadStore(fetchImpl);
     await CloudStore.login('ghp_classic', 'github', null);
     assert.equal((await CloudStore.get('big')).title, 'Big');
+  });
+});
+
+// The target repository used to be fixed to `<login>/mindspark-maps`. A team
+// needs one shared project instead, so login() takes a target: a bare name
+// stays under the signed-in account, `group/sub/name` is used verbatim.
+describe('CloudStore repository target', () => {
+  const GL = 'https://gitlab.com/api/v4';
+  function glNet(projects) {
+    return net([
+      [(m, u) => u === GL + '/user', () => res(200, { id: 3, username: 'ada' })],
+      [(m, u) => m === 'GET' && projects.includes(u.slice((GL + '/projects/').length)) && u.startsWith(GL + '/projects/') && !u.includes('/repository/'),
+        () => res(200, { id: 42, default_branch: 'main' })],
+      [(m, u) => m === 'POST' && u === GL + '/projects',
+        (m, u, body) => res(201, { id: 43, default_branch: 'main', path_with_namespace: 'ada/' + body.path })],
+      [(m, u) => (m === 'POST' || m === 'PUT') && u.includes('/repository/files/'),
+        (m, u, body) => res(201, { file_path: 'x', branch: body.branch })],
+    ]);
+  }
+
+  test('a bare name stays under the signed-in account', async () => {
+    const { log, fetchImpl } = glNet(['ada%2Fmindspark-maps']);
+    const { CloudStore } = loadStore(fetchImpl);
+    await CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com', 'mindspark-maps');
+    assert.ok(log.some(c => c.url === GL + '/projects/ada%2Fmindspark-maps'));
+  });
+
+  test('a group path is used verbatim, and saves go to that project', async () => {
+    const { log, fetchImpl } = glNet(['team%2Ftools%2Fmindspark-maps']);
+    const { CloudStore } = loadStore(fetchImpl);
+    const me = await CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com', 'team/tools/mindspark-maps');
+    assert.equal(me.login, 'ada', 'the identity is still the signed-in user, not the group');
+    log.length = 0;
+    await CloudStore.save({ id: 'm1', title: 'One' });
+    const w = only(log, c => c.method === 'POST' && c.url.includes('/repository/files/'));
+    assert.equal(w[0].url, GL + '/projects/team%2Ftools%2Fmindspark-maps/repository/files/maps%2Fm1.json');
+  });
+
+  test('a missing group project is reported, never created', async () => {
+    const { log, fetchImpl } = glNet([]);
+    const { CloudStore } = loadStore(fetchImpl);
+    await assert.rejects(
+      () => CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com', 'team/mindspark-maps'),
+      /team\/mindspark-maps/);
+    assert.equal(only(log, c => c.method === 'POST' && c.url === GL + '/projects').length, 0,
+      'a project someone else owns must not be auto-created under the user');
+  });
+
+  test('a missing personal project is still created, as before', async () => {
+    const { log, fetchImpl } = glNet([]);
+    const { CloudStore } = loadStore(fetchImpl);
+    await CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com');
+    const create = only(log, c => c.method === 'POST' && c.url === GL + '/projects');
+    assert.equal(create.length, 1);
+    assert.equal(create[0].body.path, 'mindspark-maps');
+  });
+
+  test('the target survives a reload through tryInit', async () => {
+    const shared = new Map();
+    const a = loadStore(glNet(['team%2Fmindspark-maps']).fetchImpl, shared);
+    await a.CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com', 'team/mindspark-maps');
+
+    const { log, fetchImpl } = glNet(['team%2Fmindspark-maps']);
+    const b = loadStore(fetchImpl, shared);
+    assert.equal(await b.CloudStore.tryInit(), true);
+    assert.ok(log.some(c => c.url === GL + '/projects/team%2Fmindspark-maps'), 'must reopen the team project, not the personal default');
+    b.CloudStore.logout();
+    assert.equal(shared.has('mindspark:forge:repo'), false, 'logout forgets the target with the session');
+  });
+
+  test('whitespace and slashes around the target are ignored', async () => {
+    const { log, fetchImpl } = glNet(['team%2Fmindspark-maps']);
+    const { CloudStore } = loadStore(fetchImpl);
+    await CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com', '  /team/mindspark-maps/ ');
+    assert.ok(log.some(c => c.url === GL + '/projects/team%2Fmindspark-maps'));
+  });
+
+  test('GitHub: an org target addresses /repos/<org>/<repo>', async () => {
+    const { log, fetchImpl } = net([
+      [(m, u) => u === 'https://api.github.com/user', () => res(200, { id: 1, login: 'ada' })],
+      [(m, u) => u === 'https://api.github.com/repos/acme/mindspark-maps', () => res(200, { default_branch: 'main' })],
+      [(m, u) => m === 'PUT' && u.includes('/contents/'), () => res(200, { content: { sha: 'S' } })],
+    ]);
+    const { CloudStore } = loadStore(fetchImpl);
+    await CloudStore.login('ghp_classic', 'github', null, 'acme/mindspark-maps');
+    log.length = 0;
+    await CloudStore.save({ id: 'm1', title: 'One' });
+    assert.ok(log.some(c => c.url === 'https://api.github.com/repos/acme/mindspark-maps/contents/maps/m1.json'));
   });
 });
