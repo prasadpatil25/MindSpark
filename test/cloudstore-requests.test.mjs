@@ -81,9 +81,17 @@ describe('CloudStore over GitLab', () => {
   // from the project rather than assumed to be main.
   const PROJECT = 'https://gitlab.com/api/v4/projects/ada%2Fmindspark-maps';
   const FILES = PROJECT + '/repository/files';
+  const COMMITS = PROJECT + '/repository/commits';
 
-  function gitlabNet(existing = {}) {
-    return net([
+  // A stub GitLab: files plus the last commit that touched each of them, and a
+  // commits endpoint that applies actions atomically and answers a new id.
+  // `failNext` makes the next commit answer 400 the way GitLab does when a
+  // last_commit_id is stale, so the recovery path can be driven.
+  function gitlabNet(existing = {}, opts = {}) {
+    const last = {}; for (const p of Object.keys(existing)) last[p] = 'C0';
+    let n = 0;
+    const state = { existing, last, interpose: null };
+    const nn = net([
       [(m, u) => u === 'https://gitlab.com/api/v4/user',
         () => res(200, { id: 3, username: 'ada', name: 'Ada L', avatar_url: 'https://x/a.png' })],
       [(m, u) => u === PROJECT,
@@ -92,23 +100,34 @@ describe('CloudStore over GitLab', () => {
         (m, u) => {
           const path = decodeURIComponent(u.slice(FILES.length + 1).split('?')[0]);
           if (!(path in existing)) return res(404, {});
-          return res(200, { file_path: path, content: b64(existing[path]), blob_id: 'B-' + path, ref: 'trunk' });
+          return res(200, { file_path: path, content: b64(existing[path]), blob_id: 'B-' + path, last_commit_id: last[path], ref: 'trunk' });
         }],
-      [(m, u) => (m === 'POST' || m === 'PUT') && u.startsWith(FILES),
+      [(m, u) => m === 'POST' && u === COMMITS,
         (m, u, body) => {
-          const path = decodeURIComponent(u.slice(FILES.length + 1));
-          existing[path] = Buffer.from(body.content, 'base64').toString('utf8');
-          return res(201, { file_path: path, branch: body.branch });
+          // Someone else's push landing just before ours: mutate the server
+          // state and refuse this commit, as GitLab does for a stale lock.
+          if (state.interpose) { const f = state.interpose; state.interpose = null; f(); return res(400, { message: 'A file has changed since you started editing it' }); }
+          for (const a of body.actions) {
+            if (a.action === 'delete') { if (!(a.file_path in existing)) return res(400, { message: "A file with this name doesn't exist" }); delete existing[a.file_path]; delete last[a.file_path]; continue; }
+            if (a.action === 'create' && a.file_path in existing) return res(400, { message: 'A file with this name already exists' });
+            if (a.action === 'update' && !(a.file_path in existing)) return res(400, { message: "A file with this name doesn't exist" });
+            if (a.last_commit_id && a.last_commit_id !== last[a.file_path]) return res(400, { message: 'A file has changed since you started editing it' });
+            existing[a.file_path] = Buffer.from(a.content, 'base64').toString('utf8');
+          }
+          const id = 'CM' + (++n);
+          for (const a of body.actions) if (a.action !== 'delete') last[a.file_path] = id;
+          return res(201, { id, short_id: id, committed_date: '2024-05-01T10:00:00Z' });
         }],
-      [(m, u) => m === 'DELETE' && u.startsWith(FILES),
-        (m, u) => { delete existing[decodeURIComponent(u.slice(FILES.length + 1))]; return res(204, ''); }],
-      [(m, u) => u.startsWith(PROJECT + '/repository/commits'),
+      [(m, u) => u.startsWith(COMMITS + '?'),
         () => res(200, [{ id: 'C1', created_at: '2024-05-01T10:00:00Z', title: 't', message: 'MindSpark: update' }])],
       [(m, u) => u.startsWith(PROJECT + '/repository/tree'),
         () => res(200, Object.keys(existing).filter(p => p.startsWith('maps/'))
           .map(p => ({ type: 'blob', name: p.slice(5) })))],
     ]);
+    return { ...nn, state };
   }
+  const commits = log => only(log, c => c.method === 'POST' && c.url === COMMITS);
+  const fileWrites = log => only(log, c => c.method !== 'GET' && c.url.startsWith(FILES));
 
   test('signs in as `username` and reads the branch off the project', async () => {
     const { log, fetchImpl } = gitlabNet();
@@ -128,29 +147,42 @@ describe('CloudStore over GitLab', () => {
     }
   });
 
-  test('a first save creates with POST, and the next one updates with PUT', async () => {
-    const { log, fetchImpl } = gitlabNet();
+  test('a save is ONE commit carrying the map and the index, locked on last_commit_id', async () => {
+    const { log, fetchImpl } = gitlabNet({ '_index.json': '[]' });
     const { CloudStore } = loadStore(fetchImpl);
     await CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com');
     log.length = 0;
 
     await CloudStore.save({ id: 'm1', title: 'Café ☕' });
-    const first = only(log, c => c.url.startsWith(FILES + '/maps%2Fm1.json'));
-    assert.equal(first.length, 1, 'a create must not need a recovery round-trip');
-    assert.equal(first[0].method, 'POST');
-    // Writes carry the branch in the BODY, and must not carry the read query.
-    assert.equal(first[0].url, FILES + '/maps%2Fm1.json', 'a write URL must have no ?ref');
-    assert.equal(first[0].body.branch, 'trunk');
-    assert.equal(first[0].body.encoding, 'base64', 'without this the default is text, which mangles non-ASCII');
-    assert.equal(Buffer.from(first[0].body.content, 'base64').toString('utf8').includes('Café ☕'), true);
-    assert.equal('sha' in first[0].body, false);
+    assert.equal(fileWrites(log).length, 0, 'the files API must not be written to any more');
+    const c = commits(log);
+    assert.equal(c.length, 1, 'map + index land in one atomic commit');
+    assert.equal(c[0].body.branch, 'trunk');
+    assert.equal(c[0].body.commit_message, 'MindSpark: update maps/m1.json', 'history keeps reading as before');
+    const [mapA, idxA] = c[0].body.actions;
+    assert.equal(mapA.action, 'create'); assert.equal(mapA.file_path, 'maps/m1.json');
+    assert.equal(mapA.encoding, 'base64', 'without this the default is text, which mangles non-ASCII');
+    assert.ok(Buffer.from(mapA.content, 'base64').toString('utf8').includes('Café ☕'));
+    assert.equal('last_commit_id' in mapA, false, 'a create has nothing to lock on');
+    assert.equal(idxA.action, 'update'); assert.equal(idxA.file_path, '_index.json');
+    assert.equal(idxA.last_commit_id, 'C0', 'the index is locked on the commit it was read at');
+  });
 
+  test('the next save is locked on the commit id the previous one returned', async () => {
+    const { log, fetchImpl } = gitlabNet();
+    const { CloudStore } = loadStore(fetchImpl);
+    await CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com');
+    await CloudStore.save({ id: 'm1', title: 'One' });
     log.length = 0;
-    await CloudStore.save({ id: 'm1', title: 'Café ☕ 2' });
-    const second = only(log, c => c.url.startsWith(FILES + '/maps%2Fm1.json'));
-    assert.equal(second.length, 1,
-      'the second save must go straight to PUT - a write leaves no sha, so this is what the marker is for');
-    assert.equal(second[0].method, 'PUT');
+
+    await CloudStore.save({ id: 'm1', title: 'Two' });
+    const c = commits(log);
+    assert.equal(c.length, 1);
+    const [mapA, idxA] = c[0].body.actions;
+    assert.equal(mapA.action, 'update');
+    assert.equal(mapA.last_commit_id, 'CM1', 'the write response IS the next lock token - no extra read');
+    assert.equal(idxA.last_commit_id, 'CM1');
+    assert.equal((await CloudStore.get('m1')).title, 'Two');
   });
 
   test('reads decode base64 and history maps GitLab commit fields', async () => {
@@ -167,21 +199,66 @@ describe('CloudStore over GitLab', () => {
     assert.deepEqual(h, [{ ref: 'C1', ts: Date.parse('2024-05-01T10:00:00Z'), message: 'MindSpark: update' }]);
   });
 
-  test('delete removes the file and tombstones the id', async () => {
-    const { log, fetchImpl } = gitlabNet();
+  test('delete is ONE commit: remove the file, tombstone the id, update the index', async () => {
+    const { log, fetchImpl, state } = gitlabNet();
     const { CloudStore } = loadStore(fetchImpl);
     await CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com');
     await CloudStore.save({ id: 'm1', title: 'One' });
     log.length = 0;
 
     await CloudStore.remove('m1');
-    const del = only(log, c => c.method === 'DELETE');
-    assert.equal(del.length, 1);
-    assert.equal(del[0].url, FILES + '/maps%2Fm1.json');
-    assert.equal(del[0].body.branch, 'trunk', 'a delete without a branch is rejected');
-    assert.equal(del[0].body.commit_message, 'MindSpark: delete maps/m1.json');
+    const c = commits(log);
+    assert.equal(c.length, 1);
+    assert.equal(c[0].body.commit_message, 'MindSpark: delete maps/m1.json');
+    const byPath = Object.fromEntries(c[0].body.actions.map(a => [a.file_path, a]));
+    assert.equal(byPath['maps/m1.json'].action, 'delete');
+    assert.equal(byPath['maps/m1.json'].last_commit_id, 'CM1', 'a delete is locked too');
+    assert.equal(byPath['_deleted.json'].action, 'create');
+    assert.equal(byPath['_index.json'].action, 'update');
+    assert.equal('maps/m1.json' in state.existing, false);
     assert.deepEqual(await CloudStore.list(), []);
     assert.ok(CloudStore.deleted.includes('m1'), 'the id must be tombstoned so it is never resurrected');
+  });
+
+  test('a stale index (another device saved) is re-read, merged and committed again - once', async () => {
+    const { log, fetchImpl, state } = gitlabNet({ '_index.json': '[]' });
+    const { CloudStore } = loadStore(fetchImpl);
+    await CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com');
+    // A second device's save lands AFTER we re-read the index and BEFORE our
+    // commit - the only window the merge-on-write read cannot cover.
+    state.interpose = () => {
+      state.existing['_index.json'] = JSON.stringify([{ id: 'other', title: 'Theirs', updated: 5 }]);
+      state.last['_index.json'] = 'C7';
+      state.existing['maps/other.json'] = '{"id":"other"}'; state.last['maps/other.json'] = 'C7';
+    };
+    log.length = 0;
+
+    await CloudStore.save({ id: 'm1', title: 'Mine' });
+    const c = commits(log);
+    assert.equal(c.length, 2, 'first commit is refused (stale index), second carries the merge');
+    const idx = c[1].body.actions.find(a => a.file_path === '_index.json');
+    assert.equal(idx.last_commit_id, 'C7', 'retried on the commit the index was re-read at');
+    const merged = JSON.parse(Buffer.from(idx.content, 'base64').toString('utf8')).map(m => m.id).sort();
+    assert.deepEqual(merged, ['m1', 'other'], 'the other device\'s map must survive our save');
+  });
+
+  test('a map changed elsewhere is reported as a conflict, never silently overwritten', async () => {
+    const { log, fetchImpl, state } = gitlabNet();
+    const { CloudStore } = loadStore(fetchImpl);
+    await CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com');
+    await CloudStore.save({ id: 'm1', title: 'Mine v1' });
+    // Elsewhere: someone else saved this very map.
+    state.existing['maps/m1.json'] = '{"id":"m1","title":"Theirs"}'; state.last['maps/m1.json'] = 'CX';
+    log.length = 0;
+
+    let err = null;
+    try { await CloudStore.save({ id: 'm1', title: 'Mine v2' }); } catch (e) { err = e; }
+    assert.ok(err && err.conflict === true, 'the caller must be able to tell a conflict from a network failure');
+    assert.equal(commits(log).length, 1, 'no blind retry');
+    assert.equal(JSON.parse(state.existing['maps/m1.json']).title, 'Theirs', 'their version stays on the server');
+    assert.equal(CloudStore.shas.m1, 'CX', 'the server\'s version is adopted so the user\'s NEXT save can overwrite deliberately');
+    await CloudStore.save({ id: 'm1', title: 'Mine v3' });
+    assert.equal(JSON.parse(state.existing['maps/m1.json']).title, 'Mine v3');
   });
 
   test('orphan recovery reads the tree endpoint, not the file endpoint', async () => {
@@ -272,8 +349,8 @@ describe('CloudStore repository target', () => {
         () => res(200, { id: 42, default_branch: 'main' })],
       [(m, u) => m === 'POST' && u === GL + '/projects',
         (m, u, body) => res(201, { id: 43, default_branch: 'main', path_with_namespace: 'ada/' + body.path })],
-      [(m, u) => (m === 'POST' || m === 'PUT') && u.includes('/repository/files/'),
-        (m, u, body) => res(201, { file_path: 'x', branch: body.branch })],
+      [(m, u) => m === 'POST' && u.endsWith('/repository/commits'),
+        () => res(201, { id: 'CM1' })],
     ]);
   }
 
@@ -291,8 +368,9 @@ describe('CloudStore repository target', () => {
     assert.equal(me.login, 'ada', 'the identity is still the signed-in user, not the group');
     log.length = 0;
     await CloudStore.save({ id: 'm1', title: 'One' });
-    const w = only(log, c => c.method === 'POST' && c.url.includes('/repository/files/'));
-    assert.equal(w[0].url, GL + '/projects/team%2Ftools%2Fmindspark-maps/repository/files/maps%2Fm1.json');
+    const w = only(log, c => c.method === 'POST' && c.url.endsWith('/repository/commits'));
+    assert.equal(w[0].url, GL + '/projects/team%2Ftools%2Fmindspark-maps/repository/commits');
+    assert.equal(w[0].body.actions[0].file_path, 'maps/m1.json');
   });
 
   test('a missing group project is reported, never created', async () => {

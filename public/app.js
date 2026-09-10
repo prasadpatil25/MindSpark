@@ -317,20 +317,31 @@ const FORGES = {
       return {branch:r.branch, content:encoded, encoding:'base64', commit_message:`MindSpark: update ${path}`};
     },
     deleteBody(r, path, sha){ return {branch:r.branch, commit_message:`MindSpark: delete ${path}`}; },
-    // There is no blob sha to thread through a write here: a GET answers
-    // blob_id and last_commit_id, but a SUCCESSFUL write answers only
-    // {file_path, branch}. CloudStore uses this value for exactly one thing -
-    // "does this path already exist", i.e. which method to send next - so a
-    // marker is the honest representation. Returning null instead would make
-    // every second save a doomed POST plus a recovery round trip.
-    //
-    // The cost is that GitLab writes carry no optimistic-concurrency check
-    // (last_commit_id would give one, but nothing in the write response can
-    // refresh it afterwards). What actually protects against a concurrent edit
-    // is forge-agnostic and unaffected: _saveIndex re-reads and merges the
-    // server index on every write, so another device's maps cannot be dropped.
-    readVersion(d){ return (d && (d.blob_id || d.last_commit_id)) || null; },
+    // The version token is the LAST COMMIT id: it is what the commits API
+    // checks (`last_commit_id`) before it lets a write through, so a stale one
+    // is refused instead of silently overwriting someone else's save. It comes
+    // from a read, and after every commit below the new commit id takes over
+    // for every file that commit touched - so no read is needed between saves.
+    readVersion(d){ return (d && d.last_commit_id) || null; },
+    // Only reached by the single-file fallback, which GitLab no longer uses:
+    // a files-API write answers {file_path, branch} and leaves nothing to lock
+    // on, which is exactly why writes go through commitUrl instead.
     writeVersion(){ return 'exists'; },
+    // Batched writes. One request, one commit, every action locked on the
+    // commit its file was last read (or written) at. That is what makes a save
+    // atomic - the index can never point at a map that failed to write - and
+    // what turns "two people saved at once" into a 400 to recover from rather
+    // than a lost edit. `deleteBody`/`writeBody` above stay for the fallback.
+    commitUrl(r){ return `${this._project(r)}/repository/commits`; },
+    commitBody(r, message, actions){
+      return {branch:r.branch, commit_message:message, actions:actions.map(a=>{
+        const o={action:a.action, file_path:a.path};
+        if(a.action!=='delete'){ o.content=a.encoded; o.encoding='base64'; }
+        if(a.action!=='create' && a.version) o.last_commit_id=a.version;
+        return o;
+      })};
+    },
+    commitVersion(j){ return (j && j.id) || null; },
     // This endpoint base64-inlines content at any size, so unlike GitHub there
     // is no >1 MB cliff and no second read path to fall back to.
     isInlined(d){ return !!(d && d.content); },
@@ -614,8 +625,96 @@ const CloudStore = {
       const a=JSON.parse(this._decode(data.content)); this.deleted=Array.isArray(a)?a:[];
     }catch(e){ this.deleted=[]; this.deletedSha=null; }
   },
-  async _saveDeleted(){
-    this.deletedSha=await this._writeFile('_deleted.json', JSON.stringify(this.deleted), this.deletedSha);
+  // Tombstones merge by union: an id deleted anywhere stays deleted everywhere.
+  async _mergedDeleted(){
+    const mine=this.deleted.slice();
+    await this._loadDeleted();
+    for(const id of mine) if(!this.deleted.includes(id)) this.deleted.push(id);
+  },
+  // ---- versions ------------------------------------------------------------
+  // One lock token per path, kept in the fields the rest of the store already
+  // reads (shas per map, indexSha, deletedSha).
+  _versionOf(path){
+    if(path==='_index.json') return this.indexSha;
+    if(path==='_deleted.json') return this.deletedSha;
+    const m=/^maps\/(.+)\.json$/.exec(path); return m ? this.shas[m[1]] : null;
+  },
+  _setVersion(path, v){
+    if(path==='_index.json'){ this.indexSha=v; return; }
+    if(path==='_deleted.json'){ this.deletedSha=v; return; }
+    const m=/^maps\/(.+)\.json$/.exec(path); if(!m) return;
+    if(v==null) delete this.shas[m[1]]; else this.shas[m[1]]=v;
+  },
+  // A write action for `path`: create when we know of no version, else update.
+  _action(path, content){
+    const version=this._versionOf(path)||null;
+    return {action: version?'update':'create', path, content, version};
+  },
+  // Ask the server what it has for each path, and adopt that as our version.
+  // Returns {path: {exists, version}}. This is the one honest way out of a
+  // refused write: our belief about a file was wrong, so replace it.
+  async _refreshVersions(paths){
+    const out={};
+    for(const path of paths){
+      const r=await fetch(this.forge.contentsUrl(this._ref(), path),{headers:this._headers()});
+      if(r.status===404){ out[path]={exists:false, version:null}; this._setVersion(path, null); continue; }
+      if(!r.ok) throw new Error('Could not re-read '+path+' (HTTP '+r.status+')');
+      const v=this.forge.readVersion(await r.json());
+      out[path]={exists:true, version:v}; this._setVersion(path, v);
+    }
+    return out;
+  },
+  // ---- batched writes --------------------------------------------------------
+  // Land a set of file actions. On a forge with a commits endpoint they go as
+  // ONE commit and every touched path adopts the new commit id. Elsewhere they
+  // go one file at a time through _writeFile/_deleteFile, which carry their own
+  // recovery - so GitHub and Gitea behave exactly as they always have.
+  async _commitFiles(message, actions){
+    if(!this.forge.commitUrl){
+      for(const a of actions){
+        if(a.action==='delete'){ await this._deleteFile(a.path, a.version); this._setVersion(a.path, null); }
+        else this._setVersion(a.path, await this._writeFile(a.path, a.content, a.version));
+      }
+      return;
+    }
+    const body=this.forge.commitBody(this._ref(), message,
+      actions.map(a=>({...a, encoded: a.action==='delete' ? null : this._encode(a.content)})));
+    const r=await fetch(this.forge.commitUrl(this._ref()),{
+      method:'POST', headers:{...this._headers(),'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    if(!r.ok){
+      const t=await r.text();
+      const e=new Error('Commit failed on '+this.forge.label+' (HTTP '+r.status+') '+t.slice(0,140));
+      e.status=r.status; throw e;
+    }
+    const v=this.forge.commitVersion(await r.json());
+    for(const a of actions) this._setVersion(a.path, a.action==='delete' ? null : v);
+  },
+  // Commit, and if the forge refuses because something we hold is stale,
+  // recover ONCE: re-read every path in the batch, re-merge the index and the
+  // tombstones (they merge by construction, so a conflict on them is never the
+  // user's problem), and commit again. `guarded` is the one path whose change
+  // elsewhere IS the user's problem - the map itself. That is reported as a
+  // conflict rather than overwritten, after adopting the server's version so
+  // the user's next save goes through deliberately.
+  // `build(fresh)` produces the actions from current state; `fresh` is the
+  // result of _refreshVersions on the retry (so a delete of a file that turned
+  // out not to exist can be dropped), undefined on the first attempt.
+  async _commitMerged(message, build, guarded){
+    const sent = guarded ? (this._versionOf(guarded)||null) : null;
+    const first=build();
+    try{ await this._commitFiles(message, first); return; }
+    catch(e){
+      if(!(e.status===400 || e.status===409 || e.status===422)) throw e;
+      const fresh=await this._refreshVersions(first.map(a=>a.path));
+      const g=guarded && fresh[guarded];
+      if(g && g.exists && g.version!==sent){
+        const ce=new Error('This map was changed elsewhere - reload it to see those changes, or keep editing and your next save will overwrite them.');
+        ce.conflict=true; throw ce;
+      }
+      if(first.some(a=>a.path==='_index.json')) await this._mergedIndex();
+      if(first.some(a=>a.path==='_deleted.json')) await this._mergedDeleted();
+      await this._commitFiles(message, build(fresh));
+    }
   },
   // List map ids present in the maps/ folder.
   async _listMapFiles(){
@@ -702,18 +801,22 @@ const CloudStore = {
     }
     throw new Error('Delete '+path+' failed (HTTP '+r.status+')');
   },
-  async _saveIndex(){
-    // Merge-on-write: re-read the server index and overlay our in-memory entries,
-    // then drop tombstoned ids. A save can therefore never clobber entries that
-    // still exist on the server - only an explicit delete (via the tombstone
-    // list) removes one. This neutralises the empty/failed-read clobber bug.
+  // Merge-on-write: re-read the server index and overlay our in-memory entries,
+  // then drop tombstoned ids. A save can therefore never clobber entries that
+  // still exist on the server - only an explicit delete (via the tombstone
+  // list) removes one. This neutralises the empty/failed-read clobber bug.
+  async _mergedIndex(){
     let server=[];
     try{ server=await this._fetchIndexRaw(); }catch(e){ server=this.index.slice(); }
     const byId=new Map(server.map(m=>[m.id,m]));
     for(const m of this.index) byId.set(m.id,m);
     for(const id of this.deleted) byId.delete(id);
     this.index=[...byId.values()].sort((a,b)=>(b.updated||0)-(a.updated||0));
-    this.indexSha=await this._writeFile('_index.json', JSON.stringify(this.index), this.indexSha);
+  },
+  async _saveIndex(){
+    await this._mergedIndex();
+    await this._commitMerged('MindSpark: update _index.json',
+      ()=>[this._action('_index.json', JSON.stringify(this.index))], null);
   },
   // public API matching ServerStore
   async list(){ return this.index.slice(); },
@@ -759,27 +862,41 @@ const CloudStore = {
     // Durability net: keep a local copy *before* the network write, so a failed
     // or interrupted GitHub save can never lose the user's edits.
     try{ localStorage.setItem('mindspark:backup:'+map.id, JSON.stringify(map)); }catch(e){}
-    // Store compact (not pretty-printed): pretty-printing inflates large maps
-    // past GitHub's 1 MB Contents-API limit, which then breaks reads.
-    this.shas[map.id]=await this._writeFile(`maps/${map.id}.json`, JSON.stringify(map), this.shas[map.id]);
     const entry={id:map.id, title:map.title, color:map.color, updated:map.updated};
     if(map.pinned) entry.pinned=true;
     const i=this.index.findIndex(m=>m.id===map.id);
     if(i>=0) this.index[i]=entry; else this.index.unshift(entry);
     this.index.sort((a,b)=>b.updated-a.updated);
-    await this._saveIndex();
+    await this._mergedIndex();
+    // Store compact (not pretty-printed): pretty-printing inflates large maps
+    // past GitHub's 1 MB Contents-API limit, which then breaks reads. The map
+    // and the index land together - one commit where the forge allows it - and
+    // the map is the guarded path: a change to it elsewhere is a conflict.
+    const path=`maps/${map.id}.json`;
+    await this._commitMerged(`MindSpark: update ${path}`, ()=>[
+      this._action(path, JSON.stringify(map)),
+      this._action('_index.json', JSON.stringify(this.index))
+    ], path);
   },
   async remove(id){
-    // Delete the file (refreshing the sha if we don't have it cached - so deleting
-    // a never-opened map still removes its file, not just the index entry).
-    try{ await this._deleteFile(`maps/${id}.json`, this.shas[id]); }
-    catch(e){ console.warn('map file delete:', e.message); }
-    delete this.shas[id];
+    const path=`maps/${id}.json`;
     this.index=this.index.filter(m=>m.id!==id);
     if(!this.deleted.includes(id)) this.deleted.push(id);   // tombstone: never resurrect
     try{ localStorage.removeItem('mindspark:backup:'+id); }catch(e){}
-    try{ await this._saveDeleted(); }catch(e){ console.warn('tombstone save:', e.message); }
-    await this._saveIndex();
+    await this._mergedIndex();
+    await this._mergedDeleted();
+    // File removal, tombstone and index in one commit. A never-opened map has
+    // no cached version: the delete goes out unlocked, and if the file turns
+    // out not to exist the retry simply drops that action.
+    await this._commitMerged(`MindSpark: delete ${path}`, (fresh)=>{
+      const acts=[];
+      const gone = fresh && fresh[path] && !fresh[path].exists;
+      if(!gone) acts.push({action:'delete', path, version:this._versionOf(path)||null});
+      acts.push(this._action('_deleted.json', JSON.stringify(this.deleted)));
+      acts.push(this._action('_index.json', JSON.stringify(this.index)));
+      return acts;
+    }, null);
+    delete this.shas[id];
   },
   // Version history = the forge's commit history for the map's JSON file.
   async history(id){
@@ -6824,6 +6941,13 @@ function scheduleSave(){
       if(_pendingSaveMap===target) _pendingSaveMap=null;
       $('#savePill').classList.remove('saving'); $('#saveText').textContent='Saved';
     }catch(e){
+      // A conflict is not a hiccup: the map was changed elsewhere and a retry
+      // would overwrite that. The store has adopted the server's version, so
+      // the user's NEXT save goes through - and they have been told it will.
+      if(e && e.conflict){
+        $('#savePill').classList.remove('saving'); $('#saveText').textContent='Conflict';
+        toast(e.message); return;
+      }
       $('#savePill').classList.remove('saving'); $('#saveText').textContent='Retrying…';
       // The map was copied to local storage before the network write, so the
       // edit isn't lost. Tell the user plainly and retry once after a short wait.

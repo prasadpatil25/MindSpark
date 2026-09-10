@@ -220,8 +220,28 @@ describe('forge adapters', () => {
     // already exists.
     assert.ok(gl.writeVersion({ file_path: 'maps/x.json', branch: 'main' }),
       'a write must leave a truthy version token or every second save is a doomed create');
-    assert.equal(gl.readVersion({ blob_id: 'B', last_commit_id: 'C' }), 'B');
+    // The version token is the LAST COMMIT id, not the blob id: it is what the
+    // commits API checks on the next write (last_commit_id), so caching the
+    // blob id would make every locked write fail.
+    assert.equal(gl.readVersion({ blob_id: 'B', last_commit_id: 'C' }), 'C');
     assert.equal(gl.readVersion({}), null, 'no id means "we do not know it exists"');
+
+    // Batched writes: one commit, many actions, each locked on its own commit id.
+    assert.equal(gl.commitUrl(r), 'https://gitlab.com/api/v4/projects/ada%2Fmindspark-maps/repository/commits');
+    const cb = gl.commitBody(r, 'MindSpark: update maps/x.json', [
+      { action: 'create', path: 'maps/x.json', encoded: 'B64' },
+      { action: 'update', path: '_index.json', encoded: 'B65', version: 'C1' },
+      { action: 'delete', path: 'maps/y.json', version: 'C2' },
+    ]);
+    assert.equal(cb.branch, 'main');
+    assert.equal(cb.commit_message, 'MindSpark: update maps/x.json');
+    assert.deepEqual(cb.actions, [
+      { action: 'create', file_path: 'maps/x.json', content: 'B64', encoding: 'base64' },
+      { action: 'update', file_path: '_index.json', content: 'B65', encoding: 'base64', last_commit_id: 'C1' },
+      { action: 'delete', file_path: 'maps/y.json', last_commit_id: 'C2' },
+    ]);
+    assert.equal(gl.commitVersion({ id: 'CM9', short_id: 'CM9' }), 'CM9', 'the new commit id is the next lock token for every file in it');
+    assert.equal(gl.commitVersion(null), null);
     // Content is inlined at any size here, so there is no >1 MB second path.
     assert.equal(gl.isInlined({ content: 'eyJ9' }), true);
     assert.equal(gl.defaultBranch({ default_branch: 'master' }), 'master',
