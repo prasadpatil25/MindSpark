@@ -391,8 +391,18 @@ function cspAllowsInstance(instance){
   return list.includes(origin) || list.includes('*');
 }
 
+// Where maps are stored, as the user would type it on the login screen: a bare
+// name means "a project of that name under my own account" (created on first
+// sign-in if the token can), `group/sub/name` names a shared project verbatim
+// and must already exist. A deployment for a team sets its shared project here
+// so nobody has to type it.
+const DEFAULT_REPO = 'mindspark-maps';
+
 const CloudStore = {
-  token:null, user:null, repo:'mindspark-maps',
+  token:null, user:null, repo:DEFAULT_REPO,
+  // Namespace of the target project; null means the signed-in account. Set
+  // only through _useRepo() so `repo` and `owner` can never disagree.
+  repoOwner:null,
   shas:{}, indexSha:null, index:[],
   deleted:[], deletedSha:null,
   // Which forge this session is signed in to, and (self-hosted only) where it
@@ -406,7 +416,17 @@ const CloudStore = {
   _api(path){ return this._apiBase() + path; },
   // The coordinates every forge request needs, assembled in ONE place so a
   // descriptor method can never be handed a half-populated set.
-  _ref(){ return {api:this._apiBase(), owner:this.user && this.user.login, repo:this.repo, branch:this.branch}; },
+  _ref(){ return {api:this._apiBase(), owner:this.repoOwner || (this.user && this.user.login), repo:this.repo, branch:this.branch}; },
+  // Parse a target as typed. Slashes at the ends and whitespace are noise; the
+  // last segment is the project, everything before it the namespace.
+  _useRepo(target){
+    const t=String(target==null?'':target).trim().replace(/^\/+|\/+$/g,'') || DEFAULT_REPO;
+    const cut=t.lastIndexOf('/');
+    this.repoOwner = cut===-1 ? null : t.slice(0,cut);
+    this.repo      = cut===-1 ? t    : t.slice(cut+1);
+  },
+  // The target the way the user named it, for messages and storage.
+  repoTarget(){ return this.repoOwner ? this.repoOwner+'/'+this.repo : this.repo; },
   // Per-forge token storage. GitHub deliberately keeps its original key so
   // every existing session survives this change without a migration step.
   _tokenKey(f=this.forge){ return f.id==='github' ? 'mindspark:gh:token' : 'mindspark:'+f.id+':token'; },
@@ -476,6 +496,7 @@ const CloudStore = {
   async tryInit(){
     const forgeId=localStorage.getItem('mindspark:forge') || DEFAULT_FORGE;
     const instance=localStorage.getItem('mindspark:forge:instance') || '';
+    this._useRepo(localStorage.getItem('mindspark:forge:repo'));
     try{ this._useForge(forgeId, instance); }
     catch(e){ console.warn('Saved forge session unusable:', e.message); return false; }
     const t=localStorage.getItem(this._tokenKey());
@@ -493,8 +514,9 @@ const CloudStore = {
       return false;
     }
   },
-  async login(token, forgeId, instance){
+  async login(token, forgeId, instance, repoTarget){
     this._useForge(forgeId || DEFAULT_FORGE, instance);
+    this._useRepo(repoTarget);
     this.user=await this._verify(token);
     this.token=token;
     if(!this._setItemSafe(this._tokenKey(), token)){
@@ -505,6 +527,7 @@ const CloudStore = {
     this._setItemSafe('mindspark:forge', this.forge.id);
     if(this.instance) this._setItemSafe('mindspark:forge:instance', this.instance);
     else localStorage.removeItem('mindspark:forge:instance');
+    this._setItemSafe('mindspark:forge:repo', this.repoTarget());
     await this._ensureRepo();
     await this._loadIndex();
     await this._loadDeleted();
@@ -518,6 +541,8 @@ const CloudStore = {
     localStorage.removeItem(key);
     localStorage.removeItem('mindspark:forge');
     localStorage.removeItem('mindspark:forge:instance');
+    localStorage.removeItem('mindspark:forge:repo');
+    this._useRepo(null);
   },
   // Repo creation is the one place the forges genuinely diverge in capability.
   // A GitHub fine-grained token scoped to `mindspark-maps` can read and write
@@ -528,6 +553,13 @@ const CloudStore = {
   // the create and report which case the user is actually in.
   async _ensureRepo(){
     const r=await fetch(this.forge.repoUrl(this._ref()),{headers:this._headers()});
+    if(r.status===404 && this.repoOwner){
+      // A shared project belongs to a group or another account: creating one
+      // would land under the user instead, silently splitting the team. So it
+      // is the one thing the admin sets up by hand.
+      throw new Error('Signed in, but `'+this.repoTarget()+'` was not found on '+this.forge.label+' (or your account cannot see it). '
+        + 'Ask its owner to create it and give you write access, or check the spelling, then sign in again.');
+    }
     if(r.status===404){
       const cr=await fetch(this._api(this.forge.createRepoPath),{
         method:'POST',
@@ -546,7 +578,7 @@ const CloudStore = {
       await this._useBranchFrom(cr);
       await new Promise(res=>setTimeout(res,800));
     } else if(r.status===403){
-      throw new Error('Token was accepted but can\'t reach `'+this.repo+'` on '+this.forge.label+'. '
+      throw new Error('Token was accepted but can\'t reach `'+this.repoTarget()+'` on '+this.forge.label+'. '
         + this.forge.repoAccessHint);
     } else if(!r.ok){
       throw new Error('Could not access repo (HTTP '+r.status+')');
@@ -13188,8 +13220,19 @@ function accessControlAvailable(){
 // A cloud-backed #shared= link opened while signed out is parked here, then opened
 // in-place once sign-in completes (Overleaf-style: shared links require an account).
 let _pendingSharedLink = null;
+// The repository field of a pane, or the deployment default when it is empty.
+// Read at sign-in time by BOTH paths (token and OAuth), so the two can never
+// disagree about where the first save goes.
+function repoTargetFor(forgeId){
+  const el=repoFieldFor(forgeId);
+  return (el && el.value.trim()) || DEFAULT_REPO;
+}
+function repoFieldFor(forgeId){
+  return $({github:'#ghRepo', gitea:'#giteaRepo', gitlab:'#glRepo'}[forgeId] || '');
+}
+
 async function completeCloudLogin(token, forgeId, instance){
-  await CloudStore.login(token, forgeId, instance);
+  await CloudStore.login(token, forgeId, instance, repoTargetFor(forgeId||DEFAULT_FORGE));
   const ov=$('#loginOverlay'); if(ov) ov.style.display='none';
   showUserPill();
   await proceedBoot();
@@ -13418,6 +13461,16 @@ function showLoginOverlay(opts){
   // otherwise the card would open with no sign-in control in sight. On GitHub
   // that turns on the deployment: a PAT-only build hides the OAuth box entirely.
   if(ghDetails) ghDetails.open = !oauthConfigured();
+
+  // Repository field per pane: the saved target for the forge the user last
+  // signed in to, the deployment default everywhere else. Never overwrite what
+  // the user has already typed (the overlay can reopen after a failed attempt).
+  const savedForgeId=localStorage.getItem('mindspark:forge');
+  const savedRepo=localStorage.getItem('mindspark:forge:repo');
+  for(const id of Object.keys(FORGES)){
+    const el=repoFieldFor(id); if(!el || el.value) continue;
+    el.value = (id===savedForgeId && savedRepo) ? savedRepo : DEFAULT_REPO;
+  }
 
   // One sign-in path for every pane - only the inputs differ.
   const attempt=async(btn, errEl, tokenEl, forgeId, instanceEl)=>{
