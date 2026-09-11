@@ -880,23 +880,32 @@ const CloudStore = {
   },
   async remove(id){
     const path=`maps/${id}.json`;
+    // Nothing is forgotten locally until the forge has agreed: a delete that
+    // fails (expired session, outage) must leave the map exactly where it was,
+    // not hidden from the list with a tombstone that says it is gone.
+    const prevIndex=this.index, prevDeleted=this.deleted;
     this.index=this.index.filter(m=>m.id!==id);
-    if(!this.deleted.includes(id)) this.deleted.push(id);   // tombstone: never resurrect
-    try{ localStorage.removeItem('mindspark:backup:'+id); }catch(e){}
-    await this._mergedIndex();
-    await this._mergedDeleted();
-    // File removal, tombstone and index in one commit. A never-opened map has
-    // no cached version: the delete goes out unlocked, and if the file turns
-    // out not to exist the retry simply drops that action.
-    await this._commitMerged(`MindSpark: delete ${path}`, (fresh)=>{
-      const acts=[];
-      const gone = fresh && fresh[path] && !fresh[path].exists;
-      if(!gone) acts.push({action:'delete', path, version:this._versionOf(path)||null});
-      acts.push(this._action('_deleted.json', JSON.stringify(this.deleted)));
-      acts.push(this._action('_index.json', JSON.stringify(this.index)));
-      return acts;
-    }, null);
+    this.deleted=this.deleted.includes(id) ? this.deleted.slice() : [...this.deleted, id];   // tombstone: never resurrect
+    try{
+      await this._mergedIndex();
+      await this._mergedDeleted();
+      // File removal, tombstone and index in one commit. A never-opened map has
+      // no cached version: the delete goes out unlocked, and if the file turns
+      // out not to exist the retry simply drops that action.
+      await this._commitMerged(`MindSpark: delete ${path}`, (fresh)=>{
+        const acts=[];
+        const gone = fresh && fresh[path] && !fresh[path].exists;
+        if(!gone) acts.push({action:'delete', path, version:this._versionOf(path)||null});
+        acts.push(this._action('_deleted.json', JSON.stringify(this.deleted)));
+        acts.push(this._action('_index.json', JSON.stringify(this.index)));
+        return acts;
+      }, null);
+    }catch(e){
+      this.index=prevIndex; this.deleted=prevDeleted;
+      throw e;
+    }
     delete this.shas[id];
+    try{ localStorage.removeItem('mindspark:backup:'+id); }catch(e){}
   },
   // Version history = the forge's commit history for the map's JSON file.
   async history(id){
@@ -6498,7 +6507,10 @@ function openRowMenu(btn, m){
   pop.querySelector('[data-a="dup"]').onclick=ev=>{ ev.stopPropagation(); closeRowMenu(); duplicateMap(m.id); };
   pop.querySelector('[data-a="del"]').onclick=async ev=>{ ev.stopPropagation(); closeRowMenu();
     if(!confirm('Delete "'+(m.title||'Untitled')+'"?')) return;
-    await Store.remove(m.id);
+    // The store keeps the map listed until the forge has agreed, so a failure
+    // here leaves everything as it was - and must be said, not implied away.
+    try{ await Store.remove(m.id); }
+    catch(e){ toast('Could not delete the map: '+((e && e.message) || e)); return; }
     if(map && map.id===m.id){ map=null; render(); }
     refreshList(); toast('Map deleted');
   };

@@ -220,6 +220,26 @@ describe('CloudStore over GitLab', () => {
     assert.ok(CloudStore.deleted.includes('m1'), 'the id must be tombstoned so it is never resurrected');
   });
 
+  test('a delete whose commit fails leaves the index and the tombstones untouched', async () => {
+    const store = new Map();
+    const { fetchImpl, state } = gitlabNet();
+    const { CloudStore } = loadStore(fetchImpl, store);
+    await CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com');
+    await CloudStore.save({ id: 'm1', title: 'One' });
+    // Same session, but GitLab now falls over on the commit (a 500 is not a
+    // stale-lock 400, so there is no merge-and-retry either).
+    const brokenFetch = async (url, opt) => (opt && opt.method === 'POST' && url === COMMITS) ? res(500, { message: 'boom' }) : fetchImpl(url, opt);
+    const { CloudStore: broken } = loadStore(brokenFetch, store);
+    assert.equal(await broken.tryInit(), true);
+    assert.deepEqual((await broken.list()).map(m => m.id), ['m1']);
+
+    await assert.rejects(broken.remove('m1'), /500/);
+
+    assert.deepEqual((await broken.list()).map(m => m.id), ['m1'], 'the map is still listed - it still exists');
+    assert.equal(broken.deleted.includes('m1'), false, 'no tombstone for a map that was not deleted');
+    assert.equal('maps/m1.json' in state.existing, true);
+  });
+
   test('a stale index (another device saved) is re-read, merged and committed again - once', async () => {
     const { log, fetchImpl, state } = gitlabNet({ '_index.json': '[]' });
     const { CloudStore } = loadStore(fetchImpl);
