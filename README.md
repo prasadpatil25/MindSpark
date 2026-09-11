@@ -203,10 +203,11 @@ The login screen has a host picker. Gitea and Forgejo (Codeberg included) share 
 | Token scope | can be limited to the one repo | **account-wide** - no per-repo scoping exists | **account-wide** - the Files API needs `api`; `write_repository` covers only git over HTTP |
 | Repo creation | fine-grained tokens can't create repos, so you make it first | `write:repository` creates it for you - one step fewer | `api` creates it for you - one step fewer |
 | Version history | ✅ commits | ✅ commits | ✅ commits |
-| Concurrent-write check | ✅ blob `sha` sent with every write | ✅ blob `sha` sent with every write | ❌ no token survives a write, so writes are unconditional |
+| Concurrent-write check | ✅ blob `sha` sent with every write | ✅ blob `sha` sent with every write | ✅ `last_commit_id` on every action of a commit |
+| Save = one commit | ❌ map and index are two writes | ❌ same | ✅ map + index (+ tombstones) in one atomic commit |
 | Live collaboration / `#shared=` | ✅ on the Worker deploy | ❌ not yet - the collab worker's identity is GitHub-only | ❌ same |
 
-On that missing concurrent-write check: GitLab returns only `{file_path, branch}` from a successful write, so there is nothing to carry into the next one. What actually protects your maps is host-agnostic and unaffected - every save re-reads the server index and merges into it, so a second device can never drop the first one's maps.
+GitLab writes go through the commits API rather than the files API: a save is one commit carrying the map and the index (a delete also carries the tombstone list), each action locked on the commit its file was last read or written at, and the new commit id becomes the lock for the next save - no read in between. If someone else's save lands in the meantime, GitLab refuses the commit; MindSpark then re-reads, re-merges the index and tombstones (they merge by construction) and commits once more. If the *map itself* was changed elsewhere, that is reported as a conflict - "changed elsewhere, reload or your next save overwrites" - rather than silently winning, the way draw.io handles the same case. On every host, saves also re-read and merge the server index first, so a second device can never drop the first one's maps.
 
 **Self-hosted instances need one extra step.** `connect-src` is a fixed allowlist and can't learn a new origin at runtime, so only `codeberg.org`, `gitea.com` and `gitlab.com` work out of the box. For your own instance, add its origin to the three CSP copies (`public/index.html`, `public/_headers`, `server.js`) and redeploy - the app checks this *before* it makes a request and tells you exactly what's missing rather than failing as an opaque network error.
 
