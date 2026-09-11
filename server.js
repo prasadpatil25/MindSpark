@@ -174,6 +174,10 @@ const send = (res, code, body, type='application/json', req, entry) => {
   res.writeHead(code, { 'Content-Type': type, 'Content-Length': buf.length });
   res.end(buf);
 };
+// A map body has to be a JSON object. `m.id = id` on a number or null is
+// silently ignored (or throws), and upsert() would then store the literal,
+// which breaks the next list load on the client.
+const isMapBody = (m) => !!m && typeof m === 'object' && !Array.isArray(m);
 const readBody = (req) => new Promise((resolve, reject) => {
   let d = '';
   req.on('data', c => { d += c; if (d.length > 8e6) { req.destroy(); reject(new Error('payload too large')); } });
@@ -228,7 +232,7 @@ const server = http.createServer(async (req, res) => {
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com",
     "img-src 'self' data: blob: https://avatars.githubusercontent.com https://icons.duckduckgo.com",
-    "connect-src 'self' https://api.github.com https://codeberg.org https://gitea.com https://gitlab.com https://api.crossref.org https://api.anthropic.com https://api.openai.com https://api.quotable.io https://zenquotes.io https://favqs.com https://dummyjson.com https://quoteslate.vercel.app https://stoic.tekloon.net https://type.fit https://api.freeapi.app",
+    "connect-src 'self' https://api.github.com https://codeberg.org https://gitea.com https://gitlab.com https://api.crossref.org https://api.anthropic.com https://api.openai.com https://openrouter.ai https://api.groq.com https://api.quotable.io https://zenquotes.io https://favqs.com https://dummyjson.com https://quoteslate.vercel.app https://stoic.tekloon.net https://type.fit https://api.freeapi.app",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -241,7 +245,8 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/maps' && req.method === 'POST') {
       const m = await readBody(req);
-      if (!m || !m.id) return send(res, 400, { error: 'missing map id' });
+      if (!isMapBody(m)) return send(res, 400, { error: 'body must be a JSON object' });
+      if (!m.id) return send(res, 400, { error: 'missing map id' });
       upsert(m); return send(res, 201, { ok: true, id: m.id });
     }
 
@@ -266,7 +271,9 @@ const server = http.createServer(async (req, res) => {
         return row ? send(res, 200, row.data, 'application/json') : send(res, 404, { error: 'not found' });
       }
       if (req.method === 'PUT') {
-        const m = await readBody(req); m.id = id; upsert(m);
+        const m = await readBody(req);
+        if (!isMapBody(m)) return send(res, 400, { error: 'body must be a JSON object' });
+        m.id = id; upsert(m);
         return send(res, 200, { ok: true, id });
       }
       if (req.method === 'DELETE') { Q.del.run(id); Q.vDelAll.run(id); res.writeHead(204); return res.end(); }

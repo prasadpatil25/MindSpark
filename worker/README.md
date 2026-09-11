@@ -40,9 +40,15 @@ PAT login shows - nothing else changes.
    ```js
    const GH_OAUTH = {
      clientId:  '<your client id>',
-     workerUrl: 'https://<your-worker>.workers.dev'
+     workerUrl: 'https://<your-worker>.workers.dev',
+     appOrigin: 'https://your-mindspark-app.example.com'   // = ALLOWED_ORIGIN above
    };
    ```
+   `appOrigin` must be the exact origin the app is served from. The button is
+   shown only on that origin, so a copy of `public/` running anywhere else
+   (another domain, localhost) falls back to the token login instead of sending
+   its users through your OAuth App and worker. If the two values disagree, the
+   popup closes without delivering a token and the overlay says so.
 
 That's it. The login overlay now shows **Sign in with GitHub** above the existing
 token option. Both produce a GitHub token that the app uses identically.
