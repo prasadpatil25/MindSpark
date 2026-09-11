@@ -18,14 +18,14 @@ const SW = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'sw.js'
 const ORIGIN = 'https://mindspark.test';
 
 /** Evaluate sw.js against stub globals and hand back its listeners. */
-function loadWorker() {
+function loadWorker(location = { origin: ORIGIN }) {
   const listeners = {};
   const cacheStore = new Map();
   const sandbox = {
     URL, Response, console,
     self: {
       addEventListener: (type, fn) => { listeners[type] = fn; },
-      location: { origin: ORIGIN },
+      location,
       skipWaiting: async () => {},
       clients: { claim: async () => {} },
     },
@@ -48,8 +48,8 @@ function loadWorker() {
  * the network is also up. Returns 'NETWORK', 'CACHED', or 'passthrough' when the
  * handler declines to answer at all (browser goes to the network on its own).
  */
-async function resolve(path, { navigate = false, accept = '' } = {}) {
-  const { listeners, cacheStore } = loadWorker();
+async function resolve(path, { navigate = false, accept = '', location } = {}) {
+  const { listeners, cacheStore } = loadWorker(location);
   const url = new URL(path, ORIGIN).href;
   cacheStore.set(url, new Response('CACHED', { status: 200 }));
 
@@ -107,6 +107,16 @@ describe('service worker caching policy', () => {
 
     test('/healthz is passed through so the storage-mode probe stays live', async () => {
       assert.equal(await resolve('/healthz'), 'passthrough');
+    });
+
+    // The app can be served from a sub-path (GitHub Pages at /MindSpark/, a
+    // reverse proxy at /mindspark/). The API and the probe live under that
+    // prefix, and the worker has to recognise them there, not only at the root.
+    test('the API and the probe are recognised under the sub-path the worker is served from', async () => {
+      const location = { origin: ORIGIN, href: ORIGIN + '/MindSpark/sw.js' };
+      assert.equal(await resolve('/MindSpark/api/maps', { location }), 'passthrough');
+      assert.equal(await resolve('/MindSpark/healthz', { location }), 'passthrough');
+      assert.equal(await resolve('/MindSpark/app.js', { location }), 'NETWORK', 'app code is still network-first');
     });
 
     test('cross-origin requests are passed through', async () => {

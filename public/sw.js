@@ -24,6 +24,10 @@
  *   - Only GET is handled. Anything else falls through to the network.
  */
 const CACHE = 'mindspark-shell-v2';   // bumped: v1 could pin clients to a stale app.js
+// The app's own path prefix ('/' at the root, '/MindSpark/' on GitHub Pages,
+// '/mindspark/' behind a reverse proxy). The API and health probe live under
+// it, and the app resolves them the same way (appUrl() in app.js).
+const BASE = (() => { try { return new URL('./', self.location.href).pathname; } catch { return '/'; } })();
 
 const SHELL = [
   './',
@@ -67,8 +71,8 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;   // fonts, avatars, GitHub API
-  if (url.pathname.startsWith('/api/')) return;      // never serve stale map data
-  if (url.pathname === '/healthz') return;           // storage-mode probe must be live
+  if (url.pathname.startsWith(BASE + 'api/')) return; // never serve stale map data
+  if (url.pathname === BASE + 'healthz') return;      // storage-mode probe must be live
 
   const isHTML = request.mode === 'navigate' ||
     (request.headers.get('accept') || '').includes('text/html');

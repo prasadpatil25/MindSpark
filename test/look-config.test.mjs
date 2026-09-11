@@ -5,7 +5,7 @@
 // and nothing it is given may make a map fail to render.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadFns, extractConst } from './helpers/load-app-fns.mjs';
+import { loadFns, extractConst, extractFunction } from './helpers/load-app-fns.mjs';
 
 const DEFAULTS = extractConst('LOOK_CONFIG_DEFAULTS');
 const BOUNDS = extractConst('LOOK_CONFIG_BOUNDS');
@@ -117,5 +117,40 @@ describe('lookConfigFor - the dialog view', () => {
     assert.equal(DEFAULTS.handwritten.radius, 20);
     assert.equal(DEFAULTS.lab.radius, 4);
     assert.equal(DEFAULTS['coffee-shop'].radius, 18);
+  });
+});
+// applyLookConfigVars() writes the active look's font/size/radius onto :root
+// as inline custom properties. With no map open it used to return early, which
+// left the LAST map's overrides in place - so the empty canvas after deleting
+// the final map kept that map's font until the next load.
+describe('applyLookConfigVars - no map means the look defaults, not the last map', () => {
+  function harness() {
+    const set = {}, removed = new Set();
+    const root = {
+      getAttribute: () => 'lab',
+      style: {
+        setProperty: (k, v) => { set[k] = v; removed.delete(k); },
+        removeProperty: k => { delete set[k]; removed.add(k); },
+      },
+    };
+    const state = { map: null };
+    const fn = new Function('document', 'LOOK_CONFIG_DEFAULTS', 'state',
+      `${extractFunction('applyLookConfigVars').replace(/\bmap\b/g, 'state.map')} return applyLookConfigVars;`)(
+      { documentElement: root }, DEFAULTS, state);
+    return { state, set, removed, apply: fn };
+  }
+
+  test('a map with a configured font sets it; closing the map puts the look default back', () => {
+    const h = harness();
+    h.state.map = { lookConfig: { lab: { font: '"Comic Sans MS"', nodeSize: 1.4, radius: 33 } } };
+    h.apply();
+    assert.equal(h.set['--sans'], '"Comic Sans MS"');
+    assert.equal(h.set['--look-node-size'], 1.4);
+    assert.equal(h.set['--look-radius'], '33px');
+    h.state.map = null;
+    h.apply();
+    assert.equal(h.set['--sans'], DEFAULTS.lab.font, 'font back to the look default');
+    assert.ok(h.removed.has('--look-node-size'), 'size override cleared');
+    assert.ok(h.removed.has('--look-radius'), 'radius override cleared');
   });
 });

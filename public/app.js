@@ -36,19 +36,25 @@
    is in. When in doubt, warn - noise in the console is cheaper than an
    invisible failure.
    ------------------------------------------------------------ */
+// Server URLs are resolved against the page, not the origin root, so a
+// self-hosted instance behind a reverse proxy at a sub-path (/mindspark/)
+// still finds its own API. Every other app URL (./sw.js, ./styles.css) is
+// already relative; these were the only absolute ones, and they made such an
+// instance boot in cloud mode with a working backend underneath.
+const appUrl = path => new URL(path, document.baseURI).href;
 const ServerStore = {
-  async _j(url,opt){ const r=await fetch(url,opt); if(!r.ok) throw new Error(r.status); return r.status===204?null:r.json(); },
-  async list(){ try{ return await this._j('/api/maps'); }catch(e){ return []; } },
-  async get(id){ try{ return await this._j('/api/maps/'+id); }catch(e){ return null; } },
+  async _j(url,opt){ const r=await fetch(appUrl(url),opt); if(!r.ok) throw new Error(r.status); return r.status===204?null:r.json(); },
+  async list(){ try{ return await this._j('api/maps'); }catch(e){ return []; } },
+  async get(id){ try{ return await this._j('api/maps/'+id); }catch(e){ return null; } },
   async save(map){
     map.updated=Date.now();
-    try{ await this._j('/api/maps/'+map.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(map)}); }
-    catch(e){ await this._j('/api/maps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(map)}); }
+    try{ await this._j('api/maps/'+map.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(map)}); }
+    catch(e){ await this._j('api/maps',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(map)}); }
   },
-  async remove(id){ try{ await this._j('/api/maps/'+id,{method:'DELETE'}); }catch(e){ console.warn('map delete failed on the server; it is gone locally but may still exist remotely:', e.message); } },
+  async remove(id){ try{ await this._j('api/maps/'+id,{method:'DELETE'}); }catch(e){ console.warn('map delete failed on the server; it is gone locally but may still exist remotely:', e.message); } },
   // Version history (SQLite-backed snapshots)
-  async history(id){ try{ return await this._j('/api/maps/'+id+'/versions'); }catch(e){ return []; } },
-  async version(id, ref){ try{ return await this._j('/api/maps/'+id+'/versions/'+ref); }catch(e){ return null; } }
+  async history(id){ try{ return await this._j('api/maps/'+id+'/versions'); }catch(e){ return []; } },
+  async version(id, ref){ try{ return await this._j('api/maps/'+id+'/versions/'+ref); }catch(e){ return null; } }
 };
 
 /* ------------------------------------------------------------
@@ -952,7 +958,7 @@ function isComposingKey(e){ return !!e && (e.isComposing || e.keyCode===229); }
 
 async function initStore(){
   try{
-    const r=await fetch('/healthz', {cache:'no-store'});
+    const r=await fetch(appUrl('healthz'), {cache:'no-store'});
     if(r.ok){ Store=ServerStore; MODE='server'; return {mode:'server', loggedIn:true}; }
   }catch(e){}
   Store=CloudStore; MODE='cloud';
@@ -1324,6 +1330,10 @@ function clearNodes(){
 }
 
 function render(){
+  // The Build Prompt panel is bound to one map. Switching maps (or closing the
+  // map) leaves it showing the previous map's branch, and select() cannot catch
+  // that because the same node ids are usually valid in both maps.
+  if(_bpPanel && (!map || _bpPanel.dataset.mapId !== map.id)){ _bpPanel.remove(); _bpPanel=null; }
   edges.innerHTML='';
   clearFormulaCache();
   if(!map){
@@ -1334,6 +1344,7 @@ function render(){
     $('#mapTitle').value='';              // reset title field
     viewport.removeAttribute('data-style');
     viewport.removeAttribute('data-layout');   // reset style/background
+    applyStyleConfigVars(); applyLookConfigVars(); applyThemeConfigVars();   // back to the defaults, not the last map's
     sel=null;
     updateBreadcrumb();                   // hides (no map)
     updateMinimap();                      // clears + hides the overview box
@@ -1416,7 +1427,9 @@ function render(){
       const img=document.createElement('img');
       img.className='node-image'; img.src=n.image; img.alt=n.imageAlt||'attachment';
       img.addEventListener('mousedown',ev=>ev.stopPropagation());
-      img.addEventListener('dblclick',ev=>{ ev.stopPropagation(); window.open(n.image,'_blank'); });
+      // Guarded even though sanitizeMapData() already vets n.image: a javascript:
+      // URL here would run in a window that inherits this origin.
+      img.addEventListener('dblclick',ev=>{ ev.stopPropagation(); if(safeImageUrl(n.image)) window.open(n.image,'_blank','noopener'); });
       // If the image can't load, fall back to its alt text so the node isn't a broken icon
       img.addEventListener('error',()=>{
         img.remove(); el.classList.remove('has-image'); el.classList.add('img-missing');
@@ -1512,7 +1525,13 @@ function render(){
         'h-collapse'+(n.collapsed?' collapsed':''),
         n.collapsed?'+':'−',
         n.collapsed?`Expand (${roll.desc[id]} hidden)`:'Collapse',
-        ()=>{ n.collapsed=!n.collapsed; pushHistory(); autoLayout(); }
+        // Looked up by id at click time, never through the `n` this element was
+        // built from: the element outlives that object. Undo/redo, Markdown-mode
+        // sync, a collab snapshot and a cloud merge all replace map.nodes with
+        // fresh objects, and render() keeps this element whenever the node's
+        // signature is unchanged - so a captured `n` would be a detached copy,
+        // and the click would toggle it while the map showed nothing.
+        ()=>{ const cur=map && map.nodes[id]; if(!cur) return; cur.collapsed=!cur.collapsed; pushHistory(); autoLayout(); }
       ));
     }
     // Add child - every node
@@ -2263,6 +2282,7 @@ function edgePath(x1,y1,x2,y2,leftSide,horizontal,style){
 // is O(1). buildChildIndex() builds it in one O(n) pass; withChildIndex(fn) makes
 // it available for the duration of fn and restores any previous index after.
 let _ci=null;
+let _bpPanel=null; // open Build Prompt panel, if any
 const EMPTY_KIDS=Object.freeze([]);
 function buildChildIndex(){
   const idx=Object.create(null);
@@ -3978,8 +3998,19 @@ function toggleMdMode(on){
     try{ if(mdMode) mdSyncGutterRowHeights(); }catch(e){}
   }, 260);   // smoothly re-fit once the pane finished sliding, instead of snapping
 }
+// One shape for every history entry. Everything a user can change and expect
+// Ctrl+Z to take back belongs here, including the per-map settings the four
+// config dialogs write: each dialog calls pushHistory() after writing, say,
+// map.layoutConfig, but that field was not in the snapshot, so the entry was
+// dropped as "unchanged" below and the next undo reverted the previous node
+// edit instead. restore() must put back every field listed here.
+function historySnapshot(){
+  return JSON.stringify({nodes:map.nodes,rootId:map.rootId,title:map.title,color:map.color,links:map.links||[],layout:map.layout,vars:map.vars||{},
+    style:map.style, layoutPreset:map.layoutPreset, layoutConfig:map.layoutConfig, styleConfig:map.styleConfig,
+    lookConfig:map.lookConfig, themeConfig:map.themeConfig});
+}
 function pushHistory(){
-  const snapshot = JSON.stringify({nodes:map.nodes,rootId:map.rootId,title:map.title,color:map.color,links:map.links||[],layout:map.layout,vars:map.vars||{}});
+  const snapshot = historySnapshot();
   if(history.length && hpos>=0 && history[hpos]===snapshot) return;   // nothing actually changed - don't save/flash "Saving…" for no reason
   history=history.slice(0,hpos+1);
   history.push(snapshot);
@@ -3991,7 +4022,11 @@ function pushHistory(){
   if(mdMode && !_mdSyncing) syncTextFromMap();                // keep the Markdown editor in sync with canvas edits
 }
 function updateUndo(){ $('#undo').disabled=hpos<=0; $('#redo').disabled=hpos>=history.length-1; }
-function restore(s){ const o=JSON.parse(s); map.nodes=o.nodes; map.rootId=o.rootId; map.title=o.title; map.color=o.color; if(o.links) map.links=o.links; if(o.layout) map.layout=o.layout; if(o.vars) map.vars=o.vars; $('#mapTitle').value=map.title; autoLayout(); if(mdMode && !_mdSyncing) syncTextFromMap(); }
+function restore(s){ const o=JSON.parse(s); map.nodes=o.nodes; map.rootId=o.rootId; map.title=o.title; map.color=o.color; if(o.links) map.links=o.links; if(o.layout) map.layout=o.layout; if(o.vars) map.vars=o.vars;
+  // Absent in the snapshot means absent on the map: a setting the user had just
+  // added must go away on undo, so these are assigned, not guarded.
+  map.style=o.style; map.layoutPreset=o.layoutPreset; map.layoutConfig=o.layoutConfig; map.styleConfig=o.styleConfig; map.lookConfig=o.lookConfig; map.themeConfig=o.themeConfig;
+  $('#mapTitle').value=map.title; autoLayout(); if(mdMode && !_mdSyncing) syncTextFromMap(); }
 function undo(){ if(hpos>0){hpos--;restore(history[hpos]);updateUndo();} }
 function redo(){ if(hpos<history.length-1){hpos++;restore(history[hpos]);updateUndo();} }
 
@@ -4086,6 +4121,20 @@ function select(id,edit){
   updateBreadcrumb();
   if(mdMode && !_mdSelSync && id) mdHighlightNode(id);   // node click -> highlight its Markdown line
   if(edit) setTimeout(()=>startEdit(id),0);
+  // Live-update the Build Prompt panel when the user navigates to a different node.
+  if(_bpPanel && id && map && map.nodes[id]){
+    const n=map.nodes[id];
+    const head=_bpPanel.querySelector('.bp-head b');
+    if(head) head.textContent='Build prompt from "'+(nodeTextPlain(n.text||'').slice(0,40)||'branch')+'"';
+    const ta=_bpPanel.querySelector('.bp-text');
+    // Indexed: this runs on EVERY node selection while the panel is open, and
+    // assemblePrompt walks the subtree with childrenOf, which is O(n) per call
+    // without an index. Unindexed that is 471 ms per click on a 2000 node map.
+    if(ta) ta.value=withChildIndex(()=>assemblePrompt(id));
+    const instr=_bpPanel.querySelector('.bp-instruction');
+    const tok=_bpPanel.querySelector('.bp-tok');
+    if(tok && ta) tok.textContent='~'+estimateTokens((instr?instr.value.trim():'')+'\n\n'+ta.value,'')+' tokens';
+  }
 }
 
 /* ============================================================
@@ -4995,7 +5044,7 @@ function renderGlobalResults(results, q){
       <div class="gs-group">
         <div class="gs-map">${escapeHtml(g.title)}${mid===(map&&map.id)?' <span class="gs-cur">(current)</span>':''}</div>
         ${g.items.slice(0,8).map(it=>`
-          <button class="gs-item" data-map="${mid}" data-node="${it.nodeId}">
+          <button class="gs-item" data-map="${escapeHtml(mid)}" data-node="${escapeHtml(it.nodeId)}">
             ${escapeHtml(it.snippet).replace(re,'<mark>$1</mark>')}
           </button>`).join('')}
         ${g.items.length>8?`<div class="gs-more">+${g.items.length-8} more…</div>`:''}
@@ -5435,23 +5484,23 @@ function positionNodeBar(){
       <button data-a="edit" title="Edit (F2)">✎</button>
       <button data-a="notes" class="${(n.notes||'').trim()?'on':''}" title="${(n.notes||'').trim()?'Edit notes':'Add notes'}">📝</button>
       <button data-a="task" class="${n.task?'on':''}" title="Task state (todo / doing / done)">☑</button>
-      <button data-a="marker" class="${n.marker?'on':''}" title="${n.marker?'Change marker':'Add a marker'}">${n.marker||'\u2B50'}</button>
+      <button data-a="marker" class="${n.marker?'on':''}" title="${n.marker?'Change marker':'Add a marker'}">${escapeHtml(n.marker||'\u2B50')}</button>
       <button data-a="cite" class="${n.ref?'on':''}" title="Reference / citation">📖</button>
       <button data-a="image" class="${n.image?'on':''}" title="Attach image">🖼</button>
       ${!isRoot?'<button data-a="del" title="Delete (Del)">🗑</button>':''}
     </div>
     <div class="nb-div"></div>
     <div class="nb-group">
-      <button data-a="size" class="fmt-btn size-btn" title="Font size"><span>${fs}</span><span class="caret">▾</span></button>
+      <button data-a="size" class="fmt-btn size-btn" title="Font size"><span>${escapeHtml(String(fs))}</span><span class="caret">▾</span></button>
       <button data-a="bold" class="${n.bold?'on':''}" title="Bold"><b>B</b></button>
       <button data-a="italic" class="${n.italic?'on':''}" title="Italic"><i>I</i></button>
       <button data-a="strike" class="${n.strike?'on':''}" title="Strikethrough"><s>S</s></button>
       <button data-a="underline" class="${n.underline?'on':''}" title="Underline"><u>U</u></button>
       <button data-a="ul" class="${n.listType==='ul'?'on':''}" title="Bullet list (use Shift+Enter for new items)">•≡</button>
       <button data-a="ol" class="${n.listType==='ol'?'on':''}" title="Numbered list (use Shift+Enter for new items)">1≡</button>
-      <button data-a="align" class="fmt-btn align-btn" title="Text alignment"><span class="align-icon align-${n.align||'center'}">≡</span><span class="caret">▾</span></button>
-      <button data-a="textColor" class="fmt-btn color-btn" title="Text color"><span class="A-mark" style="border-bottom:3px solid ${tc}">A</span><span class="caret">▾</span></button>
-      <button data-a="highlight" class="fmt-btn color-btn" title="Highlight"><span class="A-mark" style="background:${hl};padding:0 2px;border-radius:2px">A</span><span class="caret">▾</span></button>
+      <button data-a="align" class="fmt-btn align-btn" title="Text alignment"><span class="align-icon align-${escapeHtml(n.align||'center')}">≡</span><span class="caret">▾</span></button>
+      <button data-a="textColor" class="fmt-btn color-btn" title="Text color"><span class="A-mark" style="border-bottom:3px solid ${escapeHtml(tc)}">A</span><span class="caret">▾</span></button>
+      <button data-a="highlight" class="fmt-btn color-btn" title="Highlight"><span class="A-mark" style="background:${escapeHtml(hl)};padding:0 2px;border-radius:2px">A</span><span class="caret">▾</span></button>
     </div>
     <div class="nb-div"></div>
     <span class="swatches" title="Card color">${(isRoot?PALETTE:NODE_COLORS).map(c=>`<span class="sw" data-c="${c}" style="background:${c};${c==='#ffffff'?'border-color:var(--line)':''}"></span>`).join('')}</span>`;
@@ -6528,7 +6577,7 @@ async function refreshList(){
   (idx||[]).forEach(m=>{
     const el=document.createElement('div');
     el.className='map-item'+(map&&m.id===map.id?' active':'')+(m.pinned?' pinned':'');
-    el.innerHTML=`<span class="dot" style="background:${m.color||'#e0613a'}"></span><span class="nm">${escapeHtml(m.title||'Untitled')}</span><button class="row-menu" title="More" aria-haspopup="true" aria-label="More actions">\u22ee</button>`;
+    el.innerHTML=`<span class="dot" style="background:${escapeHtml(m.color||'#e0613a')}"></span><span class="nm">${escapeHtml(m.title||'Untitled')}</span><button class="row-menu" title="More" aria-haspopup="true" aria-label="More actions">\u22ee</button>`;
     el.style.cursor='pointer';
     el.onclick=()=>{ if(!map || map.id!==m.id) loadMap(m.id); };
     el.querySelector('.row-menu').onclick=ev=>{ ev.stopPropagation(); openRowMenu(ev.currentTarget, m); };
@@ -6753,7 +6802,8 @@ function saveAsTemplate(){
 function deleteUserTemplate(tid){
   let store=[]; try{ store=JSON.parse(localStorage.getItem('mindspark:userTemplates')||'[]'); }catch(e){}
   store = store.filter(t=>t.id!==tid);
-  localStorage.setItem('mindspark:userTemplates', JSON.stringify(store));
+  try{ localStorage.setItem('mindspark:userTemplates', JSON.stringify(store)); }
+  catch(e){ console.warn('could not update saved templates:', e.message); toast('Could not update saved templates - storage is blocked or full'); return; }
   delete TEMPLATES[tid];
   if(!store.length){
     const idx=TEMPLATE_CATEGORIES.findIndex(c=>c.id==='mine');
@@ -6893,12 +6943,13 @@ async function loadMap(id){
     }
   }
   flushPendingSave();          // persist the outgoing map's pending edit to itself
+  m=sanitizeMapData(m);
   if(tabsEnabled){ openMapInTab(m); return true; }   // tabbed workspace: open (or switch to) a tab
   map=m; sel=map.rootId;
   const _imported = !!map._import; if(_imported) delete map._import;
   // Initialise history WITHOUT triggering a save - loading is not a change,
   // so the sidebar order (sorted by `updated`) must not be reshuffled.
-  history=[JSON.stringify({nodes:map.nodes,rootId:map.rootId,title:map.title,color:map.color})];
+  history=[historySnapshot()];
   hpos=0; updateUndo();
   $('#mapTitle').value=map.title;
   if(_imported){ balanceRootSides(); autoLayout(); }
@@ -7171,9 +7222,59 @@ async function restoreVersion(mapId, ref){
 }
 // Normalize a loaded/decoded map object to the current shape (defensive defaults).
 function normalizeLoadedMap(m){
-  return { id:m.id, title:m.title||'Untitled map', titleAuto:!!m.titleAuto, color:m.color||'#e0613a',
+  return sanitizeMapData({ id:m.id, title:m.title||'Untitled map', titleAuto:!!m.titleAuto, color:m.color||'#e0613a',
            rootId:m.rootId, style:m.style, layout:m.layout||'balanced',
-           nodes:m.nodes||{}, links:m.links||[], vars:m.vars||{} };
+           nodes:m.nodes||{}, links:m.links||[], vars:m.vars||{} });
+}
+// ---- Map ingress ------------------------------------------------------------
+// Every whole map that arrives from outside this tab - a #view= share link, an
+// "editable copy" of one, a JSON import, a cloud room, a collab snapshot, the
+// store itself - passes through here before it is drawn or saved. Node TEXT is
+// sanitized where it is rendered; these are the OTHER fields that reach markup
+// or selectors and were never checked: colours written into style attributes,
+// the marker glyph, font size and alignment in the node toolbar, ids in data
+// attributes and querySelector strings, and the image URL handed to
+// window.open. A share link whose colour was `x" onmouseover="..."` ran script
+// in the recipient's origin as soon as they made an editable copy - and on the
+// static deployments that origin holds their forge token. The sinks escape
+// too; this keeps the bad value out of the saved map in the first place.
+// Repairs rather than rejects, like the config validators: a bad value falls
+// back to its default, a bad id is re-keyed with every reference rewritten.
+const SAFE_COLOR_RE = /^(#[0-9a-fA-F]{3,8}|(?:rgb|hsl)a?\([\d\s.,%\/deg-]{1,40}\)|[a-zA-Z]{3,24})$/;
+const SAFE_ID_RE = /^[\w.:-]{1,80}$/;
+const SAFE_IMAGE_RE = /^(https?:\/\/|data:image\/|blob:)/i;
+const NODE_ALIGNS = new Set(['left','center','right']);
+function safeColor(v){ return (typeof v === 'string' && SAFE_COLOR_RE.test(v.trim())) ? v.trim() : null; }
+function safeImageUrl(v){ return (typeof v === 'string' && v.length <= 4e6 && SAFE_IMAGE_RE.test(v)) ? v : null; }
+function sanitizeMapData(m){
+  if(!m || typeof m !== 'object' || Array.isArray(m)) return null;
+  if(!m.nodes || typeof m.nodes !== 'object' || Array.isArray(m.nodes)) m.nodes = {};
+  m.color = safeColor(m.color) || '#e0613a';
+  // Ids first, so every field that names a node below sees the final keys.
+  const rename = {};
+  for(const id of Object.keys(m.nodes)){
+    if(!m.nodes[id] || typeof m.nodes[id] !== 'object'){ delete m.nodes[id]; continue; }
+    if(!SAFE_ID_RE.test(id)){ let nid = uid(); while(m.nodes[nid] || rename[nid]) nid = uid(); rename[id] = nid; }
+  }
+  const mapId = id => (typeof id === 'string' ? (rename[id] || id) : null);
+  for(const old of Object.keys(rename)){ m.nodes[rename[old]] = m.nodes[old]; delete m.nodes[old]; }
+  m.rootId = mapId(m.rootId);
+  for(const id of Object.keys(m.nodes)){
+    const n = m.nodes[id];
+    n.id = id;
+    n.parent = mapId(n.parent);
+    if(n.parent !== null && !m.nodes[n.parent]) n.parent = null;
+    for(const k of ['color','textColor','highlight']){ if(k in n){ const c = safeColor(n[k]); if(c) n[k] = c; else delete n[k]; } }
+    if('marker' in n && !(typeof n.marker === 'string' && n.marker.length <= 16 && !/[<>&"']/.test(n.marker))) delete n.marker;
+    if('fontSize' in n && !(typeof n.fontSize === 'number' && isFinite(n.fontSize) && n.fontSize >= 6 && n.fontSize <= 96)) delete n.fontSize;
+    if('align' in n && !NODE_ALIGNS.has(n.align)) delete n.align;
+    if('image' in n && !safeImageUrl(n.image)) delete n.image;
+  }
+  m.links = Array.isArray(m.links)
+    ? m.links.filter(l => l && typeof l === 'object').map(l => ({ ...l, from: mapId(l.from), to: mapId(l.to) }))
+              .filter(l => l.from && l.to && m.nodes[l.from] && m.nodes[l.to])
+    : [];
+  return m;
 }
 
 /* ============================================================
@@ -7184,52 +7285,140 @@ function normalizeLoadedMap(m){
 function assemblePrompt(rootId){
   if(!map || !map.nodes[rootId]) return '';
   const lines=[];
-  const walk=(id, depth)=>{
+  // Build ancestor chain from root to rootId so the prompt shows context.
+  const ancestors=[];
+  { let cur=rootId; while(cur){ ancestors.unshift(cur); cur=map.nodes[cur]&&map.nodes[cur].parent; } }
+  // Print the ancestor chain at increasing depth.
+  ancestors.forEach((id,i)=>{
     const n=map.nodes[id]; if(!n) return;
     const txt=nodeTextPlain(n.text||'').replace(/\n/g,' ').trim();
-    const indent='  '.repeat(depth);
-    if(depth===0){ lines.push(txt); }
+    const indent='  '.repeat(i);
+    if(i===0){ lines.push(txt); }
     else { lines.push(`${indent}- ${txt}`); }
     const note=(n.notes||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
     if(note) lines.push(`${indent}  (${note})`);
-    childrenOf(id).forEach(c=>walk(c, depth+1));
+  });
+  // Walk downward from rootId for the subtree below it.
+  const depth=ancestors.length;
+  const walk=(id, d)=>{
+    const n=map.nodes[id]; if(!n) return;
+    const txt=nodeTextPlain(n.text||'').replace(/\n/g,' ').trim();
+    const indent='  '.repeat(d);
+    lines.push(`${indent}- ${txt}`);
+    const note=(n.notes||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+    if(note) lines.push(`${indent}  (${note})`);
+    childrenOf(id).forEach(c=>walk(c, d+1));
   };
-  walk(rootId, 0);
+  childrenOf(rootId).forEach(c=>walk(c, depth+1));
   // Substitute any {{variables}} the map already has values for.
   let out=lines.join('\n');
   const vars=map.vars||{};
   out=out.replace(/\{\{(\w+)\}\}/g,(m,k)=> (vars[k]!=null && String(vars[k]).trim()!=='') ? vars[k] : m);
   return out;
 }
+// LLM_MAX_TOKENS is the output ceiling sent with every request. 1024 was
+// enough for "Summarize" and silently cut "Expand" and "Outline" mid-sentence,
+// with nothing telling the user the second half was missing; `truncated` is
+// how each provider reports that, so the panel can say so.
+const LLM_MAX_TOKENS = 4096;
 const LLM_PROVIDERS = {
   anthropic: {
     label:'Anthropic (Claude)', url:'https://api.anthropic.com/v1/messages',
-    defaultModel:'claude-3-5-sonnet-latest',
+    defaultModel:'claude-opus-5',
+    // Model ids that no longer exist at the API. A stored one is replaced by the
+    // default rather than sent, the same way RETIRED_THEMES migrates theme ids.
+    retiredModel:/^claude-(?:instant|2|3)\b/,
     headers:(key)=>({'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}),
-    body:(model,prompt)=>JSON.stringify({model, max_tokens:1024, messages:[{role:'user',content:prompt}]}),
-    extract:(d)=> (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim()
+    body:(model,prompt)=>JSON.stringify({model, max_tokens:LLM_MAX_TOKENS, messages:[{role:'user',content:prompt}]}),
+    extract:(d)=> (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim(),
+    truncated:(d)=> d.stop_reason==='max_tokens'
   },
   openai: {
     label:'OpenAI', url:'https://api.openai.com/v1/chat/completions',
     defaultModel:'gpt-4o-mini',
     headers:(key)=>({'content-type':'application/json','Authorization':'Bearer '+key}),
     body:(model,prompt)=>JSON.stringify({model, messages:[{role:'user',content:prompt}]}),
-    extract:(d)=> (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim()
+    extract:(d)=> (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(),
+    truncated:(d)=> !!(d.choices&&d.choices[0]&&d.choices[0].finish_reason==='length')
+  },
+  openrouter: {
+    label:'OpenRouter (free models)', url:'https://openrouter.ai/api/v1/chat/completions',
+    defaultModel:'google/gemma-3-27b-it:free',
+    headers:(key)=>({'content-type':'application/json','Authorization':'Bearer '+key,'HTTP-Referer':location.origin,'X-Title':'MindSpark'}),
+    body:(model,prompt)=>JSON.stringify({model, messages:[{role:'user',content:prompt}]}),
+    extract:(d)=> (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(),
+    truncated:(d)=> !!(d.choices&&d.choices[0]&&d.choices[0].finish_reason==='length')
+  },
+  groq: {
+    label:'Groq (fast, free)', url:'https://api.groq.com/openai/v1/chat/completions',
+    defaultModel:'llama-3.3-70b-versatile',
+    headers:(key)=>({'content-type':'application/json','Authorization':'Bearer '+key}),
+    body:(model,prompt)=>JSON.stringify({model, messages:[{role:'user',content:prompt}]}),
+    extract:(d)=> (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(),
+    truncated:(d)=> !!(d.choices&&d.choices[0]&&d.choices[0].finish_reason==='length')
   }
 };
+// The five shipped task presets. Data, not markup, so user-saved presets render
+// through exactly the same path (see bpRenderChips).
+const BP_TASKS = [
+  {label:'Summarize', task:'Summarize the following branch into key points:'},
+  {label:'Expand',    task:'Expand the following branch with detailed sub-points and examples:'},
+  {label:'Rewrite',   task:'Rewrite the following branch for clarity and conciseness:'},
+  {label:'Outline',   task:'Convert the following branch into a structured outline with headings:'},
+  {label:'Review',    task:'Review the following branch and suggest improvements:'},
+];
+const BP_PROMPTS_KEY = 'mindspark:llm:prompts';
+// Written by an earlier build that remembered where the panel had been dragged.
+// The panel always opens at its CSS top-right anchor now, so this is only cleared.
+const BP_GEOM_KEY    = 'mindspark:bp:geom';
+// localStorage is user-editable and survives version changes, so treat whatever
+// comes back as untrusted shape: wrong types are dropped rather than rendered.
+// The model to use for a provider: the remembered one unless it has been
+// retired, otherwise the provider's default.
+function llmModelFor(pv){
+  const cfg=LLM_PROVIDERS[pv]; if(!cfg) return '';
+  let m=''; try{ m=localStorage.getItem('mindspark:llm:model:'+pv)||''; }catch(e){}
+  if(m && cfg.retiredModel && cfg.retiredModel.test(m)) m='';
+  return m || cfg.defaultModel;
+}
+function bpLoadPrompts(){
+  try{
+    const raw = JSON.parse(localStorage.getItem(BP_PROMPTS_KEY) || '[]');
+    if(!Array.isArray(raw)) return [];
+    return raw.filter(t => typeof t==='string' && t.trim())
+              .map(t => t.trim().slice(0,400)).slice(0,12);
+  }catch(e){ return []; }
+}
+function bpSavePrompts(list){
+  try{ localStorage.setItem(BP_PROMPTS_KEY, JSON.stringify(list.slice(0,12))); }catch(e){}
+}
 function showBuildPrompt(nodeId){
   if(!map){ toast('Open a map first'); return; }
   nodeId = nodeId && map.nodes[nodeId] ? nodeId : map.rootId;
   document.querySelectorAll('.bp-panel,.export-pop').forEach(p=>p.remove());
-  const prompt=assemblePrompt(nodeId);
+  const branch=withChildIndex(()=>assemblePrompt(nodeId));
   const provider=localStorage.getItem('mindspark:llm:provider')||'anthropic';
-  const model=localStorage.getItem('mindspark:llm:model:'+provider) || LLM_PROVIDERS[provider].defaultModel;
-  const tok=estimateTokens(prompt,'');
+  const model=llmModelFor(provider);
+  const defaultTask=localStorage.getItem('mindspark:llm:task')||'Summarize the following branch into key points:';
+  const fullPrompt=defaultTask+'\n\n'+branch;
+  const tok=estimateTokens(fullPrompt,'');
   const panel=document.createElement('div');
   panel.className='bp-panel';
+  panel.tabIndex=-1;                  // focusable, so Escape reaches the handler below
+  panel.dataset.mapId=map.id;         // render() closes the panel if this map goes away
+  panel.setAttribute('role','dialog');
+  panel.setAttribute('aria-label','Build prompt');
+  // Non-modal on purpose: the canvas stays usable and select() keeps the panel in
+  // step. So no focus trap, but focus does go back where it came from on close.
+  const _prevFocus = document.activeElement;
   panel.innerHTML=`
-    <div class="bp-head"><b>Build prompt from “${escapeHtml(nodeTextPlain(map.nodes[nodeId].text||'').slice(0,40)||'branch')}”</b><button class="bp-x" title="Close">×</button></div>
-    <textarea class="bp-text" spellcheck="false">${escapeHtml(prompt)}</textarea>
+    <div class="bp-head"><b>Build prompt from "${escapeHtml(nodeTextPlain(map.nodes[nodeId].text||'').slice(0,40)||'branch')}"</b><button class="bp-x" title="Close">×</button></div>
+    <textarea class="bp-text" spellcheck="false" aria-label="Prompt body, built from the selected branch">${escapeHtml(branch)}</textarea>
+    <div class="bp-task-wrap">
+      <div class="bp-task-label">Task instruction</div>
+      <div class="bp-task-chips" role="group" aria-label="Task presets"></div>
+      <textarea class="bp-instruction" spellcheck="false" rows="2" aria-label="Task instruction">${escapeHtml(defaultTask)}</textarea>
+    </div>
     <div class="bp-meta"><span class="bp-tok">~${tok} tokens</span></div>
     <div class="bp-row">
       <button class="bp-copy primary">Copy prompt</button>
@@ -7237,47 +7426,176 @@ function showBuildPrompt(nodeId){
     </div>
     <div class="bp-run" style="display:none">
       <div class="bp-run-row">
-        <select class="bp-provider">
+        <select class="bp-provider" aria-label="LLM provider">
           ${Object.entries(LLM_PROVIDERS).map(([k,v])=>`<option value="${k}"${k===provider?' selected':''}>${v.label}</option>`).join('')}
         </select>
-        <input class="bp-model" placeholder="model" value="${escapeHtml(model)}">
+        <input class="bp-model" placeholder="model" aria-label="Model name" value="${escapeHtml(model)}">
       </div>
-      <input class="bp-key" type="password" placeholder="API key (stored only in this browser)" value="${escapeHtml(localStorage.getItem('mindspark:llm:key:'+provider)||'')}">
+      <input class="bp-key" type="password" placeholder="API key (stored only in this browser)" aria-label="API key" value="${escapeHtml(localStorage.getItem('mindspark:llm:key:'+provider)||'')}">
       <div class="bp-warn">⚠ Your key is stored in this browser's localStorage and sent directly to the provider. Use a scoped key; don't use this on a shared machine.</div>
-      <button class="bp-send primary">Send →</button>
+      <div class="bp-run-row">
+        <button class="bp-send primary">Send →</button>
+        <button class="bp-forget" title="Remove this provider's key from this browser">Forget key</button>
+      </div>
       <div class="bp-result" style="display:none"></div>
     </div>`;
   document.body.appendChild(panel);
+  _bpPanel = panel;
   panel.addEventListener('mousedown',e=>e.stopPropagation());
   const $$=s=>panel.querySelector(s);
-  $$('.bp-x').onclick=()=>panel.remove();
-  $$('.bp-copy').onclick=()=>{ navigator.clipboard?.writeText($$('.bp-text').value).then(()=>toast('Prompt copied'),()=>toast('Copy failed')); };
-  $$('.bp-toggle').onclick=()=>{ const r=$$('.bp-run'); r.style.display = r.style.display==='none'?'block':'none'; };
+  const ta=$$('.bp-text'), instr=$$('.bp-instruction'), tokEl=$$('.bp-tok');
+  const updateTok=()=>{ const full=instr.value.trim()+'\n\n'+ta.value; tokEl.textContent='~'+estimateTokens(full,'')+' tokens'; };
+  // Show which preset the instruction currently is. Editing the text away from a
+  // preset clears the highlight, so the chips never claim to be the active task
+  // when they are not.
+  const markActiveChip=()=>{ const v=instr.value.trim();
+    panel.querySelectorAll('.bp-chip').forEach(c=>{
+      const on = c.dataset.task===v;
+      c.classList.toggle('active', on);
+      c.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }); };
+  // Built-in and saved presets render through one path. Built with DOM calls, not
+  // innerHTML: a preset label is whatever the user typed, and it must never be
+  // able to become markup.
+  const chipRow=$$('.bp-task-chips');
+  const applyTask=t=>{ instr.value=t; try{ localStorage.setItem('mindspark:llm:task',t); }catch(e){}
+    updateTok(); markActiveChip(); };
+  const bpRenderChips=()=>{
+    chipRow.textContent='';
+    const addChip=(label, task)=>{
+      const btn=document.createElement('button');
+      btn.className='bp-chip'; btn.type='button';
+      btn.dataset.task=task; btn.textContent=label; btn.title=task;
+      btn.onclick=()=>applyTask(task);
+      return btn;
+    };
+    BP_TASKS.forEach(t=>chipRow.appendChild(addChip(t.label, t.task)));
+    const custom=bpLoadPrompts();
+    custom.forEach(task=>{
+      const wrap=document.createElement('span'); wrap.className='bp-chip-wrap';
+      wrap.appendChild(addChip(task.slice(0,24)+(task.length>24?'…':''), task));
+      const del=document.createElement('button');
+      del.className='bp-chip-del'; del.type='button';
+      del.textContent='\u00d7'; del.title='Delete this preset';
+      del.setAttribute('aria-label','Delete preset');
+      del.onclick=()=>{ bpSavePrompts(bpLoadPrompts().filter(t=>t!==task)); bpRenderChips(); toast('Preset deleted'); };
+      wrap.appendChild(del);
+      chipRow.appendChild(wrap);
+    });
+    const save=document.createElement('button');
+    save.className='bp-save'; save.type='button'; save.textContent='+ Save';
+    save.title='Save the instruction below as a preset';
+    save.onclick=()=>{
+      const t=instr.value.trim();
+      if(!t){ toast('Nothing to save'); return; }
+      if(BP_TASKS.some(b=>b.task===t)){ toast('That is already a built-in preset'); return; }
+      const list=bpLoadPrompts();
+      if(list.includes(t)){ toast('Preset already saved'); return; }
+      if(list.length>=12){ toast('12 presets is the limit - delete one first'); return; }
+      list.push(t); bpSavePrompts(list); bpRenderChips(); toast('Preset saved');
+    };
+    chipRow.appendChild(save);
+    markActiveChip();
+  };
+  bpRenderChips();
+  // Remembering the task is a nicety; the token count and chip state are not.
+  // Storage can throw (private mode, blocked site data), and an exception here
+  // would stop both of them dead on every keystroke.
+  instr.addEventListener('input',()=>{ try{ localStorage.setItem('mindspark:llm:task',instr.value); }catch(e){} updateTok(); markActiveChip(); });
+  const closePanel=()=>{ _bpPanel=null; panel.remove();
+    if(_prevFocus && _prevFocus.focus && document.contains(_prevFocus)) _prevFocus.focus(); };
+  $$('.bp-x').onclick=closePanel;
+  // Escape closes, the same way every other dialog here does. The IME guard is
+  // required: during a CJK composition Escape belongs to the candidate window.
+  panel.addEventListener('keydown',e=>{
+    if(isComposingKey(e)) return;
+    if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); closePanel(); }
+  });
+  panel.focus();
+  // Drag by the header. getBoundingClientRect and mouse coords are both visual px,
+  // which scale with the UI display size, while style.left is CSS px - so divide by
+  // _uiZ() exactly as the Markdown pane's resizer does.
+  // Keep the whole panel on screen where the viewport allows it; only fall back to
+  // "leave a grabbable strip" when the panel is wider than the window itself.
+  const bpClamp=(x,y,w,h,z)=>{
+    const vw=window.innerWidth/z, vh=window.innerHeight/z;
+    const maxX = vw-w-8, maxY = vh-h-8;
+    return { x: maxX>=8 ? Math.max(8, Math.min(maxX, x)) : Math.max(-(w-80), Math.min(vw-80, x)),
+             y: maxY>=8 ? Math.max(8, Math.min(maxY, y)) : Math.max(0, Math.min(vh-40, y)) };
+  };
+  // `moved` is sticky and matters: until the user actually drags the panel it stays
+  // anchored to the top right by CSS, and writing an absolute left here would pin it
+  // to a stale x that lands off screen the next time the window is a different size.
+  $$('.bp-head').addEventListener('mousedown',e=>{
+    if(e.target.closest('button')) return;          // the close button still closes
+    e.preventDefault();
+    const z=_uiZ(), r=panel.getBoundingClientRect();
+    const w=r.width/z, h=r.height/z;
+    let x=r.left/z, y=r.top/z;
+    panel.style.right='auto'; panel.style.left=x+'px'; panel.style.top=y+'px';
+    const sx=e.clientX, sy=e.clientY;
+    document.body.classList.add('bp-dragging');
+    const mv=ev=>{ const c=bpClamp(x+(ev.clientX-sx)/z, y+(ev.clientY-sy)/z, w, h, z);
+      panel.style.left=c.x+'px'; panel.style.top=c.y+'px'; };
+    const up=()=>{ window.removeEventListener('mousemove',mv); window.removeEventListener('mouseup',up);
+      document.body.classList.remove('bp-dragging'); };
+    window.addEventListener('mousemove',mv); window.addEventListener('mouseup',up);
+  });
+  // The panel always opens at the top-right anchor its CSS defines. Dragging and
+  // resizing last for as long as it is open and are deliberately not remembered:
+  // a stored position reopens at coordinates chosen for a different window size,
+  // and a stored height stops the panel growing when the API section expands.
+  try{ localStorage.removeItem(BP_GEOM_KEY); }catch(e){}
+  $$('.bp-copy').onclick=()=>{ const full=instr.value.trim()+'\n\n'+ta.value; navigator.clipboard?.writeText(full).then(()=>toast('Prompt copied'),()=>toast('Copy failed')); };
+  // Opening the API section drops any height the user set with the resize
+  // handle: the panel is otherwise stuck at that size and the new rows land in
+  // a scrolling strip. Width is kept. The CSS max-height (see .bp-expanded)
+  // still bounds the growth to the window.
+  $$('.bp-toggle').onclick=()=>{ const r=$$('.bp-run'); const show=r.style.display==='none';
+    r.style.display=show?'block':'none'; if(show) panel.style.height='';
+    panel.classList.toggle('bp-expanded',show); };
   const provSel=$$('.bp-provider'), modelIn=$$('.bp-model'), keyIn=$$('.bp-key');
   provSel.onchange=()=>{ const pv=provSel.value;
-    modelIn.value=localStorage.getItem('mindspark:llm:model:'+pv)||LLM_PROVIDERS[pv].defaultModel;
+    modelIn.value=llmModelFor(pv);
     keyIn.value=localStorage.getItem('mindspark:llm:key:'+pv)||''; };
+  // The warning above tells the user the key sits in localStorage; this is how
+  // they get it back out. Only the selected provider's key is removed.
+  $$('.bp-forget').onclick=()=>{ const pv=provSel.value;
+    localStorage.removeItem('mindspark:llm:key:'+pv); keyIn.value='';
+    toast('Key for '+LLM_PROVIDERS[pv].label+' removed from this browser'); };
   $$('.bp-send').onclick=async()=>{
     const pv=provSel.value, key=keyIn.value.trim(), mdl=modelIn.value.trim()||LLM_PROVIDERS[pv].defaultModel;
     if(!key){ toast('Enter an API key'); return; }
-    localStorage.setItem('mindspark:llm:provider',pv);
-    localStorage.setItem('mindspark:llm:model:'+pv,mdl);
-    localStorage.setItem('mindspark:llm:key:'+pv,key);
+    // Remember the choice for next time, but never let storage decide whether
+    // the request goes out: in a browser that blocks site data these throw,
+    // and the click used to die here with nothing on screen.
+    try{
+      localStorage.setItem('mindspark:llm:provider',pv);
+      localStorage.setItem('mindspark:llm:model:'+pv,mdl);
+      localStorage.setItem('mindspark:llm:key:'+pv,key);
+    }catch(e){ console.warn('LLM settings not remembered (storage blocked or full):', e.message); }
+    const full=instr.value.trim()+'\n\n'+ta.value;
     const res=$$('.bp-result'); res.style.display='block'; res.textContent='Running…';
     const send=$$('.bp-send'); send.disabled=true;
     try{
       const cfg=LLM_PROVIDERS[pv];
-      const r=await fetch(cfg.url,{method:'POST',headers:cfg.headers(key),body:cfg.body(mdl,$$('.bp-text').value)});
+      const r=await fetch(cfg.url,{method:'POST',headers:cfg.headers(key),body:cfg.body(mdl,full)});
       if(!r.ok){ const t=await r.text(); throw new Error('HTTP '+r.status+' - '+t.slice(0,200)); }
       const data=await r.json();
       const answer=cfg.extract(data)||'(empty response)';
       res.innerHTML='';
       const pre=document.createElement('div'); pre.className='bp-answer'; pre.textContent=answer;
+      if(cfg.truncated && cfg.truncated(data)){
+        const cut=document.createElement('div'); cut.className='bp-warn';
+        cut.textContent='\u26A0 The answer hit the '+LLM_MAX_TOKENS+'-token output limit and was cut off. Ask for a shorter answer, or run it on a smaller branch.';
+        res.appendChild(cut);
+        toast('Answer was cut off at the output limit');
+      }
       const acts=document.createElement('div'); acts.className='bp-answer-acts';
       const cp=document.createElement('button'); cp.textContent='Copy answer';
       cp.onclick=()=>navigator.clipboard?.writeText(answer).then(()=>toast('Answer copied'));
       const add=document.createElement('button'); add.className='primary'; add.textContent='Add as child nodes';
-      add.onclick=()=>{ addResponseAsNodes(nodeId, answer); panel.remove(); toast('Added to map'); };
+      add.onclick=()=>{ const n=addResponseAsNodes(nodeId, answer); closePanel(); toast(n ? 'Added '+n+' topic'+(n===1?'':'s')+' to the map' : 'Nothing to add'); };
       acts.appendChild(cp); acts.appendChild(add);
       res.appendChild(pre); res.appendChild(acts);
     }catch(e){
@@ -7285,24 +7603,49 @@ function showBuildPrompt(nodeId){
     } finally { send.disabled=false; }
   };
 }
-// Turn an LLM answer into child nodes under `parentId`. Top-level bullet/numbered
-// lines become separate children; otherwise the whole answer becomes one node.
+// Turn an LLM answer into a subtree under `parentId`. Answers come back as
+// Markdown far more often than not - headings, nested bullets, numbered steps,
+// **bold** and `code`, the odd table or fenced block - so the text goes through
+// the same parser the Markdown importer uses and lands on the canvas the way
+// that file would: headings become branches, indentation becomes nesting, and
+// inline markers become formatting instead of literal asterisks. The hand-rolled
+// bullet scan this replaces dropped every heading, flattened tab-indented
+// sub-bullets, and cut an answer with no bullets down to its first 60 characters.
+// Returns the number of nodes added.
 function addResponseAsNodes(parentId, answer){
-  if(!map || !map.nodes[parentId]) return;
-  const lines=answer.split('\n').map(l=>l.trim()).filter(Boolean);
-  const bullets=lines.filter(l=>/^([-*•]|\d+[.)])\s+/.test(l));
-  const mk=(text, notes)=>{
-    const id=uid();
-    map.nodes[id]={ id, text:text.slice(0,200), parent:parentId, x:0, y:0, side:null, color:'#fff', created:Date.now() };
-    if(notes) map.nodes[id].notes='<p>'+escapeHtml(notes).replace(/\n/g,'<br>')+'</p>';
+  if(!map || !map.nodes[parentId]) return 0;
+  const parent=map.nodes[parentId];
+  // The parser wraps the document in a root named after the "file"; when the
+  // answer has exactly one top-level item it promotes that item to root and
+  // drops the wrapper. A random marker tells the two cases apart without
+  // guessing from node shape.
+  const marker='ai-'+uid();
+  const parsed=parseMarkdownOutline(answer, marker);
+  const kids={};
+  for(const n of Object.values(parsed.nodes)) (kids[n.parent]||(kids[n.parent]=[])).push(n);
+  const pr=parsed.nodes[parsed.rootId];
+  const tops = pr.text===marker ? (kids[parsed.rootId]||[]) : [pr];
+  if(!tops.length) return 0;
+  // Sides: branches off the root alternate the way addNode() does; anything
+  // deeper inherits its parent's side so a branch stays on one side.
+  let rootKids = parentId===map.rootId ? childrenOf(map.rootId).length : 0;
+  let added=0;
+  const graft=(src, par, side)=>{
+    let id=uid(); while(map.nodes[id]) id=uid();
+    // Everything the parser worked out (notes, task, listType, html blocks,
+    // hlevel, style props) carries over; only identity and placement are ours.
+    const { id:_id, parent:_p, side:_s, x:_x, y:_y, ...rest }=src;
+    map.nodes[id]={ ...rest, id, parent:par, side, x:parent.x, y:parent.y, color:'#fff', created:Date.now() };
+    added++;
+    (kids[src.id]||[]).forEach(c=>graft(c, id, side));
   };
-  if(bullets.length>=2 && bullets.length>=lines.length*0.5){
-    bullets.forEach(b=>mk(b.replace(/^([-*•]|\d+[.)])\s+/,'')));
-  } else {
-    const title=lines[0]||'AI response';
-    mk(title.length>60?title.slice(0,60)+'…':title, answer);
+  for(const t of tops){
+    const side = parentId===map.rootId ? (rootKids++%2 ? 'left' : 'right') : (parent.side||'right');
+    graft(t, parentId, side);
   }
+  if(parent.collapsed) parent.collapsed=false;   // the user asked to see these
   autoLayout(); pushHistory(); scheduleSave();
+  return added;
 }
 
 /* ============================================================
@@ -7650,6 +7993,7 @@ function importFile(){
         else if(name.endsWith('.opml')||name.endsWith('.xml')) { m=parseOPML(t, f.name); }
         else { m=parseMarkdownOutline(t, f.name); }   // .md, .markdown, .txt
       }
+      m=sanitizeMapData(m);
       if(!m || !m.nodes || !m.rootId) throw new Error('No recognizable outline');
       // Start collapsed so the user sees a clean top-level overview (unless the
       // format already carries its own expand state, e.g. .gmind).
@@ -7907,7 +8251,10 @@ function parseMarkdownOutline(text, filename){
   const L = text.split('\n');
   const base = () => (subDepth!=null ? subDepth : lastHeadingDepth);   // current section container
   const stripWrap = x => x.replace(/^<(?:p|div|center|figure|picture|span|section|article)\b[^>]*>/i,'').replace(/<\/(?:p|div|center|figure|picture|span|section|article)>$/i,'').trim();
-  const nextIsBullet = from => { for(let k=from+1;k<L.length;k++){ if(!L[k].trim()) continue; return /^\s*(?:[-*+]|\d+\.)\s+/.test(L[k]); } return false; };
+  // List markers: -, *, + and a bullet character, or a number followed by "." or
+  // ")" - CommonMark allows both, and LLM answers use "1)" often enough to matter.
+  const BULLET_RE = /^(\s*)(?:[-*+•]|\d+[.)])\s+(.*)$/;
+  const nextIsBullet = from => { for(let k=from+1;k<L.length;k++){ if(!L[k].trim()) continue; return BULLET_RE.test(L[k]); } return false; };
   for(let i=0; i<L.length; i++){
     const line = L[i];
     // Fenced code block -> its own block child node of the nearest heading (renders the code)
@@ -7956,7 +8303,7 @@ function parseMarkdownOutline(text, filename){
     // A standalone image line -> attach to the current node (don't make a child)
     const imgLine = line.trim().match(IMG_LINE);
     if(imgLine){ attachCur(n=>{ n.image = imgLine[2]; if(imgLine[1]) n.imageAlt = imgLine[1]; }); continue; }
-    const bullet = line.match(/^(\s*)(?:[-*+]|\d+\.)\s+(.*)$/);
+    const bullet = line.match(BULLET_RE);
     if(bullet){
       const indent = bullet[1].replace(/\t/g, '  ').length;
       let body = bullet[2].trim(), task = null;
@@ -10883,11 +11230,15 @@ function styleConfigFor(style, raw){
 // Push the active style's config onto #viewport as inline custom properties,
 // which override the per-style CSS rules (inline beats attribute selectors).
 // Called on every render so load, style switches and theme changes all agree.
+// With no map open these three fall back to the defaults rather than returning
+// early: returning left the previous map's inline overrides (its font, its
+// paper and ink colours) on :root, so the empty canvas after deleting the last
+// map kept wearing that map's settings until the next load.
 function applyStyleConfigVars(){
   const vp = viewport;
-  if(!vp || !map) return;
-  const style = map.style || 'modern';
-  const cfg = { ...STYLE_CONFIG_DEFAULTS[style], ...((map.styleConfig || {})[style] || {}) };
+  if(!vp) return;
+  const style = (map && map.style) || 'modern';
+  const cfg = { ...STYLE_CONFIG_DEFAULTS[style], ...(((map && map.styleConfig) || {})[style] || {}) };
   vp.style.setProperty('--edge-width', cfg.edgeWidth);
   vp.style.setProperty('--edge-color', cfg.edgeColor || null);
   // Length vars need explicit units: a bare number is invalid for
@@ -10963,10 +11314,10 @@ function lookConfigFor(look, raw){
 // look switches and map loads all agree.
 function applyLookConfigVars(){
   const root = document.documentElement;
-  if(!root || !map) return;
+  if(!root) return;
   const look = root.getAttribute('data-look') || 'office';
   const defaults = LOOK_CONFIG_DEFAULTS[look] || LOOK_CONFIG_DEFAULTS.office;
-  const cfg = { ...defaults, ...((map.lookConfig || {})[look] || {}) };
+  const cfg = { ...defaults, ...(((map && map.lookConfig) || {})[look] || {}) };
   if(cfg.font){ root.style.setProperty('--sans', cfg.font); root.style.setProperty('--serif', cfg.font); }
   else { root.style.removeProperty('--sans'); root.style.removeProperty('--serif'); }
   if(cfg.nodeSize !== 1) root.style.setProperty('--look-node-size', cfg.nodeSize);
@@ -11079,7 +11430,7 @@ function themeConfigFor(theme, raw){
 // render so load, theme switches and map loads all agree.
 function applyThemeConfigVars(){
   const root = document.documentElement;
-  if(!root || !map) return;
+  if(!root) return;
   const theme = root.getAttribute('data-theme') || 'light';
   // A custom theme has no THEME_CONFIG_DEFAULTS entry - its own palette takes
   // that role, so the six config knobs still start from (and can tune) it.
@@ -11090,7 +11441,7 @@ function applyThemeConfigVars(){
       defaults = Object.fromEntries(Object.entries(THEME_CONFIG_VARS).map(([k,v])=>[k, custom.vars[v]]));
     } else defaults = THEME_CONFIG_DEFAULTS.light;
   }
-  const cfg = { ...defaults, ...((map.themeConfig || {})[theme] || {}) };
+  const cfg = { ...defaults, ...(((map && map.themeConfig) || {})[theme] || {}) };
   for(const key of Object.keys(THEME_CONFIG_VARS)){
     const v = cfg[key];
     if(v && typeof v === 'string') root.style.setProperty(THEME_CONFIG_VARS[key], v);
@@ -11553,6 +11904,31 @@ async function applyGrootFace(){
   if(u && (root.getAttribute('data-look')||'') === 'groot') root.style.setProperty('--groot-face', 'url("' + u + '")');
 }
 
+// ---- Per-look effect layer ----
+// Declared ahead of applyLook() and the boot call that runs it (further down,
+// at script evaluation time): LOOK_FX and _fxEl are const/let, and this block
+// used to sit at the very end of the file, so the boot call reached them in
+// their temporal dead zone. The ReferenceError was swallowed by the empty
+// catch around that call and only the module-end sync made the layer appear.
+// Some looks need one real element to animate. The motion itself is always a
+// CSS keyframe animation on transform/opacity (see styles.css) so it runs on
+// the compositor and costs no main-thread work; this only creates and removes
+// the element, so every other look carries no extra DOM. prefers-reduced-motion
+// is handled in CSS, which hides the layer.
+const LOOK_FX = { sailboat:'wave-layer' };
+let _fxEl=null, _fxClass=null;
+function _syncLookFx(){
+  const cls = LOOK_FX[document.documentElement.getAttribute('data-look')||'office'] || null;
+  if(cls === _fxClass) return;                 // nothing to do on most look changes
+  if(_fxEl){ _fxEl.remove(); _fxEl=null; }
+  _fxClass = cls;
+  if(cls){
+    _fxEl=document.createElement('div');
+    _fxEl.className=cls;
+    stage.appendChild(_fxEl);
+  }
+}
+
 function applyLook(id){
   if(id && id!=='office') document.documentElement.setAttribute('data-look', id);
   else document.documentElement.removeAttribute('data-look');
@@ -11739,7 +12115,7 @@ function _activateTab(i){
   flushPendingSave();
   map=t.map; sel=map.rootId;
   const _imported=!!map._import; if(_imported) delete map._import;
-  history=[JSON.stringify({nodes:map.nodes,rootId:map.rootId,title:map.title,color:map.color})];
+  history=[historySnapshot()];
   hpos=0; updateUndo();
   $('#mapTitle').value=map.title;
   _tabActive=i;
@@ -12393,9 +12769,11 @@ function applyMapLayout(id){
 let themePanel=null;
 function closeThemePanel(){ if(themePanel){ themePanel.remove(); themePanel=null; } }
 function buildSwatchHTML(t){
-  return `<span class="theme-thumb" style="background:${t.swatch[0]}">
-            <span class="t1" style="background:${t.swatch[1]}"></span>
-            <span class="t2" style="background:${t.swatch[2]}"></span>
+  // Built-in swatches are hex, but a custom theme's come from pasted JSON, so
+  // they are escaped like any other untrusted attribute value.
+  return `<span class="theme-thumb" style="background:${escapeHtml(t.swatch[0])}">
+            <span class="t1" style="background:${escapeHtml(t.swatch[1])}"></span>
+            <span class="t2" style="background:${escapeHtml(t.swatch[2])}"></span>
           </span>`;
 }
 function buildLookThumb(l){
@@ -12819,7 +13197,7 @@ try{
   if(saved) applyTheme(saved);
   else applyTheme(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 }catch(e){}
-try{ applyLook(localStorage.getItem('mindspark:look') || 'office'); }catch(e){}
+try{ applyLook(localStorage.getItem('mindspark:look') || 'office'); }catch(e){ console.warn('look could not be applied at boot:', e); }
 try{ if(localStorage.getItem('mindspark:zenPinned')==='1') document.body.classList.add('zen-pinned'); }catch(e){}
 try{ applyUiLayout(localStorage.getItem('mindspark:uiLayout') || 'modern'); }catch(e){}   // app shell layout (Modern bars / Classic floating)
 
@@ -13316,15 +13694,64 @@ function showUserPill(){
 // ============================================================
 // OPTIONAL GitHub OAuth ("Sign in with GitHub") - second cloud login option.
 // Leave these blank to keep the app fully static/no-backend: only the personal
-// access token (PAT) flow shows. Set both to enable the OAuth button as well:
+// access token (PAT) flow shows. Set all three to enable the OAuth button:
 //   clientId  : your GitHub OAuth App client_id (public)
 //   workerUrl : the deployed Cloudflare Worker base URL (holds the client_secret
 //               and does the code->token exchange). See /worker.
+//   appOrigin : the origin of the page the worker is allowed to hand the token
+//               to - the same value as the worker's ALLOWED_ORIGIN.
+//
+// The values below are the maintainer's live deployment. They are harmless to
+// ship because appOrigin pins them to that one origin: a fork on its own
+// domain, a self-hosted copy or localhost sees the token flow only, until its
+// deployer sets all three to their own worker. Before that gate existed, any
+// such copy showed a working-looking button that sent the user to authorize
+// this OAuth App with scope=repo and routed the resulting token through this
+// worker, which then delivered it to an origin the opener was not - so the
+// browser dropped it and the overlay just sat there (issue #43).
 // ============================================================
-const GH_OAUTH = { clientId: 'Ov23liCukvrI3Zs9p3Px', workerUrl: 'https://mindspark-oauth.githubpage.workers.dev/' };
+const GH_OAUTH = {
+  clientId: 'Ov23liCukvrI3Zs9p3Px',
+  workerUrl: 'https://mindspark-oauth.githubpage.workers.dev/',
+  appOrigin: 'https://mindspark.githubpage.workers.dev'
+};
 function oauthConfigured(){
   if(/(^|\.)github\.io$/.test(location.hostname)) return false;
-  return !!(GH_OAUTH.clientId && GH_OAUTH.workerUrl);
+  if(!(GH_OAUTH.clientId && GH_OAUTH.workerUrl && GH_OAUTH.appOrigin)) return false;
+  let allowed; try{ allowed = new URL(GH_OAUTH.appOrigin).origin; }catch(e){ return false; }
+  return allowed === location.origin;
+}
+// The popup normally reports back by postMessage before it closes itself. If it
+// closes and nothing arrives, the worker handed the token to some other origin
+// (its ALLOWED_ORIGIN is not this page) or its result page never ran. Either
+// way the user has just authorized the OAuth App on their account and would
+// otherwise watch the overlay sit there unchanged. `isPending` is the message
+// handler's view: it clears the state nonce when a result lands, so the nonce
+// surviving past the popup's close is the signal that nothing came back.
+// Timers are injectable so the test can drive it.
+function watchOauthPopup(pop, isPending, onSilent, T){
+  if(!pop) return;
+  const timers = T || { setInterval, clearInterval, setTimeout };
+  const started = Date.now();
+  const tick = timers.setInterval(()=>{
+    let closed = false; try{ closed = !!pop.closed; }catch(e){ closed = true; }
+    if(!closed && Date.now() - started < 10*60*1000) return;   // still going, or the user walked away
+    timers.clearInterval(tick);
+    if(!closed) return;
+    // A little grace: the popup posts and then closes 400 ms later, but the
+    // message can still be in flight when `closed` first reads true.
+    timers.setTimeout(()=>{ if(isPending()) onSilent(); }, 1500);
+  }, 500);
+}
+function showOauthSilentFailure(){
+  const err=$('#ghError'); if(!err) return;
+  let workerHost=''; try{ workerHost=new URL(GH_OAUTH.workerUrl).host; }catch(e){}
+  err.textContent='GitHub returned, but this page never received the sign-in result: the OAuth worker ('
+    + workerHost + ') is not set up to deliver to ' + location.origin
+    + ' (its ALLOWED_ORIGIN). Use a token below instead. If you authorised the app, you can revoke it at ';
+  const a=document.createElement('a'); a.href='https://github.com/settings/applications'; a.target='_blank'; a.rel='noopener';
+  a.textContent='github.com/settings/applications'; err.appendChild(a); err.appendChild(document.createTextNode('.'));
+  console.warn('OAuth popup closed without a result. GH_OAUTH.appOrigin and the worker\'s ALLOWED_ORIGIN must both be', location.origin);
 }
 // Live collaboration & cloud share rely on the Cloudflare worker, whose CORS/origin
 // is bound to the deployed app - they can't work from local (server-mode) hosting
@@ -13350,6 +13777,19 @@ let _pendingSharedLink = null;
 function repoTargetFor(forgeId){
   const el=repoFieldFor(forgeId);
   return (el && el.value.trim()) || DEFAULT_REPO;
+}
+// The repository field lives in a collapsed <details> so the sign-in card opens
+// on the button, not on a setting. Two things keep a custom target from being
+// hidden by that: the summary carries the current value at all times, and the
+// section opens itself whenever the value is not the deployment default.
+function syncRepoDetails(el){
+  const det = el && el.closest ? el.closest('details.login-repo') : null; if(!det) return;
+  const cur = det.querySelector('.repo-current');
+  const value = ()=> (el.value||'').trim() || DEFAULT_REPO;
+  const show = ()=>{ if(cur) cur.textContent = value(); };
+  show();
+  if(!el._repoSynced){ el._repoSynced = true; el.addEventListener('input', show); }
+  if(value() !== DEFAULT_REPO) det.open = true;
 }
 function repoFieldFor(forgeId){
   return $({github:'#ghRepo', gitea:'#giteaRepo', gitlab:'#glRepo'}[forgeId] || '');
@@ -13386,7 +13826,8 @@ function startGithubLogin(){
     + '&state='        + encodeURIComponent(rnd);
   const w=620,h=720, left=Math.max(0,(screen.width-w)/2), top=Math.max(0,(screen.height-h)/2);
   const pop = window.open(url, 'mindspark_github_oauth', `width=${w},height=${h},left=${left},top=${top}`);
-  if(!pop && err) err.textContent = 'Popup blocked - allow popups for this site, or use a token below.';
+  if(!pop){ if(err) err.textContent = 'Popup blocked - allow popups for this site, or use a token below.'; return; }
+  watchOauthPopup(pop, ()=>{ try{ return localStorage.getItem('mindspark:oauth:state')===rnd; }catch(e){ return false; } }, showOauthSilentFailure);
 }
 
 // ============================================================
@@ -13592,8 +14033,9 @@ function showLoginOverlay(opts){
   const savedForgeId=localStorage.getItem('mindspark:forge');
   const savedRepo=localStorage.getItem('mindspark:forge:repo');
   for(const id of Object.keys(FORGES)){
-    const el=repoFieldFor(id); if(!el || el.value) continue;
-    el.value = (id===savedForgeId && savedRepo) ? savedRepo : DEFAULT_REPO;
+    const el=repoFieldFor(id); if(!el) continue;
+    if(!el.value) el.value = (id===savedForgeId && savedRepo) ? savedRepo : DEFAULT_REPO;
+    syncRepoDetails(el);
   }
 
   // One sign-in path for every pane - only the inputs differ.
@@ -13790,10 +14232,10 @@ async function tryEnterSharedView(){
   catch(e){ console.error('bad share link',e); return false; }
   READONLY=true;
   document.body.classList.add('shared-view');
-  map={ id:'shared', title:payload.title||'Shared map', color:payload.color||'#e0613a',
+  map=sanitizeMapData({ id:'shared', title:payload.title||'Shared map', color:payload.color||'#e0613a',
         style:payload.style, layout:payload.layout, rootId:payload.rootId,
         nodes:payload.nodes||{}, links:payload.links||[], vars:payload.vars||{},
-        layoutConfig:payload.layoutConfig, styleConfig:payload.styleConfig, lookConfig:payload.lookConfig };
+        layoutConfig:payload.layoutConfig, styleConfig:payload.styleConfig, lookConfig:payload.lookConfig });
   sel=null;
   $('#mapTitle').value=map.title; $('#mapTitle').readOnly=true;
   // Grow the title <input> to fit the whole title (it clips to its width) so a
@@ -13836,9 +14278,9 @@ async function consumePendingImport(){
   try{ sessionStorage.removeItem('mindspark:pendingImport'); }catch(e){}
   let p; try{ p=JSON.parse(raw); }catch(e){ return false; }
   const id=uid();
-  map={ id, title:(p.title||'Shared map')+' (copy)', titleAuto:false, color:p.color||'#e0613a',
+  map=sanitizeMapData({ id, title:(p.title||'Shared map')+' (copy)', titleAuto:false, color:p.color||'#e0613a',
         style:p.style, layout:p.layout, rootId:p.rootId, nodes:p.nodes||{},
-        links:p.links||[], vars:p.vars||{}, updated:Date.now() };
+        links:p.links||[], vars:p.vars||{}, updated:Date.now() });
   sel=map.rootId; history=[]; hpos=-1; pushHistory();
   $('#mapTitle').value=map.title;
   render(); fit();
@@ -13944,6 +14386,7 @@ const Collab = (function(){
       if(s.color) map.color=s.color;
       if(s.links) map.links=clone(s.links);
       if(s.layout) map.layout=s.layout;
+      sanitizeMapData(map);              // a peer's snapshot is as untrusted as a share link
       if(s.vars)  map.vars=clone(s.vars);
       if('style' in s) map.style=s.style;
       shadow=snap();
@@ -14338,6 +14781,7 @@ function adoptCloudMerged(merged){
   if(merged.color) map.color=merged.color;
   if(merged.rootId) map.rootId=merged.rootId;
   if(merged.layout) map.layout=merged.layout;
+  sanitizeMapData(map);                  // the room's copy is as untrusted as a share link
   if('style' in merged) map.style=merged.style;
   if(merged.vars) map.vars=merged.vars;
   sel = (selId && map.nodes[selId]) ? map.nodes[selId] : null;
@@ -14467,9 +14911,9 @@ function _applySharedMap(id, token, data){
   document.body.classList.remove('cloud-edit','shared-view');
   document.body.classList.add(editable?'cloud-edit':'shared-view');
   document.body.classList.add('no-banner');   // compact themed pill instead of a full-width banner
-  map={ id:'shared-'+id, title:data.title||'Shared map', color:data.color||'#e0613a',
+  map=sanitizeMapData({ id:'shared-'+id, title:data.title||'Shared map', color:data.color||'#e0613a',
         style:data.style, layout:data.layout||'balanced', rootId:data.rootId,
-        nodes:data.nodes||{}, links:data.links||[], vars:data.vars||{} };
+        nodes:data.nodes||{}, links:data.links||[], vars:data.vars||{} });
   map._cloudView=id;
   map._opening=true;                 // opening a shared map isn't an edit - suppress the save pill until it settles
   if(editable){ map._cloudEdit={ id, token }; }
@@ -14678,26 +15122,6 @@ async function loadQotd(){
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', loadQotd);
 else loadQotd();
 
-// ---- Per-look effect layer ----
-// Some looks need one real element to animate. The motion itself is always a
-// CSS keyframe animation on transform/opacity (see styles.css) so it runs on
-// the compositor and costs no main-thread work; this only creates and removes
-// the element, so every other look carries no extra DOM. prefers-reduced-motion
-// is handled in CSS, which hides the layer.
-const LOOK_FX = { sailboat:'wave-layer' };
-let _fxEl=null, _fxClass=null;
-function _syncLookFx(){
-  const cls = LOOK_FX[document.documentElement.getAttribute('data-look')||'office'] || null;
-  if(cls === _fxClass) return;                 // nothing to do on most look changes
-  if(_fxEl){ _fxEl.remove(); _fxEl=null; }
-  _fxClass = cls;
-  if(cls){
-    _fxEl=document.createElement('div');
-    _fxEl.className=cls;
-    stage.appendChild(_fxEl);
-  }
-}
-_syncLookFx();
 
 (async()=>{
   // The inline <head> script guesses the auto scale before any page content exists,
