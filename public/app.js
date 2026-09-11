@@ -448,7 +448,77 @@ const CloudStore = {
   // every existing session survives this change without a migration step.
   _tokenKey(f=this.forge){ return f.id==='github' ? 'mindspark:gh:token' : 'mindspark:'+f.id+':token'; },
 
-  _headers(t=this.token){ return this.forge.headers(t); },
+  _refreshKey(f=this.forge){ return 'mindspark:'+f.id+':refresh'; },
+  // Every forge request goes through here. It attaches the credential and, when
+  // the forge answers 401 for the SESSION token, refreshes that token once and
+  // repeats the request - so a two-hour OAuth expiry is invisible to the user.
+  // A candidate token named explicitly (sign-in probing what the user typed) is
+  // never refreshed: a rejected token there is simply invalid.
+  async _fetch(url, init={}, token){
+    const session = token===undefined;
+    // A dead session sends nothing: an operation already under way when the
+    // session ended has fallbacks (re-read, merge, retry) that would otherwise
+    // keep knocking with no credential at all.
+    if(session && this.sessionExpired) throw this._deadSession();
+    const t0 = session ? this.token : token;
+    const send=(t)=>fetch(url,{...init, headers:{...this.forge.headers(t), ...(init.headers||{})}});
+    let r=await send(t0);
+    if(r.status===401 && session && t0){
+      // Another request in the same burst may have rotated the token already;
+      // then the retry needs no grant of its own.
+      const ok = this.token!==t0 || await this._refreshOnce(t0);
+      if(ok) r=await send(this.token);
+      else if(this.sessionExpired) throw this._deadSession();
+    }
+    return r;
+  },
+  _deadSession(){
+    const e=new Error('Your session expired - sign in again (HTTP 401)');
+    e.status=401; e.sessionExpired=true; return e;
+  },
+  // Memoised: requests that fail together share ONE grant. The pair rotates on
+  // GitLab, so a second concurrent grant with the same refresh token would be
+  // refused - and would log the user out for no reason.
+  _refreshOnce(stale){
+    if(!this._refreshing){
+      this._refreshing=this._refresh(stale).finally(()=>{ this._refreshing=null; });
+    }
+    return this._refreshing;
+  },
+  async _refresh(stale){
+    if(this.token!==stale) return true;
+    let rec=null; try{ rec=JSON.parse(localStorage.getItem(this._refreshKey())||'null'); }catch(e){}
+    const o=this.forge.oauth;
+    // No refresh token (an access token pasted by hand) and the forge refuses
+    // the one we have: the session is over, not merely interrupted.
+    if(!rec || !rec.token || !o){ this._sessionExpired(); return false; }
+    const params={grant_type:'refresh_token', refresh_token:rec.token, client_id:rec.clientId,
+      redirect_uri:new URL('oauth-callback.html', location.href).href};
+    const form = o.bodyFormat==='form';
+    let r=null;
+    try{
+      r=await fetch(o.tokenUrl(this.instance),{
+        method:'POST',
+        headers:{'Content-Type': form ? 'application/x-www-form-urlencoded' : 'application/json'},
+        body: form ? new URLSearchParams(params).toString() : JSON.stringify(params)
+      });
+    }catch(e){ return false; }                     // offline: nothing is known yet, keep the session
+    let d=null; if(r.ok){ try{ d=await r.json(); }catch(e){} }
+    if(!d || !d.access_token){
+      if(r.status>=400 && r.status<500) this._sessionExpired();   // the grant itself was refused
+      return false;
+    }
+    this.token=d.access_token;
+    this._setItemSafe(this._tokenKey(), this.token);
+    this._setItemSafe(this._refreshKey(), JSON.stringify({token:d.refresh_token||rec.token, clientId:rec.clientId}));
+    return true;
+  },
+  // The session cannot be repaired. Forget it, and let the app take the user
+  // back to sign-in with the honest reason instead of "map not found".
+  _sessionExpired(){
+    this._forgetSession(); this.sessionExpired=true;
+    if(typeof this.onSessionExpired==='function'){ try{ this.onSessionExpired(); }catch(e){} }
+  },
   // Base64 helpers safe for UTF-8 (atob/btoa are Latin-1 only)
   _encode(s){ return btoa(unescape(encodeURIComponent(s))); },
   _decode(s){ return decodeURIComponent(escape(atob(s.replace(/\n/g,'')))); },
@@ -496,7 +566,7 @@ const CloudStore = {
         + 'Add that origin to connect-src in public/index.html, public/_headers and server.js, then redeploy.');
     }
     let r;
-    try{ r=await fetch(this._api('/user'),{headers:this._headers(t)}); }
+    try{ r=await this._fetch(this._api('/user'),{},t); }
     catch(e){
       throw new Error('Could not reach '+(this.instance||this.forge.label)+'. Check the address, that the instance is reachable from this browser, and that it allows cross-origin API requests from '+location.origin+'.');
     }
@@ -519,26 +589,34 @@ const CloudStore = {
     const t=localStorage.getItem(this._tokenKey());
     if(!t) return false;
     try{
-      this.user=await this._verify(t);
-      this.token=t;
+      // Adopted as THE session token before it is probed, so that a token which
+      // expired while the tab was closed is refreshed like any other - not
+      // treated as a wrong one and thrown away.
+      this.token=t; this.sessionExpired=false;
+      this.user=await this._verify();
       await this._ensureRepo();
       await this._loadIndex();
       await this._loadDeleted();
       return true;
     }catch(e){
       console.warn('Stored '+this.forge.label+' token rejected:', e.message);
+      this.token=null; this.user=null;
       localStorage.removeItem(this._tokenKey());
       return false;
     }
   },
-  async login(token, forgeId, instance, repoTarget){
+  // `refresh` is {token, clientId} from a PKCE exchange; a pasted access token
+  // has none, and then the session simply ends when the forge stops taking it.
+  async login(token, forgeId, instance, repoTarget, refresh){
     this._useForge(forgeId || DEFAULT_FORGE, instance);
     this._useRepo(repoTarget);
     this.user=await this._verify(token);
-    this.token=token;
+    this.token=token; this.sessionExpired=false;
     if(!this._setItemSafe(this._tokenKey(), token)){
       throw new Error('Signed in, but could not save your session locally - your browser\'s storage is full. Try clearing site data for this page and signing in again.');
     }
+    if(refresh && refresh.token) this._setItemSafe(this._refreshKey(), JSON.stringify({token:refresh.token, clientId:refresh.clientId||''}));
+    else localStorage.removeItem(this._refreshKey());
     // Recorded only after the token itself is stored, so a half-written session
     // can never point tryInit() at a forge whose token failed to persist.
     this._setItemSafe('mindspark:forge', this.forge.id);
@@ -550,12 +628,17 @@ const CloudStore = {
     await this._loadDeleted();
     return this.user;
   },
-  logout(){
-    const key=this._tokenKey();
+  // The credentials and everything read with them. Which host and project the
+  // user was on stays: an expired session reopens sign-in right there.
+  _forgetSession(){
     this.token=null; this.user=null; this.branch=null;
     this.shas={}; this.indexSha=null; this.index=[];
     this.deleted=[]; this.deletedSha=null;
-    localStorage.removeItem(key);
+    localStorage.removeItem(this._tokenKey());
+    localStorage.removeItem(this._refreshKey());
+  },
+  logout(){
+    this._forgetSession();
     localStorage.removeItem('mindspark:forge');
     localStorage.removeItem('mindspark:forge:instance');
     localStorage.removeItem('mindspark:forge:repo');
@@ -569,7 +652,7 @@ const CloudStore = {
   // happily, so those users get the one-step flow. Either way we still attempt
   // the create and report which case the user is actually in.
   async _ensureRepo(){
-    const r=await fetch(this.forge.repoUrl(this._ref()),{headers:this._headers()});
+    const r=await this._fetch(this.forge.repoUrl(this._ref()));
     if(r.status===404 && this.repoOwner){
       // A shared project belongs to a group or another account: creating one
       // would land under the user instead, silently splitting the team. So it
@@ -578,9 +661,8 @@ const CloudStore = {
         + 'Ask its owner to create it and give you write access, or check the spelling, then sign in again.');
     }
     if(r.status===404){
-      const cr=await fetch(this._api(this.forge.createRepoPath),{
-        method:'POST',
-        headers:{...this._headers(),'Content-Type':'application/json'},
+      const cr=await this._fetch(this._api(this.forge.createRepoPath),{
+        method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify(this.forge.createRepoBody(this.repo))
       });
       if(!cr.ok){
@@ -614,7 +696,7 @@ const CloudStore = {
   },
   // Raw read of _index.json (updates indexSha). Returns [] on 404 or parse error.
   async _fetchIndexRaw(){
-    const r=await fetch(this.forge.contentsUrl(this._ref(), '_index.json'),{headers:this._headers()});
+    const r=await this._fetch(this.forge.contentsUrl(this._ref(), '_index.json'));
     if(r.status===404){ this.indexSha=null; return []; }
     if(!r.ok) throw new Error('Could not load index (HTTP '+r.status+')');
     const data=await r.json(); this.indexSha=this.forge.readVersion(data);
@@ -625,7 +707,7 @@ const CloudStore = {
   // map file (e.g. a delete whose file-removal failed) is never resurrected.
   async _loadDeleted(){
     try{
-      const r=await fetch(this.forge.contentsUrl(this._ref(), '_deleted.json'),{headers:this._headers()});
+      const r=await this._fetch(this.forge.contentsUrl(this._ref(), '_deleted.json'));
       if(!r.ok){ this.deleted=[]; this.deletedSha=null; return; }
       const data=await r.json(); this.deletedSha=this.forge.readVersion(data);
       const a=JSON.parse(this._decode(data.content)); this.deleted=Array.isArray(a)?a:[];
@@ -662,7 +744,7 @@ const CloudStore = {
   async _refreshVersions(paths){
     const out={};
     for(const path of paths){
-      const r=await fetch(this.forge.contentsUrl(this._ref(), path),{headers:this._headers()});
+      const r=await this._fetch(this.forge.contentsUrl(this._ref(), path));
       if(r.status===404){ out[path]={exists:false, version:null}; this._setVersion(path, null); continue; }
       if(!r.ok) throw new Error('Could not re-read '+path+' (HTTP '+r.status+')');
       const v=this.forge.readVersion(await r.json());
@@ -685,8 +767,7 @@ const CloudStore = {
     }
     const body=this.forge.commitBody(this._ref(), message,
       actions.map(a=>({...a, encoded: a.action==='delete' ? null : this._encode(a.content)})));
-    const r=await fetch(this.forge.commitUrl(this._ref()),{
-      method:'POST', headers:{...this._headers(),'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const r=await this._fetch(this.forge.commitUrl(this._ref()),{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
     if(!r.ok){
       const t=await r.text();
       const e=new Error('Commit failed on '+this.forge.label+' (HTTP '+r.status+') '+t.slice(0,140));
@@ -724,7 +805,7 @@ const CloudStore = {
   },
   // List map ids present in the maps/ folder.
   async _listMapFiles(){
-    const r=await fetch(this.forge.treeUrl(this._ref(), 'maps'),{headers:this._headers()});
+    const r=await this._fetch(this.forge.treeUrl(this._ref(), 'maps'));
     if(r.status===404) return [];
     if(!r.ok) throw new Error('Could not list maps (HTTP '+r.status+')');
     return this.forge.treeFiles(await r.json()).filter(n=>/\.json$/.test(n)).map(n=>n.replace(/\.json$/,''));
@@ -739,7 +820,7 @@ const CloudStore = {
     const out=[];
     for(const id of ids){
       try{
-        const r=await fetch(this.forge.contentsUrl(this._ref(), `maps/${id}.json`),{headers:this._headers()});
+        const r=await this._fetch(this.forge.contentsUrl(this._ref(), `maps/${id}.json`));
         if(!r.ok) continue;
         const data=await r.json(); this.shas[id]=this.forge.readVersion(data);
         const m=JSON.parse(this._decode(data.content));
@@ -772,15 +853,14 @@ const CloudStore = {
     const url=this.forge.writeUrl(this._ref(), path);
     const readUrl=this.forge.contentsUrl(this._ref(), path);
     const encoded=this._encode(content);
-    const send=(method, extra)=>fetch(url,{
-      method, headers:{...this._headers(),'Content-Type':'application/json'},
+    const send=(method, extra)=>this._fetch(url,{method, headers:{'Content-Type':'application/json'},
       body:JSON.stringify(this.forge.writeBody(this._ref(), path, encoded, extra.sha))
     });
     // A create must not carry a sha at all: Forgejo's CreateFileOptions has no
     // such property and rejects the request rather than ignoring it.
     let r = sha ? await send('PUT',{sha}) : await send(this.forge.createFileMethod,{});
     if(!r.ok && (r.status===409 || r.status===422 || r.status===404)){
-      const cur=await fetch(readUrl,{headers:this._headers()});
+      const cur=await this._fetch(readUrl);
       if(cur.status===404){
         r = await send(this.forge.createFileMethod,{});     // it really is new
       } else if(cur.ok){
@@ -796,12 +876,12 @@ const CloudStore = {
   },
   async _deleteFile(path, sha){
     const url=this.forge.writeUrl(this._ref(), path);
-    const del=(s)=>fetch(url,{method:'DELETE', headers:{...this._headers(),'Content-Type':'application/json'},
+    const del=(s)=>this._fetch(url,{method:'DELETE', headers:{'Content-Type':'application/json'},
       body:JSON.stringify(this.forge.deleteBody(this._ref(), path, s))});
     let r=await del(sha);
     if(r.ok || r.status===404) return;            // deleted, or already gone
     if(r.status===409 || r.status===422){          // missing/stale sha → refresh and retry
-      const cur=await fetch(this.forge.contentsUrl(this._ref(), path),{headers:this._headers()});
+      const cur=await this._fetch(this.forge.contentsUrl(this._ref(), path));
       if(cur.status===404) return;
       if(cur.ok){ const d=await cur.json(); const r2=await del(this.forge.readVersion(d)); if(r2.ok||r2.status===404) return; r=r2; }
     }
@@ -828,7 +908,7 @@ const CloudStore = {
   async list(){ return this.index.slice(); },
   async get(id){
     try{
-      const r=await fetch(this.forge.contentsUrl(this._ref(), `maps/${id}.json`),{headers:this._headers()});
+      const r=await this._fetch(this.forge.contentsUrl(this._ref(), `maps/${id}.json`));
       if(r.status===404){ const b=this._localBackup(id); if(b) return b; return null; }
       if(!r.ok) throw new Error('Could not load map (HTTP '+r.status+')');
       const data=await r.json();
@@ -852,7 +932,7 @@ const CloudStore = {
   // then a raw download URL); each is tried in order until one answers.
   async _readLargeBlob(data){
     for(const src of this.forge.blobSources(this._ref(), data)){
-      const br=await fetch(src.url,{headers:this._headers()});
+      const br=await this._fetch(src.url);
       if(!br.ok) continue;
       if(!src.json) return await br.text();          // raw file text - already decoded
       const blob=await br.json();
@@ -886,35 +966,44 @@ const CloudStore = {
   },
   async remove(id){
     const path=`maps/${id}.json`;
+    // Nothing is forgotten locally until the forge has agreed: a delete that
+    // fails (expired session, outage) must leave the map exactly where it was,
+    // not hidden from the list with a tombstone that says it is gone.
+    const prevIndex=this.index, prevDeleted=this.deleted;
     this.index=this.index.filter(m=>m.id!==id);
-    if(!this.deleted.includes(id)) this.deleted.push(id);   // tombstone: never resurrect
-    try{ localStorage.removeItem('mindspark:backup:'+id); }catch(e){}
-    await this._mergedIndex();
-    await this._mergedDeleted();
-    // File removal, tombstone and index in one commit. A never-opened map has
-    // no cached version: the delete goes out unlocked, and if the file turns
-    // out not to exist the retry simply drops that action.
-    await this._commitMerged(`MindSpark: delete ${path}`, (fresh)=>{
-      const acts=[];
-      const gone = fresh && fresh[path] && !fresh[path].exists;
-      if(!gone) acts.push({action:'delete', path, version:this._versionOf(path)||null});
-      acts.push(this._action('_deleted.json', JSON.stringify(this.deleted)));
-      acts.push(this._action('_index.json', JSON.stringify(this.index)));
-      return acts;
-    }, null);
+    this.deleted=this.deleted.includes(id) ? this.deleted.slice() : [...this.deleted, id];   // tombstone: never resurrect
+    try{
+      await this._mergedIndex();
+      await this._mergedDeleted();
+      // File removal, tombstone and index in one commit. A never-opened map has
+      // no cached version: the delete goes out unlocked, and if the file turns
+      // out not to exist the retry simply drops that action.
+      await this._commitMerged(`MindSpark: delete ${path}`, (fresh)=>{
+        const acts=[];
+        const gone = fresh && fresh[path] && !fresh[path].exists;
+        if(!gone) acts.push({action:'delete', path, version:this._versionOf(path)||null});
+        acts.push(this._action('_deleted.json', JSON.stringify(this.deleted)));
+        acts.push(this._action('_index.json', JSON.stringify(this.index)));
+        return acts;
+      }, null);
+    }catch(e){
+      this.index=prevIndex; this.deleted=prevDeleted;
+      throw e;
+    }
     delete this.shas[id];
+    try{ localStorage.removeItem('mindspark:backup:'+id); }catch(e){}
   },
   // Version history = the forge's commit history for the map's JSON file.
   async history(id){
     try{
-      const r=await fetch(this.forge.commitsUrl(this._ref(), `maps/${id}.json`, 50),{headers:this._headers()});
+      const r=await this._fetch(this.forge.commitsUrl(this._ref(), `maps/${id}.json`, 50));
       if(!r.ok) return [];
       return this.forge.parseCommits(await r.json());
     }catch(e){ console.warn('history', e); return []; }
   },
   async version(id, ref){
     try{
-      const r=await fetch(this.forge.contentsUrl(this._ref(), `maps/${id}.json`, ref),{headers:this._headers()});
+      const r=await this._fetch(this.forge.contentsUrl(this._ref(), `maps/${id}.json`, ref));
       if(!r.ok) return null;
       const data=await r.json();
       const json = this.forge.isInlined(data) ? this._decode(data.content) : await this._readLargeBlob(data);
@@ -6547,7 +6636,10 @@ function openRowMenu(btn, m){
   pop.querySelector('[data-a="dup"]').onclick=ev=>{ ev.stopPropagation(); closeRowMenu(); duplicateMap(m.id); };
   pop.querySelector('[data-a="del"]').onclick=async ev=>{ ev.stopPropagation(); closeRowMenu();
     if(!confirm('Delete "'+(m.title||'Untitled')+'"?')) return;
-    await Store.remove(m.id);
+    // The store keeps the map listed until the forge has agreed, so a failure
+    // here leaves everything as it was - and must be said, not implied away.
+    try{ await Store.remove(m.id); }
+    catch(e){ toast('Could not delete the map: '+((e && e.message) || e)); return; }
     if(map && map.id===m.id){ map=null; render(); }
     refreshList(); toast('Map deleted');
   };
@@ -13795,8 +13887,8 @@ function repoFieldFor(forgeId){
   return $({github:'#ghRepo', gitea:'#giteaRepo', gitlab:'#glRepo'}[forgeId] || '');
 }
 
-async function completeCloudLogin(token, forgeId, instance){
-  await CloudStore.login(token, forgeId, instance, repoTargetFor(forgeId||DEFAULT_FORGE));
+async function completeCloudLogin(token, forgeId, instance, refresh){
+  await CloudStore.login(token, forgeId, instance, repoTargetFor(forgeId||DEFAULT_FORGE), refresh);
   const ov=$('#loginOverlay'); if(ov) ov.style.display='none';
   showUserPill();
   await proceedBoot();
@@ -13805,6 +13897,14 @@ async function completeCloudLogin(token, forgeId, instance){
     try{ await openSharedInPlace(s.id, s.token); }catch(e){ console.warn('open shared after login failed:', e); }
   }
 }
+
+// A session the store could not refresh (its access token is rejected and the
+// refresh grant is refused, or there is none) ends here: back to sign-in, with
+// the reason. Signing in again boots the workspace as a fresh sign-in does.
+CloudStore.onSessionExpired = ()=>{
+  const pill=$('#userPill'); if(pill) pill.style.display='none';
+  showLoginOverlay({expired:true});
+};
 
 // Open GitHub's authorize page in a popup. The Worker callback posts the token
 // back to this window (see the message listener below).
@@ -13960,7 +14060,9 @@ async function finishForgeLogin(code, state){
   }
   const d=await r.json();
   if(!d || !d.access_token) return say('The instance returned no access token.');
-  try{ await completeCloudLogin(d.access_token, saved.forgeId, saved.instance); }
+  // The refresh token goes with it: the access token GitLab hands out here
+  // lives two hours, and the store uses the pair to carry on past that.
+  try{ await completeCloudLogin(d.access_token, saved.forgeId, saved.instance, {token:d.refresh_token, clientId:saved.clientId}); }
   catch(e){ say(e.message || String(e)); }
 }
 
@@ -14005,6 +14107,7 @@ function showLoginOverlay(opts){
   const note=$('#loginShareNote');
   if(note){
     if(opts && opts.shared){ note.textContent='This map was shared with you. Sign in to open it.'; note.style.display='block'; }
+    else if(opts && opts.expired){ note.textContent='Your session expired. Sign in again to keep working - your maps are safe in your repository.'; note.style.display='block'; }
     else { note.style.display='none'; }
   }
   const sign=$('#ghSignIn'), pat=$('#ghPat'), err=$('#ghError');
@@ -14653,7 +14756,7 @@ async function publishSharedMap(){
     map._shareRoom = room;
     // New editable shares require collaborators to sign in (legacy links stay anonymous
     // until re-shared). Owner-only route: without an identity it 401s, so don't pretend.
-    if(named){ try{ await accessApi(room, 'link', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ access:'edit-auth' }) }); }catch(e){} }
+    if(named){ try{ await accessApi(room, 'link', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ access:'edit-auth' }) }); }catch(e){} }
     rememberSharedByMe({ id: map.id, room, token: map._editToken, title: map.title, color: map.color });
     if(typeof scheduleSave==='function' && !map._cloudEdit) scheduleSave();   // persist the token in the owner repo so re-publishing reuses it
     toast(named ? 'Edit link copied - collaborators sign in with GitHub to open it.'
@@ -15149,7 +15252,7 @@ else loadQotd();
   if(mode==='cloud'){
     if(loggedIn){ showUserPill(); await proceedBoot(); await _openSharedAfterBoot(); }
     else if(_sh){ _pendingSharedLink={ id:decodeURIComponent(_sh[1]), token:_sh[2]?decodeURIComponent(_sh[2]):null }; showLoginOverlay({ shared:true }); }   // shared link -> require sign-in first
-    else { showLoginOverlay(); }
+    else { showLoginOverlay(CloudStore.sessionExpired ? {expired:true} : undefined); }
   } else {
     await proceedBoot(); await _openSharedAfterBoot();   // server / local mode
   }

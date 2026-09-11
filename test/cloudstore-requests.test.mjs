@@ -63,7 +63,8 @@ function net(routes) {
   const log = [];
   const fetchImpl = async (url, opt = {}) => {
     const method = opt.method || 'GET';
-    const body = opt.body ? JSON.parse(opt.body) : null;
+    let body = null;
+    if (opt.body) { try { body = JSON.parse(opt.body); } catch { body = Object.fromEntries(new URLSearchParams(opt.body)); } }
     log.push({ method, url, body, headers: opt.headers || {} });
     for (const [match, reply] of routes) {
       if (match(method, url)) return reply(method, url, body);
@@ -220,6 +221,26 @@ describe('CloudStore over GitLab', () => {
     assert.ok(CloudStore.deleted.includes('m1'), 'the id must be tombstoned so it is never resurrected');
   });
 
+  test('a delete whose commit fails leaves the index and the tombstones untouched', async () => {
+    const store = new Map();
+    const { fetchImpl, state } = gitlabNet();
+    const { CloudStore } = loadStore(fetchImpl, store);
+    await CloudStore.login('glpat-secret', 'gitlab', 'https://gitlab.com');
+    await CloudStore.save({ id: 'm1', title: 'One' });
+    // Same session, but GitLab now falls over on the commit (a 500 is not a
+    // stale-lock 400, so there is no merge-and-retry either).
+    const brokenFetch = async (url, opt) => (opt && opt.method === 'POST' && url === COMMITS) ? res(500, { message: 'boom' }) : fetchImpl(url, opt);
+    const { CloudStore: broken } = loadStore(brokenFetch, store);
+    assert.equal(await broken.tryInit(), true);
+    assert.deepEqual((await broken.list()).map(m => m.id), ['m1']);
+
+    await assert.rejects(broken.remove('m1'), /500/);
+
+    assert.deepEqual((await broken.list()).map(m => m.id), ['m1'], 'the map is still listed - it still exists');
+    assert.equal(broken.deleted.includes('m1'), false, 'no tombstone for a map that was not deleted');
+    assert.equal('maps/m1.json' in state.existing, true);
+  });
+
   test('a stale index (another device saved) is re-read, merged and committed again - once', async () => {
     const { log, fetchImpl, state } = gitlabNet({ '_index.json': '[]' });
     const { CloudStore } = loadStore(fetchImpl);
@@ -270,6 +291,157 @@ describe('CloudStore over GitLab', () => {
     const orphans = await CloudStore.orphanMaps();
     assert.deepEqual(orphans.map(o => o.id), ['lost']);
     assert.equal(await CloudStore.restoreOrphans(orphans), 1);
+  });
+
+  // ---- session refresh --------------------------------------------------------
+  // A PKCE sign-in yields an access token that GitLab expires after two hours
+  // and a refresh token that outlives it. Without using the latter, every call
+  // after expiry is a 401 that the store used to swallow as "not found".
+  const TOKEN_URL = 'https://gitlab.com/oauth/token';
+  // Same stub GitLab, but every API call is checked against the access token
+  // the "server" currently considers valid, and a token endpoint hands out a
+  // rotated pair on a refresh grant.
+  function expiringNet(existing = {}) {
+    const inner = gitlabNet(existing);
+    const auth = { valid: 'glat-1', refreshValid: 'glrt-1', issued: 0, refuse: false };
+    const fetchImpl = async (url, opt = {}) => {
+      if (url === TOKEN_URL) {
+        const body = Object.fromEntries(new URLSearchParams(opt.body));
+        inner.log.push({ method: 'POST', url, body, headers: opt.headers || {} });
+        if (auth.refuse || body.grant_type !== 'refresh_token' || body.refresh_token !== auth.refreshValid) {
+          return res(400, { error: 'invalid_grant', error_description: 'The provided authorization grant is invalid' });
+        }
+        auth.issued++;
+        auth.valid = 'glat-' + (auth.issued + 1); auth.refreshValid = 'glrt-' + (auth.issued + 1);
+        return res(200, { access_token: auth.valid, refresh_token: auth.refreshValid, token_type: 'Bearer', expires_in: 7200 });
+      }
+      if ((opt.headers || {}).Authorization !== 'Bearer ' + auth.valid) {
+        inner.log.push({ method: opt.method || 'GET', url, body: null, headers: opt.headers || {} });
+        return res(401, { message: '401 Unauthorized' });
+      }
+      return inner.fetchImpl(url, opt);
+    };
+    return { ...inner, fetchImpl, auth };
+  }
+  const tokenCalls = log => only(log, c => c.url === TOKEN_URL);
+
+  test('an expired access token is refreshed once and the request retried with the new bearer', async () => {
+    const store = new Map();
+    const { log, fetchImpl, auth } = expiringNet();
+    const { CloudStore } = loadStore(fetchImpl, store);
+    await CloudStore.login('glat-1', 'gitlab', 'https://gitlab.com', undefined, { token: 'glrt-1', clientId: 'cid-1' });
+    auth.valid = 'expired-elsewhere';          // two hours pass
+    log.length = 0;
+
+    await CloudStore.save({ id: 'm1', title: 'One' });
+
+    const t = tokenCalls(log);
+    assert.equal(t.length, 1, 'exactly one refresh');
+    assert.deepEqual(
+      { grant_type: t[0].body.grant_type, refresh_token: t[0].body.refresh_token, client_id: t[0].body.client_id },
+      { grant_type: 'refresh_token', refresh_token: 'glrt-1', client_id: 'cid-1' });
+    assert.equal(t[0].headers['Content-Type'], 'application/x-www-form-urlencoded', 'GitLab takes RFC 6749 form encoding');
+    assert.equal(t[0].headers.Authorization, undefined, 'the grant carries no bearer');
+    // The 401 came first, then the refresh, then the SAME request again with the new token.
+    assert.equal(log[0].headers.Authorization, 'Bearer glat-1');
+    assert.equal(log[2].url, log[0].url, 'the refused request is retried, not skipped');
+    assert.equal(log[2].headers.Authorization, 'Bearer glat-2');
+    for (const c of log.slice(2)) assert.equal(c.headers.Authorization, 'Bearer glat-2', c.url);
+    assert.equal(commits(log).length, 1, 'the save still lands');
+    // The rotated pair is what a reload will find.
+    assert.equal(store.get('mindspark:gitlab:token'), 'glat-2');
+    assert.deepEqual(JSON.parse(store.get('mindspark:gitlab:refresh')), { token: 'glrt-2', clientId: 'cid-1' });
+  });
+
+  test('requests that expire together share ONE grant - the pair rotates, a second grant would be refused', async () => {
+    const { log, fetchImpl, auth } = expiringNet({ 'maps/a.json': '{"id":"a"}', 'maps/b.json': '{"id":"b"}', 'maps/c.json': '{"id":"c"}' });
+    const { CloudStore } = loadStore(fetchImpl);
+    await CloudStore.login('glat-1', 'gitlab', 'https://gitlab.com', undefined, { token: 'glrt-1', clientId: 'cid-1' });
+    auth.valid = 'expired-elsewhere';
+    log.length = 0;
+
+    const maps = await Promise.all(['a', 'b', 'c'].map(id => CloudStore.get(id)));
+
+    assert.deepEqual(maps.map(m => m && m.id), ['a', 'b', 'c'], 'every read completes');
+    assert.equal(tokenCalls(log).length, 1, 'one refresh for the whole burst');
+    assert.equal(CloudStore.token, 'glat-2');
+  });
+
+  test('a refused refresh ends the session: storage is cleared and the app is told why', async () => {
+    const store = new Map();
+    const { log, fetchImpl, auth } = expiringNet();
+    const { CloudStore } = loadStore(fetchImpl, store);
+    let told = 0; CloudStore.onSessionExpired = () => { told++; };
+    await CloudStore.login('glat-1', 'gitlab', 'https://gitlab.com', undefined, { token: 'glrt-1', clientId: 'cid-1' });
+    auth.valid = 'expired-elsewhere'; auth.refuse = true;   // e.g. the refresh token was revoked
+    log.length = 0;
+
+    await assert.rejects(CloudStore.save({ id: 'm1', title: 'One' }), /401/, 'the operation itself still fails');
+
+    assert.equal(tokenCalls(log).length, 1);
+    assert.equal(told, 1, 'the app hears about it exactly once');
+    const after = log.slice(log.findIndex(c => c.url === TOKEN_URL) + 1);
+    assert.deepEqual(after.map(c => c.url), [], 'the operation stops there - nothing else is sent on a dead session');
+    assert.equal(CloudStore.sessionExpired, true);
+    assert.equal(CloudStore.token, null);
+    for (const k of ['mindspark:gitlab:token', 'mindspark:gitlab:refresh']) {
+      assert.equal(store.has(k), false, k + ' must be gone, or a reload would replay the dead session');
+    }
+    // ...but not which host and project they were on: the sign-in screen
+    // reopens there, and a reload without a token is just a sign-in screen.
+    assert.equal(store.get('mindspark:forge'), 'gitlab');
+    assert.equal(store.get('mindspark:forge:instance'), 'https://gitlab.com');
+    const { CloudStore: again } = loadStore(fetchImpl, store);
+    assert.equal(await again.tryInit(), false, 'no token, no session - and no request');
+  });
+
+  test('a pasted access token has nothing to refresh with: a 401 ends the session without a grant', async () => {
+    const { log, fetchImpl, auth } = expiringNet();
+    const { CloudStore } = loadStore(fetchImpl);
+    let told = 0; CloudStore.onSessionExpired = () => { told++; };
+    await CloudStore.login('glat-1', 'gitlab', 'https://gitlab.com');   // no refresh record
+    auth.valid = 'revoked';
+    log.length = 0;
+
+    await assert.rejects(CloudStore.save({ id: 'm1', title: 'One' }), /401/);
+
+    assert.equal(tokenCalls(log).length, 0, 'no refresh token, no grant attempted');
+    assert.equal(told, 1);
+    assert.equal(CloudStore.sessionExpired, true);
+  });
+
+  test('a refresh that cannot reach the forge keeps the session: nothing is known yet', async () => {
+    const store = new Map();
+    const { log, fetchImpl, auth } = expiringNet();
+    const inner = fetchImpl;
+    const flaky = async (url, opt) => { if (url === TOKEN_URL) throw new TypeError('Failed to fetch'); return inner(url, opt); };
+    const { CloudStore } = loadStore(flaky, store);
+    let told = 0; CloudStore.onSessionExpired = () => { told++; };
+    await CloudStore.login('glat-1', 'gitlab', 'https://gitlab.com', undefined, { token: 'glrt-1', clientId: 'cid-1' });
+    auth.valid = 'expired-elsewhere';
+    log.length = 0;
+
+    await assert.rejects(CloudStore.save({ id: 'm1', title: 'One' }), /401/, 'this save fails, as any offline save does');
+
+    assert.equal(told, 0, 'not logged out');
+    assert.equal(CloudStore.sessionExpired, undefined || false);
+    assert.equal(store.get('mindspark:gitlab:token'), 'glat-1', 'the session survives to retry later');
+    assert.deepEqual(JSON.parse(store.get('mindspark:gitlab:refresh')), { token: 'glrt-1', clientId: 'cid-1' });
+  });
+
+  test('a reload after the access token expired restores the session through a refresh, not a sign-in', async () => {
+    const store = new Map();
+    const first = expiringNet();
+    await loadStore(first.fetchImpl, store).CloudStore.login('glat-1', 'gitlab', 'https://gitlab.com', undefined, { token: 'glrt-1', clientId: 'cid-1' });
+    // The tab comes back hours later: same storage, a server that no longer takes glat-1.
+    const { log, fetchImpl, auth } = expiringNet();
+    auth.valid = 'expired-elsewhere';
+    const { CloudStore } = loadStore(fetchImpl, store);
+
+    assert.equal(await CloudStore.tryInit(), true, 'the session is restored');
+    assert.equal(tokenCalls(log).length, 1);
+    assert.equal(CloudStore.user.login, 'ada');
+    assert.equal(store.get('mindspark:gitlab:token'), 'glat-2', 'the rotated pair is persisted');
   });
 });
 
