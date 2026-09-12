@@ -139,6 +139,22 @@ function buildMapFromSpec(spec) {
            layout: 'balanced', rootId, nodes, links, _import: true, updated: Date.now() };
 }
 
+// ---- extra Content-Security-Policy origins --------------------------------
+// EXTRA_CONNECT_SRC="http://localhost:11434 https://api.mistral.ai" lets a
+// self-hoster allow the origins of custom LLM providers (added in Preferences)
+// without editing this file. It is appended to connect-src in BOTH places the
+// browser reads a policy from: the response header below and the <meta> tag
+// inside index.html, because the browser enforces the intersection of the two
+// and a header alone would leave the meta blocking the request. Appending only
+// (never replacing) keeps the allowlist an allowlist.
+const EXTRA_CONNECT = (process.env.EXTRA_CONNECT_SRC || '').trim().split(/\s+/).filter(o => /^https?:\/\/[^\s'"<>]+$/.test(o)).join(' ');
+const withExtraConnect = (policy) => EXTRA_CONNECT ? policy.replace(/(connect-src [^;"]+)/, '$1 ' + EXTRA_CONNECT) : policy;
+// The page version targets the <meta> tag itself: index.html also mentions
+// connect-src in the comment that explains the policy, and that must stay.
+const withExtraConnectHtml = (html) => EXTRA_CONNECT
+  ? html.replace(/(<meta http-equiv="Content-Security-Policy" content="[^"]*?connect-src [^;"]+)/, '$1 ' + EXTRA_CONNECT)
+  : html;
+
 // ---- tiny helpers --------------------------------------------------------
 const MIME = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css',
   '.json':'application/json', '.svg':'image/svg+xml', '.png':'image/png', '.ico':'image/x-icon',
@@ -226,7 +242,7 @@ const server = http.createServer(async (req, res) => {
   // public/_headers - and test/csp.test.mjs fails if the three drift apart.
   // The only sanctioned difference: the static copies also allow the OAuth /
   // collab Worker origin, which server mode never contacts.
-  res.setHeader('Content-Security-Policy', [
+  res.setHeader('Content-Security-Policy', withExtraConnect([
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
@@ -237,7 +253,7 @@ const server = http.createServer(async (req, res) => {
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'"
-  ].join('; '));
+  ].join('; ')));
 
   try {
     // ----- API -----
@@ -303,6 +319,11 @@ const server = http.createServer(async (req, res) => {
       if (st && st.isFile()) {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         const entry = fileEntry(full, st);
+        // The page's own <meta> policy gets the same extra origins as the header.
+        if (EXTRA_CONNECT && path.extname(full) === '.html') {
+          if (entry.html === undefined) entry.html = Buffer.from(withExtraConnectHtml(entry.data.toString('utf8')));
+          return send(res, 200, entry.html, MIME['.html'], req);
+        }
         return send(res, 200, entry.data, MIME[path.extname(full)] || 'application/octet-stream', req, entry);
       }
     }

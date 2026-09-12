@@ -6,7 +6,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,5 +81,45 @@ describe('self-hosted server', () => {
     const r = await fetch(base + '/../server.js');
     assert.notEqual(r.status, 200);
     assert.notEqual((await fetch(base + '/%2e%2e/server.js')).status, 200);
+  });
+});
+
+// A custom LLM provider lives on an origin the shipped Content-Security-Policy
+// does not list. A self-hoster allows it with EXTRA_CONNECT_SRC, and it has to
+// reach BOTH policies the browser enforces: the response header and the <meta>
+// tag inside index.html (the browser applies the intersection, so a header
+// alone would leave the meta blocking the request). Appended, never replaced.
+describe('EXTRA_CONNECT_SRC', () => {
+  let p2, base2, dir2;
+  before(async () => {
+    dir2 = mkdtempSync(join(tmpdir(), 'mindspark-csp-'));
+    const port = 30000 + Math.floor(Math.random() * 20000);
+    base2 = `http://127.0.0.1:${port}`;
+    p2 = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', join(ROOT, 'server.js')], {
+      env: { ...process.env, PORT: String(port), DB_PATH: join(dir2, 'test.db'), EXTRA_CONNECT_SRC: 'http://localhost:11434 https://api.mistral.ai junk-not-an-origin' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    await waitFor(base2 + '/healthz');
+  });
+  after(async () => {
+    if (p2) { p2.kill(); await new Promise(r => p2.once('exit', r)); }
+    try { rmSync(dir2, { recursive: true, force: true }); } catch { /* best effort */ }
+  });
+
+  test('the header and the served meta tag both gain the origins; malformed entries are ignored', async () => {
+    const r = await fetch(base2 + '/');
+    const header = r.headers.get('content-security-policy');
+    const html = await r.text();
+    const meta = html.match(/<meta http-equiv="Content-Security-Policy" content="([^"]+)"/)[1];
+    for (const policy of [header, meta]) {
+      const connect = policy.match(/connect-src ([^;]+)/)[1];
+      assert.match(connect, /https:\/\/api\.github\.com/, 'the shipped list is still there');
+      assert.match(connect, /http:\/\/localhost:11434/);
+      assert.match(connect, /https:\/\/api\.mistral\.ai/);
+      assert.doesNotMatch(connect, /junk/);
+    }
+    assert.equal((header.match(/connect-src/g) || []).length, 1);
+    const js = await (await fetch(base2 + '/app.js')).text();
+    assert.equal(js, readFileSync(join(ROOT, 'public', 'app.js'), 'utf8'), 'only the HTML is rewritten; scripts are served byte for byte');
   });
 });

@@ -6891,9 +6891,13 @@ function saveAsTemplate(){
   loadUserTemplates();
   toast('Saved to "My templates"');
 }
+// The saved templates as stored - the one reader for that key.
+function userTemplateList(){
+  try{ const a=JSON.parse(localStorage.getItem('mindspark:userTemplates')||'[]'); return Array.isArray(a) ? a : []; }
+  catch(e){ return []; }
+}
 function deleteUserTemplate(tid){
-  let store=[]; try{ store=JSON.parse(localStorage.getItem('mindspark:userTemplates')||'[]'); }catch(e){}
-  store = store.filter(t=>t.id!==tid);
+  const store = userTemplateList().filter(t=>t.id!==tid);
   try{ localStorage.setItem('mindspark:userTemplates', JSON.stringify(store)); }
   catch(e){ console.warn('could not update saved templates:', e.message); toast('Could not update saved templates - storage is blocked or full'); return; }
   delete TEMPLATES[tid];
@@ -6904,7 +6908,7 @@ function deleteUserTemplate(tid){
 }
 // Merge user templates from localStorage into the in-memory catalog.
 function loadUserTemplates(){
-  let store=[]; try{ store=JSON.parse(localStorage.getItem('mindspark:userTemplates')||'[]'); }catch(e){ store=[]; }
+  const store=userTemplateList();
   // Drop any previously-merged user templates so we don't duplicate on re-call
   Object.keys(TEMPLATES).forEach(k=>{ if(TEMPLATES[k]&&TEMPLATES[k]._user) delete TEMPLATES[k]; });
   store.forEach(t=>{ TEMPLATES[t.id]=t; });
@@ -7413,43 +7417,90 @@ function assemblePrompt(rootId){
 // with nothing telling the user the second half was missing; `truncated` is
 // how each provider reports that, so the panel can say so.
 const LLM_MAX_TOKENS = 4096;
-const LLM_PROVIDERS = {
+// A provider is DATA - a label, a URL and a wire shape - so the user can add
+// their own from Preferences (Ollama on a laptop, LM Studio, vLLM, Mistral,
+// Together, a company gateway) without a code change, and carry the list in
+// the preferences export. Nearly everything speaks one of two shapes:
+// 'openai' is chat/completions, 'anthropic' is the Messages API. Keys are
+// stored per provider id (mindspark:llm:key:<id>) and never exported. A
+// provider that needs no key (a local server) sends no auth header at all.
+const LLM_SHAPES = {
+  openai: {
+    headers:(key)=>({'content-type':'application/json', ...(key ? {'Authorization':'Bearer '+key} : {})}),
+    body:(model,prompt)=>JSON.stringify({model, messages:[{role:'user',content:prompt}]}),
+    extract:(d)=> (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(),
+    truncated:(d)=> !!(d.choices&&d.choices[0]&&d.choices[0].finish_reason==='length')
+  },
   anthropic: {
-    label:'Anthropic (Claude)', url:'https://api.anthropic.com/v1/messages',
-    defaultModel:'claude-opus-5',
-    // Model ids that no longer exist at the API. A stored one is replaced by the
-    // default rather than sent, the same way RETIRED_THEMES migrates theme ids.
-    retiredModel:/^claude-(?:instant|2|3)\b/,
-    headers:(key)=>({'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}),
+    headers:(key)=>({'content-type':'application/json', ...(key ? {'x-api-key':key} : {}),'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}),
     body:(model,prompt)=>JSON.stringify({model, max_tokens:LLM_MAX_TOKENS, messages:[{role:'user',content:prompt}]}),
     extract:(d)=> (d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n').trim(),
     truncated:(d)=> d.stop_reason==='max_tokens'
-  },
-  openai: {
-    label:'OpenAI', url:'https://api.openai.com/v1/chat/completions',
-    defaultModel:'gpt-4o-mini',
-    headers:(key)=>({'content-type':'application/json','Authorization':'Bearer '+key}),
-    body:(model,prompt)=>JSON.stringify({model, messages:[{role:'user',content:prompt}]}),
-    extract:(d)=> (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(),
-    truncated:(d)=> !!(d.choices&&d.choices[0]&&d.choices[0].finish_reason==='length')
-  },
-  openrouter: {
-    label:'OpenRouter (free models)', url:'https://openrouter.ai/api/v1/chat/completions',
-    defaultModel:'google/gemma-3-27b-it:free',
-    headers:(key)=>({'content-type':'application/json','Authorization':'Bearer '+key,'HTTP-Referer':location.origin,'X-Title':'MindSpark'}),
-    body:(model,prompt)=>JSON.stringify({model, messages:[{role:'user',content:prompt}]}),
-    extract:(d)=> (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(),
-    truncated:(d)=> !!(d.choices&&d.choices[0]&&d.choices[0].finish_reason==='length')
-  },
-  groq: {
-    label:'Groq (fast, free)', url:'https://api.groq.com/openai/v1/chat/completions',
-    defaultModel:'llama-3.3-70b-versatile',
-    headers:(key)=>({'content-type':'application/json','Authorization':'Bearer '+key}),
-    body:(model,prompt)=>JSON.stringify({model, messages:[{role:'user',content:prompt}]}),
-    extract:(d)=> (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(),
-    truncated:(d)=> !!(d.choices&&d.choices[0]&&d.choices[0].finish_reason==='length')
   }
 };
+// The shipped providers. Their ids are reserved: a user-defined provider cannot
+// take one over, because a shared preferences file could otherwise point a
+// stored Anthropic key at a stranger's URL.
+const LLM_BUILTIN = [
+  { id:'anthropic',  label:'Anthropic (Claude)',       shape:'anthropic', url:'https://api.anthropic.com/v1/messages',       defaultModel:'claude-opus-5',
+    // Model ids that no longer exist at the API. A stored one is replaced by the
+    // default rather than sent, the same way RETIRED_THEMES migrates theme ids.
+    retiredModel:/^claude-(?:instant|2|3)\b/ },
+  { id:'openai',     label:'OpenAI',                   shape:'openai',    url:'https://api.openai.com/v1/chat/completions',  defaultModel:'gpt-4o-mini' },
+  { id:'openrouter', label:'OpenRouter (free models)', shape:'openai',    url:'https://openrouter.ai/api/v1/chat/completions', defaultModel:'google/gemma-3-27b-it:free',
+    extraHeaders:()=>({'HTTP-Referer':location.origin,'X-Title':'MindSpark'}) },
+  { id:'groq',       label:'Groq (fast, free)',        shape:'openai',    url:'https://api.groq.com/openai/v1/chat/completions', defaultModel:'llama-3.3-70b-versatile' },
+];
+const LLM_PROVIDERS_KEY = 'mindspark:llm:providers';
+const LLM_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+// Where a custom provider may live: https anywhere; plain http only where a
+// browser would let a local model server answer at all - this machine or a
+// private network. (An https deployment still cannot call http: at all; the
+// mixed-content rule is the browser's, not ours.)
+function llmUrlOk(u){
+  let p; try{ p=new URL(u); }catch(e){ return false; }
+  if(p.protocol==='https:') return true;
+  if(p.protocol!=='http:') return false;
+  const h=p.hostname;
+  return h==='localhost' || h==='[::1]' || /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h) || /\.local$/.test(h);
+}
+// Repairs rather than rejects, like the config validators: a bad id, a
+// reserved id, a URL the browser could never reach or an unknown shape drops
+// that entry; the rest survive. Twenty is plenty and keeps a pasted file sane.
+function validateLlmProviders(raw){
+  if(!Array.isArray(raw)) return [];
+  const out=[], seen=new Set(LLM_BUILTIN.map(p=>p.id));
+  for(const r of raw){
+    if(!r || typeof r!=='object') continue;
+    const id=String(r.id||'').trim().toLowerCase();
+    if(!LLM_ID_RE.test(id) || seen.has(id)) continue;
+    const url=String(r.url||'').trim(); if(!llmUrlOk(url)) continue;
+    const shape=LLM_SHAPES[r.shape] ? r.shape : 'openai';
+    const label=(String(r.label||'').trim().slice(0,40)) || id;
+    const defaultModel=String(r.defaultModel||'').trim().slice(0,80);
+    out.push({ id, label, url, shape, defaultModel, needsKey: r.needsKey!==false });
+    seen.add(id);
+    if(out.length>=20) break;
+  }
+  return out;
+}
+function loadLlmProviders(){ try{ return validateLlmProviders(JSON.parse(localStorage.getItem(LLM_PROVIDERS_KEY)||'[]')); }catch(e){ return []; } }
+function saveLlmProviders(list){
+  try{ localStorage.setItem(LLM_PROVIDERS_KEY, JSON.stringify(validateLlmProviders(list))); return true; }
+  catch(e){ console.warn('could not save providers:', e.message); return false; }
+}
+// Every provider the panel can use - built-ins first, then the user's own -
+// each resolved to the four functions the send path calls.
+function llmProviders(){
+  const out={};
+  for(const p of LLM_BUILTIN.concat(loadLlmProviders())){
+    const sh=LLM_SHAPES[p.shape];
+    out[p.id]={ ...p, needsKey: p.needsKey!==false, custom: !LLM_BUILTIN.some(b=>b.id===p.id),
+      headers:(key)=>({ ...sh.headers(key), ...(p.extraHeaders ? p.extraHeaders() : {}) }),
+      body:sh.body, extract:sh.extract, truncated:sh.truncated };
+  }
+  return out;
+}
 // The five shipped task presets. Data, not markup, so user-saved presets render
 // through exactly the same path (see bpRenderChips).
 const BP_TASKS = [
@@ -7468,28 +7519,48 @@ const BP_GEOM_KEY    = 'mindspark:bp:geom';
 // The model to use for a provider: the remembered one unless it has been
 // retired, otherwise the provider's default.
 function llmModelFor(pv){
-  const cfg=LLM_PROVIDERS[pv]; if(!cfg) return '';
+  const cfg=llmProviders()[pv]; if(!cfg) return '';
   let m=''; try{ m=localStorage.getItem('mindspark:llm:model:'+pv)||''; }catch(e){}
   if(m && cfg.retiredModel && cfg.retiredModel.test(m)) m='';
   return m || cfg.defaultModel;
 }
+// A saved preset is {label, task}: the label is what the chip shows, the task
+// is the instruction. Earlier builds stored bare instruction strings and
+// showed their first 24 characters; those still load, with that same derived
+// label, so nothing anyone saved is lost. Repairs rather than rejects: junk
+// entries are dropped, texts capped, duplicates (by instruction) collapsed,
+// twelve at most - which is also what an imported preferences file gets.
+const BP_PRESET_LIMIT = 12;
+function bpPresetLabel(task){ return task.length>24 ? task.slice(0,24)+'\u2026' : task; }
+function bpNormalizePrompts(raw){
+  if(!Array.isArray(raw)) return [];
+  const out=[], seen=new Set();
+  for(const r of raw){
+    let task='', label='';
+    if(typeof r==='string'){ task=r; }
+    else if(r && typeof r==='object'){ task=String(r.task||''); label=String(r.label||''); }
+    task=task.trim().slice(0,400); if(!task || seen.has(task)) continue;
+    label=label.trim().slice(0,40) || bpPresetLabel(task);
+    out.push({ label, task }); seen.add(task);
+    if(out.length>=BP_PRESET_LIMIT) break;
+  }
+  return out;
+}
 function bpLoadPrompts(){
-  try{
-    const raw = JSON.parse(localStorage.getItem(BP_PROMPTS_KEY) || '[]');
-    if(!Array.isArray(raw)) return [];
-    return raw.filter(t => typeof t==='string' && t.trim())
-              .map(t => t.trim().slice(0,400)).slice(0,12);
-  }catch(e){ return []; }
+  try{ return bpNormalizePrompts(JSON.parse(localStorage.getItem(BP_PROMPTS_KEY) || '[]')); }catch(e){ return []; }
 }
 function bpSavePrompts(list){
-  try{ localStorage.setItem(BP_PROMPTS_KEY, JSON.stringify(list.slice(0,12))); }catch(e){}
+  try{ localStorage.setItem(BP_PROMPTS_KEY, JSON.stringify(bpNormalizePrompts(list))); return true; }
+  catch(e){ console.warn('could not save presets:', e.message); return false; }
 }
 function showBuildPrompt(nodeId){
   if(!map){ toast('Open a map first'); return; }
   nodeId = nodeId && map.nodes[nodeId] ? nodeId : map.rootId;
   document.querySelectorAll('.bp-panel,.export-pop').forEach(p=>p.remove());
   const branch=withChildIndex(()=>assemblePrompt(nodeId));
-  const provider=localStorage.getItem('mindspark:llm:provider')||'anthropic';
+  const PROVS=llmProviders();
+  let provider=localStorage.getItem('mindspark:llm:provider')||'anthropic';
+  if(!PROVS[provider]) provider='anthropic';        // a custom provider removed since it was last used
   const model=llmModelFor(provider);
   const defaultTask=localStorage.getItem('mindspark:llm:task')||'Summarize the following branch into key points:';
   const fullPrompt=defaultTask+'\n\n'+branch;
@@ -7519,7 +7590,7 @@ function showBuildPrompt(nodeId){
     <div class="bp-run" style="display:none">
       <div class="bp-run-row">
         <select class="bp-provider" aria-label="LLM provider">
-          ${Object.entries(LLM_PROVIDERS).map(([k,v])=>`<option value="${k}"${k===provider?' selected':''}>${v.label}</option>`).join('')}
+          ${Object.entries(PROVS).map(([k,v])=>`<option value="${escapeHtml(k)}"${k===provider?' selected':''}>${escapeHtml(v.label)}</option>`).join('')}
         </select>
         <input class="bp-model" placeholder="model" aria-label="Model name" value="${escapeHtml(model)}">
       </div>
@@ -7563,14 +7634,14 @@ function showBuildPrompt(nodeId){
     };
     BP_TASKS.forEach(t=>chipRow.appendChild(addChip(t.label, t.task)));
     const custom=bpLoadPrompts();
-    custom.forEach(task=>{
+    custom.forEach(p=>{
       const wrap=document.createElement('span'); wrap.className='bp-chip-wrap';
-      wrap.appendChild(addChip(task.slice(0,24)+(task.length>24?'…':''), task));
+      wrap.appendChild(addChip(p.label, p.task));
       const del=document.createElement('button');
       del.className='bp-chip-del'; del.type='button';
       del.textContent='\u00d7'; del.title='Delete this preset';
       del.setAttribute('aria-label','Delete preset');
-      del.onclick=()=>{ bpSavePrompts(bpLoadPrompts().filter(t=>t!==task)); bpRenderChips(); toast('Preset deleted'); };
+      del.onclick=()=>{ bpSavePrompts(bpLoadPrompts().filter(x=>x.task!==p.task)); bpRenderChips(); toast('Preset deleted'); };
       wrap.appendChild(del);
       chipRow.appendChild(wrap);
     });
@@ -7582,9 +7653,14 @@ function showBuildPrompt(nodeId){
       if(!t){ toast('Nothing to save'); return; }
       if(BP_TASKS.some(b=>b.task===t)){ toast('That is already a built-in preset'); return; }
       const list=bpLoadPrompts();
-      if(list.includes(t)){ toast('Preset already saved'); return; }
-      if(list.length>=12){ toast('12 presets is the limit - delete one first'); return; }
-      list.push(t); bpSavePrompts(list); bpRenderChips(); toast('Preset saved');
+      if(list.some(x=>x.task===t)){ toast('Preset already saved'); return; }
+      if(list.length>=BP_PRESET_LIMIT){ toast(BP_PRESET_LIMIT+' presets is the limit - delete one first'); return; }
+      // The chip needs a short name; the first few words are the usual answer,
+      // and a preset can be renamed from Preferences later.
+      const suggested=t.replace(/[:.]+$/,'').split(/\s+/).slice(0,4).join(' ').slice(0,40);
+      const label=window.prompt ? window.prompt('Name for this preset', suggested) : suggested;
+      if(label===null) return;
+      list.push({ label:(label||suggested).trim(), task:t }); bpSavePrompts(list); bpRenderChips(); toast('Preset saved');
     };
     chipRow.appendChild(save);
     markActiveChip();
@@ -7647,30 +7723,45 @@ function showBuildPrompt(nodeId){
     r.style.display=show?'block':'none'; if(show) panel.style.height='';
     panel.classList.toggle('bp-expanded',show); };
   const provSel=$$('.bp-provider'), modelIn=$$('.bp-model'), keyIn=$$('.bp-key');
+  // A provider that needs no key (a local server) says so in the box instead
+  // of asking for one; the field stays editable for servers that want one anyway.
+  const keyHint=()=>{ const cfg=llmProviders()[provSel.value]; keyIn.placeholder=(cfg && !cfg.needsKey) ? 'No key needed for this provider (optional)' : 'API key (stored only in this browser)'; };
   provSel.onchange=()=>{ const pv=provSel.value;
     modelIn.value=llmModelFor(pv);
-    keyIn.value=localStorage.getItem('mindspark:llm:key:'+pv)||''; };
+    keyIn.value=localStorage.getItem('mindspark:llm:key:'+pv)||''; keyHint(); };
+  keyHint();
   // The warning above tells the user the key sits in localStorage; this is how
   // they get it back out. Only the selected provider's key is removed.
   $$('.bp-forget').onclick=()=>{ const pv=provSel.value;
     localStorage.removeItem('mindspark:llm:key:'+pv); keyIn.value='';
-    toast('Key for '+LLM_PROVIDERS[pv].label+' removed from this browser'); };
+    toast('Key for '+((llmProviders()[pv]||{}).label||pv)+' removed from this browser'); };
   $$('.bp-send').onclick=async()=>{
-    const pv=provSel.value, key=keyIn.value.trim(), mdl=modelIn.value.trim()||LLM_PROVIDERS[pv].defaultModel;
-    if(!key){ toast('Enter an API key'); return; }
+    const cfg=llmProviders()[provSel.value];
+    if(!cfg){ toast('That provider is no longer configured'); return; }
+    const pv=cfg.id, key=keyIn.value.trim(), mdl=modelIn.value.trim()||cfg.defaultModel;
+    if(cfg.needsKey && !key){ toast('Enter an API key'); return; }
+    if(!mdl){ toast('Enter a model name'); return; }
+    // The same check self-hosted forges get: connect-src is an allowlist, and a
+    // custom provider's origin has to be on it or the browser refuses the request
+    // with an unhelpful "Failed to fetch". Say what to add instead.
+    if(cfg.custom && !cspAllowsInstance(cfg.url)){
+      const origin=new URL(cfg.url).origin;
+      const res=$$('.bp-result'); res.style.display='block';
+      res.textContent='This deployment\u2019s Content-Security-Policy does not allow '+origin+'. Add it to connect-src in public/index.html, public/_headers and server.js (or set EXTRA_CONNECT_SRC when self-hosting), then redeploy. A local server also has to allow this page\u2019s origin (for Ollama: OLLAMA_ORIGINS).';
+      return;
+    }
     // Remember the choice for next time, but never let storage decide whether
     // the request goes out: in a browser that blocks site data these throw,
     // and the click used to die here with nothing on screen.
     try{
       localStorage.setItem('mindspark:llm:provider',pv);
       localStorage.setItem('mindspark:llm:model:'+pv,mdl);
-      localStorage.setItem('mindspark:llm:key:'+pv,key);
+      if(key) localStorage.setItem('mindspark:llm:key:'+pv,key); else localStorage.removeItem('mindspark:llm:key:'+pv);
     }catch(e){ console.warn('LLM settings not remembered (storage blocked or full):', e.message); }
     const full=instr.value.trim()+'\n\n'+ta.value;
     const res=$$('.bp-result'); res.style.display='block'; res.textContent='Running…';
     const send=$$('.bp-send'); send.disabled=true;
     try{
-      const cfg=LLM_PROVIDERS[pv];
       const r=await fetch(cfg.url,{method:'POST',headers:cfg.headers(key),body:cfg.body(mdl,full)});
       if(!r.ok){ const t=await r.text(); throw new Error('HTTP '+r.status+' - '+t.slice(0,200)); }
       const data=await r.json();
@@ -8440,7 +8531,32 @@ function parseMarkdownOutline(text, filename){
   nodes[finalRoot].side = 'root';
   if(_meta && _meta.nodes){
     const kidsOrd = pid => Object.values(nodes).filter(n=>n.parent===pid);   // document order (matches export)
-    const applyMeta=(id,path)=>{ const mm=_meta.nodes[path], n=nodes[id];
+    // Meta is written by position ('0.7' = the root's eighth child) because the
+    // parser hands out fresh ids. Positions drift the moment a line is added or
+    // removed above: one sibling inserted over a citation moved its ref and DOI
+    // onto the new line and the next citation's onto it, all the way down. So
+    // each entry now carries a fingerprint of its node's text (metaFingerprint),
+    // and a node takes the sibling entry whose text matches first; position is
+    // only trusted for an entry no sibling's text claims (a rename), or for an
+    // export old enough to have no fingerprints at all.
+    const entriesUnder = parentPath => Object.keys(_meta.nodes).filter(p => p.startsWith(parentPath+'.') && !p.slice(parentPath.length+1).includes('.'));
+    const matchChildren = (kids, parentPath) => {
+      const under = entriesUnder(parentPath), claimed = new Set();
+      const fps = kids.map(k => metaFingerprint(k.text));
+      const chosen = kids.map((k, i) => {
+        const hit = under.find(p => !claimed.has(p) && _meta.nodes[p].t !== undefined && _meta.nodes[p].t === fps[i]);
+        if(hit) claimed.add(hit);
+        return hit || null;
+      });
+      return kids.map((k, i) => {
+        if(chosen[i]) return chosen[i];
+        const byPos = parentPath+'.'+i, e = _meta.nodes[byPos];
+        if(claimed.has(byPos)) return null;                                   // belongs to a sibling that moved
+        if(e && e.t !== undefined && fps.some((f, j) => j !== i && f === e.t)) return null;   // its node is elsewhere in this row
+        return byPos;                                                         // a rename, or a fingerprint-less export
+      });
+    };
+    const applyMeta=(id,path)=>{ const mm=path ? _meta.nodes[path] : null, n=nodes[id];
       if(mm && n){
         if(mm.color) n.color=mm.color; if(mm.textColor) n.textColor=mm.textColor;
         if(mm.w){ n.width=mm.w; n.w=mm.w; } if(mm.h){ n.height=mm.h; n.h=mm.h; }
@@ -8451,7 +8567,11 @@ function parseMarkdownOutline(text, filename){
         if(mm.image) n.image=mm.image; if(mm.ref) n.ref=true; if(mm.citation) n.citation=mm.citation;
         if(mm.created) n.created=mm.created; if(mm.updated) n.updated=mm.updated;
       }
-      kidsOrd(id).forEach((c,i)=>applyMeta(c.id, path+'.'+i));
+      const kids=kidsOrd(id);
+      // A node that matched nothing still gives its children positional paths
+      // under where it sits, which is all the old behaviour ever did.
+      const paths=path ? matchChildren(kids, path) : kids.map(()=>null);
+      kids.forEach((c,i)=>applyMeta(c.id, paths[i]));
     };
     applyMeta(finalRoot, '0');
   }
@@ -8896,6 +9016,17 @@ function notesToMdBlocks(notesHtml){
   });
   return blocks;
 }
+// A node's text reduced to what a person would call "the same line": tags and
+// entities gone, whitespace collapsed, case folded, capped. Written into the
+// meta comment beside each entry so that, after a Markdown edit, per-node data
+// (ref, citation, colour, size) can find its node again by what it says rather
+// than by where it sits - see applyMeta in parseMarkdownOutline for why.
+function metaFingerprint(text){
+  return String(text==null ? '' : text)
+    .replace(/<br\s*\/?>/gi,' ').replace(/<[^>]+>/g,' ')
+    .replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'")
+    .replace(/\s+/g,' ').trim().toLowerCase().slice(0,48);
+}
 function _nodeMeta(n){   // per-node info that JSON has but Markdown can't express
   const m={};
   // n.color is the node's BOX background (a shape property, not text styling) - no clean
@@ -8933,11 +9064,19 @@ function buildMarkdown(startId, opts){
       else lines.push(pad+'> '+b.q);
     });
   };
+  // Returns whether this subtree wrote any meta: a node whose descendants carry
+  // meta gets a fingerprint-only entry of its own, so the reader can follow the
+  // text down to them even when their positions have moved.
   const walk=(id, bd, path)=>{
     const n=map.nodes[id];
-    if(!n) return;
-    if(n.frontmatter) return;   // emitted separately as YAML frontmatter at the very top instead - never inline
-    if(withMeta){ const mm=_nodeMeta(n); if(mm) nmeta[path]=mm; }
+    if(!n) return false;
+    if(n.frontmatter) return false;   // emitted separately as YAML frontmatter at the very top instead - never inline
+    if(withMeta){ const mm=_nodeMeta(n); if(mm){ mm.t=metaFingerprint(n.text); nmeta[path]=mm; } }
+    const sub=walkBody(id, n, bd, path);
+    if(withMeta && sub && !nmeta[path]) nmeta[path]={ t:metaFingerprint(n.text) };
+    return !!nmeta[path];
+  };
+  const walkBody=(id, n, bd, path)=>{
     const pad='  '.repeat(bd);
     if(n.hr){ if(lineMap) lm[lines.length]=id; lines.push(pad+'---'); return; }   // divider round-trips as ---
     if(n.html){   // block node (table / code / raw HTML) at the current bullet indent
@@ -8995,7 +9134,7 @@ function buildMarkdown(startId, opts){
       if(rich){ emitNotes(n, ''); } else { const nt=notesText(n); if(nt) lines.push('', nt); }
       const il = imageLine(); if(il) lines.push(il);
       lines.push('');
-      childrenOf(id).forEach((c,i)=>walk(c, 0, path+'.'+i));       // heading's children start a fresh bullet indent
+      return childrenOf(id).map((c,i)=>walk(c, 0, path+'.'+i)).some(Boolean);       // heading's children start a fresh bullet indent
     } else {
       if(lineMap) lm[lines.length]=id;
       const box = (rich && n.task) ? (n.task==='done' ? '[x] ' : '[ ] ') : '';
@@ -9004,7 +9143,7 @@ function buildMarkdown(startId, opts){
       const notePad = isPara ? pad : `${pad}  `;
       if(rich){ emitNotes(n, notePad); } else { const nt=notesText(n); if(nt) nt.split('\n').forEach(l=>lines.push(`${notePad}> ${l}`)); }
       const il = imageLine(); if(il) lines.push(`${notePad}${il}`);
-      childrenOf(id).forEach((c,i)=>walk(c, bd+1, path+'.'+i));
+      return childrenOf(id).map((c,i)=>walk(c, bd+1, path+'.'+i)).some(Boolean);
     }
   };
   // A frontmatter child of root (Claude Skill name/description, etc.) is emitted as real
@@ -10590,20 +10729,17 @@ $('#minimap')?.addEventListener('click', e=>e.stopPropagation());
 // Zoom slider - drag maps straight to setZoom() (no animation so the slider
 // stays glued to the finger), same 10–300% bounds as the % readout.
 $('#zoomSlider')?.addEventListener('input', e=>{ setZoom(parseInt(e.target.value,10)); });
-// Overview card (minimap + zoom) collapse toggle, persisted per browser.
-const ovToggle=$('#overviewToggle');
-ovToggle?.addEventListener('click',()=>{
-  const ov=$('#overview');
-  const collapsed=ov.classList.toggle('collapsed');
-  ovToggle.title=collapsed?'Expand overview':'Collapse overview';
+// Overview card (minimap + zoom) collapse state, persisted per browser. One
+// function so the chevron, the boot restore and the Preferences card agree.
+function setOverviewCollapsed(collapsed){
+  const ov=$('#overview'), t=$('#overviewToggle'); if(!ov) return;
+  ov.classList.toggle('collapsed', !!collapsed);
+  if(t) t.title=collapsed?'Expand overview':'Collapse overview';
   try{ localStorage.setItem('mindspark:overviewCollapsed', collapsed?'1':'0'); }catch(e){}
-});
-try{
-  const ov=$('#overview'), ovt=$('#overviewToggle');
-  if(ov && ovt && localStorage.getItem('mindspark:overviewCollapsed')==='1'){
-    ov.classList.add('collapsed'); ovt.title='Expand overview';
-  }
-}catch(e){}
+}
+function isOverviewCollapsed(){ const ov=$('#overview'); return !!(ov && ov.classList.contains('collapsed')); }
+$('#overviewToggle')?.addEventListener('click',()=>setOverviewCollapsed(!isOverviewCollapsed()));
+try{ if(localStorage.getItem('mindspark:overviewCollapsed')==='1') setOverviewCollapsed(true); }catch(e){}
 $('#menuExport').onclick=(e)=>{ e.stopPropagation(); exportMenu(); };
 let _sideExpandedW = 268;   // cached logical width of the expanded sidebar
 // Collapsed desktop sidebar keeps a slim icon rail instead of vanishing, so
@@ -12401,14 +12537,7 @@ function applyUiLayout(id){
       pin=document.createElement('button'); pin.type='button'; pin.id='zenPin';
       pin.className='tb'; pin.title='Pin toolbar (always visible)';
       pin.textContent='\uD83D\uDCCC';   // 📌 round pushpin
-      pin.addEventListener('click',()=>{
-        const on=!document.body.classList.contains('zen-pinned');
-        document.body.classList.toggle('zen-pinned',on);
-        try{ localStorage.setItem('mindspark:zenPinned',on?'1':'0'); }catch(e){}
-        pin.classList.toggle('on',on);
-        pin.textContent='\uD83D\uDCCC';   // 📌 pin for both states - .on background shows pinned
-        pin.title=on?'Unpin toolbar':'Pin toolbar (always visible)';
-      });
+      pin.addEventListener('click',()=>setZenPinned(!document.body.classList.contains('zen-pinned')));
     }
     topbar.appendChild(pin);
     const _pinned=document.body.classList.contains('zen-pinned');
@@ -13521,7 +13650,6 @@ function deckGo(i){
     bar.querySelector('.deck-pos').textContent=(i+1)+' / '+n;
   }
 }
-$('#presentBtn')?.addEventListener('click', enterDeck);
 // Deck keys are captured (phase 1) so the map's own arrow/Esc handlers don't
 // also fire while presenting.
 document.addEventListener('keydown',e=>{
@@ -13537,6 +13665,448 @@ $('#stage')?.addEventListener('click',e=>{
   if(e.target.closest('#deckBar')) return;
   deckStep(1);
 });
+
+// Zen layout's pinned toolbar, persisted per browser. The pin button exists
+// only while the zen layout is active; the body class and the stored value
+// are what matter, so the Preferences card can flip it from any layout.
+function setZenPinned(on){
+  document.body.classList.toggle('zen-pinned', !!on);
+  try{ localStorage.setItem('mindspark:zenPinned', on?'1':'0'); }catch(e){}
+  const pin=document.getElementById('zenPin');
+  if(pin){ pin.classList.toggle('on', !!on); pin.title=on?'Unpin toolbar':'Pin toolbar (always visible)'; }
+}
+// ===== Preferences - everything this browser remembers, in one place =====
+// Per-browser state was reachable only from wherever it was set: look and
+// theme in the palette panel, API keys inside Build Prompt, the scale in the
+// sidebar, tabs behind the tabs button, shared links in the sidebar. Nothing
+// showed what the app remembered about you on this machine, or let you reset
+// one thing without hunting, or warned that storage was nearly full - which
+// this code base already has to survive (_setItemSafe, the "storage is full"
+// toasts).
+//
+// PREFS is the registry: one row per localStorage key or key family. The
+// dialog, Reset and Export/Import are all derived from it, and
+// test/prefs-registry.test.mjs fails when a 'mindspark:' key is written
+// anywhere in this file without a row here - the same guard looks-registry
+// gives the export painter. A flat table on purpose (see AGENTS.md on data
+// tables): one row per setting, readable top to bottom.
+//
+// kind decides what the dialog may do with a row:
+//   pref      a choice the user made: shown, reset, exported
+//   content   things the user made (theme, layouts, templates): shown, exported
+//   secret    a credential: shown as stored / not stored, never exported
+//   session   which host and project the user signed in to: cleared by Sign out
+//   cache     rebuilt on demand: counted, cleared only by "Clear everything"
+//   transient a nonce that lives for one popup or one reload: never shown
+// A row matches one exact `key`, every key under a `prefix`, or a `re`.
+const PREFS = [
+  // Appearance - the choices the palette panel and the chrome remember
+  { key:'mindspark:theme',             kind:'pref',      section:'Appearance', label:'Colour theme',      show:v=>v||'light (default)' },
+  { key:'mindspark:look',              kind:'pref',      section:'Appearance', label:'"I am" look',       show:v=>v||'office (default)' },
+  { key:'mindspark:uiLayout',          kind:'pref',      section:'Appearance', label:'Interface layout',  show:v=>v||'modern (default)' },
+  { key:'mindspark:uiScale',           kind:'pref',      section:'Appearance', label:'Interface scale',   show:v=>v ? Math.round(parseFloat(v)*100)+'%' : 'auto' },
+  { key:'mindspark:sideW',             kind:'pref',      section:'Appearance', label:'Sidebar width',     show:v=>v||'default' },
+  { key:'mindspark:overviewCollapsed', kind:'pref',      section:'Appearance', label:'Minimap',           show:v=>v==='1' ? 'collapsed' : 'open' },
+  { key:'mindspark:zenPinned',         kind:'pref',      section:'Appearance', label:'Zen toolbar',       show:v=>v==='1' ? 'pinned' : 'auto-hide' },
+  { key:'mindspark:tabs',              kind:'pref',      section:'Appearance', label:'Tabbed workspace',  show:v=>v==='1' ? 'on' : 'off' },
+  { key:'mindspark:prefs:folds',       kind:'pref',      section:'Appearance', label:'Preferences card folds', show:v=>{ try{ return Object.entries(JSON.parse(v)).map(([k,o])=>k+(o?' open':' closed')).join(', '); }catch(e){ return '(unreadable)'; } } },
+  // Account - where maps are saved, and the credentials that get there
+  { key:'mindspark:forge',             kind:'session',   section:'Account',    label:'Git host',          show:v=>v||'(not signed in)' },
+  { key:'mindspark:forge:instance',    kind:'session',   section:'Account',    label:'Instance',          show:v=>v||'' },
+  { key:'mindspark:forge:repo',        kind:'session',   section:'Account',    label:'Repository',        show:v=>v||'' },
+  { re:/^mindspark:[a-z]+:token$/,     kind:'secret',    section:'Account',    label:'Sign-in token' },
+  { re:/^mindspark:[a-z]+:refresh$/,   kind:'secret',    section:'Account',    label:'Refresh token' },
+  { re:/^mindspark:[a-z]+:clients$/,   kind:'pref',      section:'Account',    label:'OAuth client ids',  show:v=>{ try{ return Object.keys(JSON.parse(v)).length+' instance(s)'; }catch(e){ return '(unreadable)'; } } },
+  // AI - "Run with API" in the Build Prompt panel
+  { key:'mindspark:llm:provider',      kind:'pref',      section:'AI',         label:'Provider',          show:v=>v||'anthropic (default)' },
+  { prefix:'mindspark:llm:model:',     kind:'pref',      section:'AI',         label:'Model',             show:(v,k)=>k.slice('mindspark:llm:model:'.length)+': '+v },
+  { prefix:'mindspark:llm:key:',       kind:'secret',    section:'AI',         label:'API key' },
+  { key:'mindspark:llm:task',          kind:'pref',      section:'AI',         label:'Last task',         show:v=>v ? (v.length>60 ? v.slice(0,60)+'…' : v) : '' },
+  { key:'mindspark:llm:prompts',       kind:'content',   section:'AI',         label:'Saved task presets', show:v=>{ try{ return bpNormalizePrompts(JSON.parse(v)).map(p=>p.label).join(', '); }catch(e){ return '(unreadable)'; } } },
+  { key:'mindspark:llm:providers',     kind:'content',   section:'AI',         label:'Custom providers',   show:v=>{ try{ return JSON.parse(v).map(p=>p.label).join(', '); }catch(e){ return '(unreadable)'; } } },
+  // Sharing
+  { key:'mindspark:sharedMaps',        kind:'pref',      section:'Sharing',    label:'Shared with me',    show:v=>{ try{ return JSON.parse(v).length+' link(s)'; }catch(e){ return '(unreadable)'; } } },
+  { key:'mindspark:sharedByMe',        kind:'pref',      section:'Sharing',    label:'Shared by me',      show:v=>{ try{ return JSON.parse(v).length+' map(s)'; }catch(e){ return '(unreadable)'; } } },
+  // My content
+  { key:'mindspark:custom-theme',      kind:'content',   section:'My content', label:'Custom theme',      show:v=>{ try{ return JSON.parse(v).name; }catch(e){ return '(unreadable)'; } } },
+  { key:'mindspark:layouts',           kind:'content',   section:'My content', label:'Custom layouts',    show:v=>{ try{ return JSON.parse(v).map(l=>l.name).join(', '); }catch(e){ return '(unreadable)'; } } },
+  { key:'mindspark:userTemplates',     kind:'content',   section:'My content', label:'Saved templates',   show:v=>{ try{ return JSON.parse(v).map(t=>t.name).join(', '); }catch(e){ return '(unreadable)'; } } },
+  // Caches - never edited, only counted; "Clear everything" removes them
+  { prefix:'mindspark:backup:',        kind:'cache',     section:'Storage',    label:'Local map backups' },
+  { prefix:'mindspark:view:',          kind:'cache',     section:'Storage',    label:'Remembered camera positions' },
+  { prefix:'mindspark:vars:',          kind:'cache',     section:'Storage',    label:'Prompt variable values' },
+  { prefix:'mindspark:gh-stars:',      kind:'cache',     section:'Storage',    label:'GitHub star counts' },
+  { key:'mindspark:demoSeeded',        kind:'cache',     section:'Storage',    label:'Demo map seeded' },
+  { key:'mindspark:bp:geom',           kind:'cache',     section:'Storage',    label:'Build Prompt panel position' },
+  // Transient - a nonce between opening a popup and its return
+  { key:'mindspark:oauth:state',       kind:'transient' },
+  { key:'mindspark:forge:oauthstate',  kind:'transient' },
+  { key:'mindspark:pendingImport',     kind:'transient' },   // sessionStorage: the editable-copy handoff across a reload
+];
+function prefsRowFor(key){
+  return PREFS.find(r => r.key ? r.key===key : r.prefix ? key.startsWith(r.prefix) : r.re.test(key)) || null;
+}
+// Every stored [key, value] a row covers, in storage order.
+function prefsEntries(row){
+  const out=[];
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(!k || !k.startsWith('mindspark:')) continue;
+      if(prefsRowFor(k)===row) out.push([k, localStorage.getItem(k)||'']);
+    }
+  }catch(e){}
+  return out;
+}
+// localStorage counts UTF-16 code units, so a character costs two bytes. The
+// quota is a browser matter, but every one of them sits near 5 MB per origin.
+const PREFS_QUOTA = 5*1024*1024;
+function prefsBytes(pairs){ return pairs.reduce((n,[k,v])=>n+(k.length+v.length)*2, 0); }
+function prefsFormatBytes(n){ return n<1024 ? n+' B' : n<1024*1024 ? (n/1024).toFixed(1)+' KB' : (n/1024/1024).toFixed(2)+' MB'; }
+// What Export writes and Import accepts: choices and content, never a credential.
+// localStorage holds strings, and several settings are JSON kept as a string
+// (the custom theme, the saved templates, the card folds). The file is meant
+// to be read and hand-edited, so those are written as real JSON objects and
+// arrays, not as escaped strings inside strings; import takes either form.
+// Scalars stay strings: "1" and "0" are how the toggles are stored, and a
+// value like "0.8" must not come back as a number the app never wrote.
+function prefsUnwrap(v){
+  if(typeof v!=='string' || !/^\s*[\[{]/.test(v)) return v;
+  try{ const o=JSON.parse(v); return (o && typeof o==='object') ? o : v; }catch(e){ return v; }
+}
+function prefsExportable(){
+  const out={};
+  for(const row of PREFS){
+    if(row.kind!=='pref' && row.kind!=='content') continue;
+    for(const [k,v] of prefsEntries(row)) out[k]=prefsUnwrap(v);
+  }
+  return out;
+}
+// Repairs rather than rejects: unknown keys and values of no usable shape are
+// dropped, so a file from a newer or older build still restores what it can.
+// An object or array is stored the way the app stores it (as its JSON text); a
+// number is stored as its text; anything else is not a setting.
+function prefsImportable(raw){
+  const src = raw && typeof raw==='object' && !Array.isArray(raw) ? (raw.prefs && typeof raw.prefs==='object' ? raw.prefs : raw) : null;
+  if(!src) return null;
+  const out={};
+  for(const [k,v] of Object.entries(src)){
+    let text=null;
+    if(typeof v==='string') text=v;
+    else if(typeof v==='number' && isFinite(v)) text=String(v);
+    else if(v && typeof v==='object') text=JSON.stringify(v);
+    if(text===null || text.length>200000) continue;
+    const row=prefsRowFor(k);
+    if(row && (row.kind==='pref' || row.kind==='content')) out[k]=text;
+  }
+  return out;
+}
+// Which sections of the card start open. The user's own folds win once they
+// have touched a section; until then the decision is made from the room the
+// card has, in CSS pixels after the interface scale (innerHeight alone would
+// under-count at 0.8x, the same trap the login card documents): a tall window
+// opens everything, a laptop opens the three people come for, a phone opens
+// nothing and the digest on each summary carries the overview. A narrow window
+// counts as small whatever its height: rows wrap there and the card doubles in
+// length. `forced` is a
+// section with something to act on right now (storage nearly full, a session
+// that expired), which opens once regardless - unless the user has already
+// folded it deliberately.
+const PREFS_FOLDS_KEY='mindspark:prefs:folds';
+const PREFS_SECTIONS_MEDIUM=['storage','account','appearance'];
+function prefsFolds(){ try{ const o=JSON.parse(localStorage.getItem(PREFS_FOLDS_KEY)||'{}'); return o && typeof o==='object' && !Array.isArray(o) ? o : {}; }catch(e){ return {}; } }
+function prefsSaveFold(id, open){ const f=prefsFolds(); f[id]=!!open; try{ localStorage.setItem(PREFS_FOLDS_KEY, JSON.stringify(f)); }catch(e){} }
+function prefsDefaultOpen(id, availHeight, availWidth){
+  if(availWidth<600 || availHeight<600) return false;
+  if(availHeight>900) return true;
+  return PREFS_SECTIONS_MEDIUM.includes(id);
+}
+function prefsSectionOpen(id, folds, avail, forced){
+  if(typeof folds[id]==='boolean') return folds[id];
+  if(forced && forced.has(id)) return true;
+  return prefsDefaultOpen(id, avail.h, avail.w);
+}
+function removePrefs(kinds){
+  const gone=[];
+  for(const row of PREFS){
+    if(!kinds.includes(row.kind)) continue;
+    for(const [k] of prefsEntries(row)){ try{ localStorage.removeItem(k); gone.push(k); }catch(e){} }
+  }
+  return gone;
+}
+function showPreferences(){
+  const {m, dismissOn}=openVarForm(`
+      <h2>Preferences</h2>
+      <p class="vf-sub">Everything MindSpark remembers in this browser. Your maps are not here - they live in
+        your repository (or the local server) and are never touched by anything on this card.</p>
+      <div class="pf-body"></div>
+      <div class="vf-actions pf-actions">
+        <button class="vf-clear pf-reset" title="Forget your choices - theme, look, layout, scale, AI provider - but keep your sign-in, your content and local backups">Reset preferences</button>
+        <button class="pf-import">Import…</button>
+        <button class="pf-export">Export</button>
+        <button class="vf-cancel primary">Done</button>
+      </div>
+  `);
+  const body=m.querySelector('.pf-body');
+  const close=()=>m.remove();
+  // Built with DOM calls, not innerHTML: every value here is user data.
+  const el=(tag, cls, text)=>{ const e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; };
+  const button=(label, title, onClick)=>{ const b=el('button','pf-act',label); if(title) b.title=title; b.onclick=onClick; return b; };
+  const render=()=>{
+    const card=m.querySelector('.vf-card'); const scrollTop=card ? card.scrollTop : 0;   // a re-render must not jump the card
+    body.innerHTML='';
+    const sections={};
+    // Fold policy inputs, decided once per render (see prefsSectionOpen).
+    const folds=prefsFolds();
+    const z=(typeof _uiZ==='function' && _uiZ())||1;
+    const avail={ h:(window.innerHeight||0)/z, w:(window.innerWidth||0)/z };
+    const forced=new Set();
+    const section=(id, name)=>{
+      if(!sections[id]){
+        const d=el('details','pf-section'); d.dataset.sec=id;
+        const sum=el('summary'); sum.appendChild(el('h3',null,name)); sum.appendChild(el('span','pf-digest','')); d.appendChild(sum);
+        const rows=el('div','pf-rows'); d.appendChild(rows); body.appendChild(d);
+        sections[id]={ d, rows, dig:sum.querySelector('.pf-digest') };
+      }
+      return sections[id].rows;
+    };
+    const digest=(id, text)=>{ if(sections[id]) sections[id].dig.textContent=text; };
+    // Called once every section exists: applies the policy, then starts
+    // remembering the user's own toggles. The listener is attached after the
+    // programmatic open state has settled (the toggle event is queued, not
+    // synchronous), so a default is never recorded as a choice.
+    const settle=()=>{
+      for(const [id,{d}] of Object.entries(sections)) d.open=prefsSectionOpen(id, folds, avail, forced);
+      setTimeout(()=>{ for(const [id,{d}] of Object.entries(sections)) d.addEventListener('toggle', ()=>prefsSaveFold(id, d.open)); }, 0);
+      if(card) card.scrollTop=scrollTop;
+    };
+    const row=(where, label, value, act)=>{
+      const r=el('div','pf-row'); r.appendChild(el('span','pf-label',label));
+      // A value is text, or a control (select / checkbox / slider) built below.
+      const v=(value && value.nodeType) ? value : el('span','pf-value',value);
+      v.classList.add('pf-value'); r.appendChild(v);
+      if(act) r.appendChild(act);
+      where.appendChild(r);
+      return r;
+    };
+    // Controls apply through the same functions the palette panel and the
+    // chrome use, so the change lands (and persists) exactly as it would there;
+    // the card then redraws so every row shows the new state.
+    const select=(options, current, apply)=>{
+      const s=el('select','pf-select');
+      for(const o of options){ const opt=el('option',null,o.name); opt.value=o.id; if(o.id===current) opt.selected=true; s.appendChild(opt); }
+      s.onchange=()=>{ apply(s.value); render(); };
+      return s;
+    };
+    const check=(text, on, apply)=>{
+      const l=el('label','pf-check'); const c=el('input'); c.type='checkbox'; c.checked=!!on;
+      c.onchange=()=>{ apply(c.checked); render(); };
+      l.appendChild(c); l.appendChild(document.createTextNode(' '+text));
+      return l;
+    };
+    const plainName=n=>String(n).replace(/<br\s*\/?>/gi,' ');
+    // Storage first: the one thing nothing else in the app shows.
+    const all=[]; try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k && k.startsWith('mindspark:')) all.push([k, localStorage.getItem(k)||'']); } }catch(e){}
+    const used=prefsBytes(all);
+    const st=section('storage','Storage');
+    const meter=el('div','pf-meter'); const bar=el('div','pf-meter-bar'); bar.style.width=Math.min(100, 100*used/PREFS_QUOTA).toFixed(1)+'%';
+    if(used>PREFS_QUOTA*0.8){ bar.classList.add('warn'); forced.add('storage'); }
+    meter.appendChild(bar); st.appendChild(meter);
+    row(st, 'Used', prefsFormatBytes(used)+' of about '+prefsFormatBytes(PREFS_QUOTA)+' ('+all.length+' entries)');
+    const backups=prefsEntries(prefsRowFor('mindspark:backup:x'));
+    digest('storage', prefsFormatBytes(used)+' used \u00b7 '+backups.length+' backup'+(backups.length===1?'':'s'));
+    row(st, 'Local map backups', backups.length+' map(s), '+prefsFormatBytes(prefsBytes(backups)),
+      backups.length ? button('Clear backups', 'Backups are copies of maps already saved to your repository, kept for offline reads. Safe to clear.', ()=>{
+        if(!confirm('Clear '+backups.length+' local backup(s)? Your maps stay in your repository.')) return;
+        for(const [k] of backups){ try{ localStorage.removeItem(k); }catch(e){} }
+        render(); toast('Local backups cleared');
+      }) : null);
+    // Account
+    const ac=section('account','Account');
+    if(MODE==='server'){ row(ac, 'Storage', 'local server (SQLite) - no sign-in'); digest('account', 'local server'); }
+    else {
+      const user=(typeof CloudStore!=='undefined' && CloudStore.user) ? (CloudStore.user.login||CloudStore.user.username||'') : '';
+      digest('account', user ? user+' on '+forgeName() : 'not signed in');
+      if(typeof CloudStore!=='undefined' && CloudStore.sessionExpired) forced.add('account');
+      const forge=localStorage.getItem('mindspark:forge')||'';
+      row(ac, 'Signed in as', user ? user+' on '+forgeName() : '(not signed in)',
+        user ? button('Sign out', null, ()=>{ if(confirm('Sign out of MindSpark? Your maps stay safely in your '+forgeName()+' repo.')){ CloudStore.logout(); location.reload(); } }) : null);
+      const inst=localStorage.getItem('mindspark:forge:instance'); if(inst) row(ac, 'Instance', inst);
+      const repo=localStorage.getItem('mindspark:forge:repo'); if(forge) row(ac, 'Repository', repo||DEFAULT_REPO);
+      const tok=prefsEntries(prefsRowFor('mindspark:x:token')).length, ref=prefsEntries(prefsRowFor('mindspark:x:refresh')).length;
+      row(ac, 'Credentials', tok ? 'sign-in token stored'+(ref ? ' (with refresh token)' : '') : 'none stored');
+    }
+    // AI
+    const ai=section('ai','AI (Run with API)');
+    const prov=localStorage.getItem('mindspark:llm:provider')||'anthropic';
+    let keysStored=0;
+    for(const [id,cfg] of Object.entries(llmProviders())){
+      let key=''; try{ key=localStorage.getItem('mindspark:llm:key:'+id)||''; }catch(e){}
+      if(key) keysStored++;
+      const acts=el('span','pf-acts');
+      if(key) acts.appendChild(button('Forget key', 'Remove this provider\u2019s API key from this browser', ()=>{ try{ localStorage.removeItem('mindspark:llm:key:'+id); }catch(e){} render(); toast('Key for '+cfg.label+' removed'); }));
+      if(cfg.custom) acts.appendChild(button('Remove', 'Remove this provider, its key and its remembered model', ()=>{
+        if(!confirm('Remove the provider "'+cfg.label+'"?')) return;
+        saveLlmProviders(loadLlmProviders().filter(p=>p.id!==id));
+        try{ localStorage.removeItem('mindspark:llm:key:'+id); localStorage.removeItem('mindspark:llm:model:'+id); if(localStorage.getItem('mindspark:llm:provider')===id) localStorage.removeItem('mindspark:llm:provider'); }catch(e){}
+        render();
+      }));
+      const status=(cfg.needsKey ? (key ? 'key stored' : 'no key') : (key ? 'key stored (optional)' : 'no key needed'))+' \u00b7 model: '+(llmModelFor(id)||'(none set)')+(cfg.custom ? ' \u00b7 '+cfg.url.replace(/^https?:\/\//,'').split('/')[0] : '');
+      row(ai, cfg.label+(id===prov?' (current)':''), status, acts.childNodes.length ? acts : null);
+    }
+    // Add a provider: label, URL, wire shape, default model, whether it wants a
+    // key. The id is made from the label; the validator is the same one an
+    // imported file goes through, so the form cannot store what a file could not.
+    const addWrap=el('div','pf-addprov');
+    const addBtn=button('Add provider\u2026', 'Any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, Mistral, Together, a gateway) or an Anthropic-compatible one', ()=>{ addBtn.hidden=true; form.hidden=false; form.querySelector('input').focus(); });
+    const form=el('div','pf-addprov-form'); form.hidden=true;
+    const field=(ph, type='text')=>{ const i=el('input'); i.type=type; i.placeholder=ph; i.className='pf-in'; i.setAttribute('aria-label', ph); return i; };
+    const fLabel=field('Name, e.g. Ollama (laptop)'), fUrl=field('Endpoint URL, e.g. http://localhost:11434/v1/chat/completions'), fModel=field('Default model, e.g. llama3.1');
+    const fShape=el('select','pf-select'); for(const [v,t] of [['openai','OpenAI-compatible (chat/completions)'],['anthropic','Anthropic-compatible (messages)']]){ const o=el('option',null,t); o.value=v; fShape.appendChild(o); }
+    const fKey=el('label','pf-check'); const fKeyIn=el('input'); fKeyIn.type='checkbox'; fKeyIn.checked=true; fKey.appendChild(fKeyIn); fKey.appendChild(document.createTextNode(' Needs an API key'));
+    const fAdd=button('Add', null, ()=>{
+      const label=fLabel.value.trim(); if(!label){ toast('Give the provider a name'); fLabel.focus(); return; }
+      let id=label.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,28)||'provider';
+      const taken=new Set(Object.keys(llmProviders())); let base=id, n=2; while(taken.has(id)) id=base+'-'+(n++);
+      const list=loadLlmProviders().concat([{ id, label, url:fUrl.value.trim(), shape:fShape.value, defaultModel:fModel.value.trim(), needsKey:fKeyIn.checked }]);
+      if(validateLlmProviders(list).length!==list.length){ toast('Check the URL: https://, or http:// on localhost or a private network'); fUrl.focus(); return; }
+      if(!saveLlmProviders(list)){ toast('Could not save - storage is blocked or full'); return; }
+      if(!cspAllowsInstance(fUrl.value.trim())) toast('Added. Its origin also has to be allowed in this deployment\u2019s Content-Security-Policy before it can be called.');
+      render();
+    });
+    const fCancel=button('Cancel', null, ()=>{ form.hidden=true; addBtn.hidden=false; });
+    for(const x of [fLabel, fUrl, fShape, fModel, fKey]) form.appendChild(x);
+    const fActs=el('div','pf-acts'); fActs.appendChild(fAdd); fActs.appendChild(fCancel); form.appendChild(fActs);
+    addWrap.appendChild(addBtn); addWrap.appendChild(form); ai.appendChild(addWrap);
+    const presets=bpLoadPrompts();
+    digest('ai', (keysStored ? keysStored+' key'+(keysStored===1?'':'s')+' stored' : 'no keys stored')+' \u00b7 '+prov+(presets.length ? ' \u00b7 '+presets.length+' preset'+(presets.length===1?'':'s') : ''));
+    // Task presets: the built-in five are code and always there; the user's own
+    // are listed here with a delete each and an add form, the same data the
+    // "+ Save" button in Build Prompt writes.
+    const pr=row(ai, 'Task presets', presets.length ? '' : 'built-ins only (Summarize, Expand, Rewrite, Outline, Review)');
+    for(const p of presets){
+      const chip=el('span','pf-chip',p.label); chip.title=p.task;
+      const x=button('\u00d7', 'Delete this preset', ()=>{ bpSavePrompts(bpLoadPrompts().filter(q=>q.task!==p.task)); render(); });
+      x.className='pf-chip-x'; chip.appendChild(x); pr.querySelector('.pf-value').appendChild(chip);
+    }
+    const addPre=el('div','pf-addprov');
+    const preBtn=button('Add preset\u2026', 'A named instruction that appears as a chip in Build Prompt', ()=>{ preBtn.hidden=true; preForm.hidden=false; preForm.querySelector('input').focus(); });
+    const preForm=el('div','pf-addprov-form'); preForm.hidden=true;
+    const pLabel=el('input'); pLabel.type='text'; pLabel.className='pf-in'; pLabel.placeholder='Name, e.g. Translate'; pLabel.setAttribute('aria-label','Preset name');
+    const pTask=el('textarea'); pTask.className='pf-in'; pTask.rows=2; pTask.placeholder='Instruction, e.g. Translate the following branch into Hindi:'; pTask.setAttribute('aria-label','Preset instruction');
+    const pAdd=button('Add', null, ()=>{
+      const label=pLabel.value.trim(), task=pTask.value.trim();
+      if(!task){ toast('Enter the instruction'); pTask.focus(); return; }
+      const list=bpLoadPrompts();
+      if(list.some(q=>q.task===task) || BP_TASKS.some(b=>b.task===task)){ toast('That instruction is already a preset'); return; }
+      if(list.length>=BP_PRESET_LIMIT){ toast(BP_PRESET_LIMIT+' presets is the limit - delete one first'); return; }
+      if(!bpSavePrompts(list.concat([{ label, task }]))){ toast('Could not save - storage is blocked or full'); return; }
+      render();
+    });
+    const pCancel=button('Cancel', null, ()=>{ preForm.hidden=true; preBtn.hidden=false; });
+    preForm.appendChild(pLabel); preForm.appendChild(pTask);
+    const pActs=el('div','pf-acts'); pActs.appendChild(pAdd); pActs.appendChild(pCancel); preForm.appendChild(pActs);
+    addPre.appendChild(preBtn); addPre.appendChild(preForm); ai.appendChild(addPre);
+    // Sharing
+    const shared=_sharedStore(), byMe=_sharedByMeStore();
+    if(shared.length || byMe.length){
+      const sh=section('sharing','Sharing');
+      digest('sharing', shared.length+' with me \u00b7 '+byMe.length+' by me');
+      row(sh, 'Shared with me', shared.length+' link(s)');
+      row(sh, 'Shared by me', byMe.length+' map(s)', button('Forget all', 'Forgets the links in this browser. The shared maps themselves are untouched.', ()=>{
+        if(!confirm('Forget every shared link in this browser? Anyone who has the links can still open them.')) return;
+        _saveSharedStore([]); _saveSharedByMeStore([]); render(); try{ refreshList(); }catch(e){}
+      }));
+    }
+    // My content
+    const ct=section('content','My content');
+    const theme=loadCustomTheme();
+    row(ct, 'Custom theme', theme ? theme.name : 'none', theme ? button('Remove', null, ()=>{
+      if(!confirm('Remove the custom theme "'+theme.name+'"?')) return;
+      saveCustomTheme(null); if((document.documentElement.getAttribute('data-theme')||'')==='custom') applyTheme('light'); render();
+    }) : null);
+    const layouts=loadCustomLayouts();
+    const lr=row(ct, 'Custom layouts', layouts.length ? '' : 'none');
+    for(const l of layouts){
+      const chip=el('span','pf-chip',l.name);
+      const x=button('×', 'Delete this layout', ()=>{ saveCustomLayouts(loadCustomLayouts().filter(o=>o.id!==l.id)); render(); });
+      x.className='pf-chip-x'; chip.appendChild(x); lr.querySelector('.pf-value').appendChild(chip);
+    }
+    const tpls=userTemplateList();
+    digest('content', (theme||layouts.length||tpls.length)
+      ? [theme?'1 theme':'', layouts.length?layouts.length+' layout'+(layouts.length===1?'':'s'):'', tpls.length?tpls.length+' template'+(tpls.length===1?'':'s'):''].filter(Boolean).join(', ')
+      : 'none');
+    const tr=row(ct, 'Saved templates', tpls.length ? '' : 'none');
+    for(const t of tpls){
+      const chip=el('span','pf-chip',t.name);
+      const x=button('×', 'Delete this template', ()=>{ deleteUserTemplate(t.id); render(); });
+      x.className='pf-chip-x'; chip.appendChild(x); tr.querySelector('.pf-value').appendChild(chip);
+    }
+    // Appearance - editable, through the same apply functions the panel uses
+    const ap=section('appearance','Appearance');
+    const themeOpts=THEMES.map(t=>({id:t.id, name:plainName(t.name)}));
+    const custom=loadCustomTheme(); if(custom) themeOpts.push({id:'custom', name:custom.name+' (custom)'});
+    {
+      const tId=document.documentElement.getAttribute('data-theme')||'light', lId=document.documentElement.getAttribute('data-look')||'office', uId=localStorage.getItem('mindspark:uiLayout')||'modern';
+      const nameOf=(list,id)=>{ const o=list.find(x=>x.id===id); return o ? plainName(o.name) : id; };
+      digest('appearance', nameOf(themeOpts,tId)+' \u00b7 '+nameOf(LOOKS,lId)+' \u00b7 '+nameOf(UI_LAYOUTS,uId)+' \u00b7 '+Math.round(getUiScale()*100)+'%'+(isUiScaleAuto()?' auto':''));
+    }
+    row(ap, 'Colour theme', select(themeOpts, (document.documentElement.getAttribute('data-theme')||'light'), applyTheme));
+    row(ap, '"I am" look', select(LOOKS.map(l=>({id:l.id, name:plainName(l.name)})), (document.documentElement.getAttribute('data-look')||'office'), applyLook));
+    row(ap, 'Interface layout', select(UI_LAYOUTS.map(l=>({id:l.id, name:plainName(l.name)})), (localStorage.getItem('mindspark:uiLayout')||'modern'), applyUiLayout));
+    // Scale: a slider for a fixed value, or Auto (fits the window; the default).
+    const sc=el('span','pf-scale');
+    const rng=el('input'); rng.type='range'; rng.min='50'; rng.max='200'; rng.step='5'; rng.value=String(Math.round(getUiScale()*100));
+    const pct=el('span','pf-scale-pct', Math.round(getUiScale()*100)+'%'+(isUiScaleAuto()?' (auto)':''));
+    rng.oninput=()=>{ pct.textContent=rng.value+'%'; };
+    rng.onchange=()=>{ setUiScale(parseInt(rng.value,10)/100); render(); };
+    sc.appendChild(rng); sc.appendChild(pct);
+    sc.appendChild(check('Auto', isUiScaleAuto(), on=>{ if(on) setUiScaleAuto(); else setUiScale(getUiScale()); }));
+    row(ap, 'Interface scale', sc);
+    row(ap, 'Sidebar width', localStorage.getItem('mindspark:sideW')||'default', localStorage.getItem('mindspark:sideW') ? button('Reset', 'Back to the default width on the next load', ()=>{ try{ localStorage.removeItem('mindspark:sideW'); }catch(e){} render(); }) : null);
+    row(ap, 'Minimap', check('Collapsed', isOverviewCollapsed(), setOverviewCollapsed));
+    row(ap, 'Zen toolbar', check('Pinned (always visible in the Zen layout)', document.body.classList.contains('zen-pinned'), setZenPinned));
+    row(ap, 'Tabbed workspace', check('On', tabsEnabled, setTabsEnabled));
+    // The nuclear option, last and unstyled as primary.
+    const dz=section('everything','Everything');
+    digest('everything', 'start over');
+    row(dz, 'Forget all of it', 'sign-in, choices, content, backups - back to a first visit',
+      button('Clear everything', null, ()=>{
+        if(!confirm('Clear everything MindSpark stored in this browser and reload? You will be signed out. Nothing in your repository is affected.')) return;
+        for(const [k] of all){ try{ localStorage.removeItem(k); }catch(e){} }
+        try{ sessionStorage.removeItem('mindspark:pendingImport'); }catch(e){}
+        location.reload();
+      }));
+    settle();
+  };
+  render();
+  m.querySelector('.pf-reset').onclick=()=>{
+    if(!confirm('Reset your preferences (theme, look, layout, scale, AI provider and model, sharing lists) and reload? Sign-in, saved content and backups are kept.')) return;
+    removePrefs(['pref']); location.reload();
+  };
+  m.querySelector('.pf-export').onclick=()=>{
+    const data={ app:'mindspark', v:2, exported:new Date().toISOString(), prefs:prefsExportable() };   // v2: JSON-valued settings as real JSON
+    download(new Blob([JSON.stringify(data, null, 2)],{type:'application/json'}), 'mindspark-preferences.json');
+    toast('Preferences exported (no credentials included)');
+  };
+  m.querySelector('.pf-import').onclick=()=>{
+    const inp=document.createElement('input'); inp.type='file'; inp.accept='.json,application/json';
+    inp.onchange=async()=>{
+      const f=inp.files[0]; if(!f) return;
+      let parsed=null; try{ parsed=prefsImportable(JSON.parse(await f.text())); }catch(e){}
+      const n=parsed ? Object.keys(parsed).length : 0;
+      if(!n){ toast('That file holds no MindSpark preferences'); return; }
+      if(!confirm('Apply '+n+' setting(s) from '+f.name+' and reload?')) return;
+      let failed=0;
+      for(const [k,v] of Object.entries(parsed)){ try{ localStorage.setItem(k,v); }catch(e){ failed++; } }
+      if(failed){ toast(failed+' setting(s) could not be saved - storage may be full'); return; }
+      location.reload();
+    };
+    inp.click();
+  };
+  dismissOn(close);
+}
+$('#prefsBtn')?.addEventListener('click', showPreferences);
 
 // ===== Keyboard shortcuts help - press '?' to open =====
 function showKeyboardHelp(){

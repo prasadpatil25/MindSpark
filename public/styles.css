@@ -3221,6 +3221,52 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
     resize:vertical; outline:none; min-height:38px;
   }
   .vf-input:focus{border-color:var(--accent); background:var(--node-bg, #fff)}
+  /* Preferences card (showPreferences): one section per PREFS group, each a
+     label / value / action row. Chips list the user's own layouts and
+     templates with a delete each; the meter is storage used against the
+     ~5 MB the browser allows this origin. */
+  /* Each section is a <details>: the summary holds the heading and a one-line
+     digest so a folded section still tells you what is inside. Which start
+     open is decided by prefsSectionOpen() in app.js. */
+  .pf-section{margin:10px 0 0; padding-top:8px; border-top:1px solid var(--chrome-edge)}
+  .pf-section:first-child{margin-top:0; padding-top:0; border-top:none}
+  .pf-section > summary{display:flex; align-items:baseline; gap:10px; cursor:pointer; list-style:none; padding:4px 0; border-radius:6px}
+  .pf-section > summary::-webkit-details-marker{display:none}
+  .pf-section > summary::before{content:'\25B8'; color:var(--ink-soft); font-size:11px; flex:0 0 10px}
+  .pf-section[open] > summary::before{content:'\25BE'}
+  .pf-section > summary:hover{background:var(--hover)}
+  .pf-section > summary:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  .pf-section h3{margin:0; font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); flex:0 0 auto}
+  .pf-digest{font-size:12px; color:var(--ink-soft); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1}
+  .pf-section[open] .pf-digest{display:none}
+  .pf-rows{padding-top:4px}
+  .pf-actions{flex-wrap:wrap}   /* four buttons; on a phone they take two rows rather than the card scrolling sideways */
+  .pf-acts{display:inline-flex; gap:6px; flex-wrap:wrap}
+  .pf-addprov{margin-top:6px}
+  .pf-addprov-form{display:flex; flex-direction:column; gap:6px; margin-top:6px; padding:10px; border:1px dashed var(--line); border-radius:8px}
+  .pf-addprov-form[hidden]{display:none}   /* display:flex above would otherwise beat the hidden attribute */
+  .pf-in{font-family:inherit; font-size:13px; padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--node-bg,#fff); color:var(--ink); width:100%; box-sizing:border-box}
+  .pf-row{display:flex; align-items:center; gap:10px; padding:5px 0; font-size:13px; min-height:28px}
+  .pf-label{flex:0 0 150px; color:var(--ink-soft)}
+  .pf-value{flex:1; min-width:0; color:var(--ink); overflow-wrap:anywhere; display:flex; flex-wrap:wrap; gap:4px; align-items:center}
+  .pf-act{padding:4px 10px; border-radius:6px; border:1px solid var(--line); background:var(--node-bg,#fff); color:var(--ink);
+    font-family:inherit; font-size:12px; cursor:pointer; white-space:nowrap}
+  .pf-act:hover{background:var(--hover)}
+  .pf-chip{display:inline-flex; align-items:center; gap:4px; padding:2px 4px 2px 8px; border-radius:999px; border:1px solid var(--line); font-size:12px}
+  .pf-chip-x{border:none; background:transparent; color:var(--ink-soft); cursor:pointer; font-size:14px; line-height:1; padding:0 4px; border-radius:999px}
+  .pf-chip-x:hover{background:var(--hover); color:var(--ink)}
+  .pf-meter{height:6px; border-radius:999px; background:var(--hover); overflow:hidden; margin:2px 0 6px}
+  .pf-meter-bar{height:100%; background:var(--accent); border-radius:999px}
+  .pf-meter-bar.warn{background:#c62828}
+  .pf-note{font-size:12px; color:var(--ink-soft); margin-top:4px}
+  .pf-select{font-family:inherit; font-size:13px; padding:4px 8px; border-radius:6px; border:1px solid var(--line);
+    background:var(--node-bg,#fff); color:var(--ink); max-width:100%}
+  .pf-check{display:inline-flex; align-items:center; gap:2px; font-size:13px; cursor:pointer}
+  .pf-check input{accent-color:var(--accent)}
+  .pf-scale{display:inline-flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .pf-scale input[type=range]{width:140px; accent-color:var(--accent)}
+  .pf-scale-pct{min-width:64px; font-variant-numeric:tabular-nums}
+  @media (max-width:520px){ .pf-row{flex-wrap:wrap} .pf-label{flex-basis:100%} }
   .vf-actions{display:flex; gap:8px; margin-top:18px; align-items:center}
   .vf-actions button{
     padding:9px 16px; border-radius:8px; border:1px solid var(--line);
@@ -3995,10 +4041,10 @@ body.ui-zen .topbar:has(.search-wrap.open){max-width:98vw}
 body.ui-zen .topbar:has(.search-wrap.open) .title-edit{min-width:60px;max-width:160px}
 /* While the find field is open the least-used actions step aside, so the
    token counter and pin stay on the first row instead of being clipped.
-   Present (▶) and Tabbed workspace (▭) are the primary reclaim per spec;
-   Donate (♥) is also low-priority while searching and avoids the ~2px clip
-   at 1024px / ~50px at 960px that otherwise hides the pin. */
-body.ui-zen .topbar:has(.search-wrap.open) #presentBtn,
+   Tabbed workspace (▭) is the primary reclaim per spec; Donate (♥) is also
+   low-priority while searching and avoids the ~2px clip at 1024px / ~50px at
+   960px that otherwise hides the pin. (Present used to be reclaimed here too;
+   that button is gone from the bar.) */
 body.ui-zen .topbar:has(.search-wrap.open) #tabsBtn,
 body.ui-zen .topbar:has(.search-wrap.open) #donateBtn{display:none}
 @media (max-width:1024px){

@@ -52,20 +52,21 @@ test('mobile zen topbar strip must not keep the horizontal centering transform',
 // Even with the wider 98vw cap, the 230px find field can push the token
 // counter and pin off the single row at ~1024px (pin clipped by ~2px) and at
 // ~960px (both clipped). While that field is open the least-used actions
-// must step aside so the single-row bar reclaims space. Present (▶) and
-// Tabbed workspace (▭) are the primary reclaim per spec; Donate (♥) is
-// also low-priority while searching and covers the remaining overflow.
-test('zen topbar hides present/tabs (+ donate) toggles while the find field is open', () => {
+// must step aside so the single-row bar reclaims space. Tabbed workspace (▭)
+// is the primary reclaim per spec; Donate (♥) is also low-priority while
+// searching and covers the remaining overflow. (Present was in this rule
+// until its toolbar button was removed.)
+test('zen topbar hides tabs (+ donate) toggles while the find field is open', () => {
   const rule = css.match(
-    /body\.ui-zen \.topbar:has\(\.search-wrap\.open\) #presentBtn,[\s\S]*?#donateBtn\{[^}]*\}/);
-  assert.ok(rule, 'the search-open space-reclaim rule must exist (present + tabs + donate)');
+    /body\.ui-zen \.topbar:has\(\.search-wrap\.open\) #tabsBtn,[\s\S]*?#donateBtn\{[^}]*\}/);
+  assert.ok(rule, 'the search-open space-reclaim rule must exist (tabs + donate)');
   assert.match(rule[0], /display:\s*none/,
-    'present/tabs/donate must be display:none until search closes');
-  // Guard the original spec pair still present - don't regress to hiding only donate
-  assert.match(rule[0], /#presentBtn/,
-    'presentBtn must be in the hide rule');
+    'tabs/donate must be display:none until search closes');
   assert.match(rule[0], /#tabsBtn/,
     'tabsBtn must be in the hide rule');
+  const html = readFileSync(join(here, '..', 'public', 'index.html'), 'utf8');
+  assert.ok(!/#presentBtn/.test(css) && !html.includes('id="presentBtn"') && !appJs.includes('#presentBtn'),
+    'the present button is gone from the bar, the styles and the wiring');
 });
 
 // Narrow windows (≤1024) still clip even after the three above; reclaim one
