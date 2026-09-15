@@ -1483,7 +1483,7 @@ function render(){
   // or by a :root[data-look] rule, so the look id and lookConfig already cover
   // them. Themes cannot move them, being colours only. An attribute read is free.
   const _metricsKey=[map.id, map.rootId, map.color, mapStyle, map.layout,
-    document.documentElement.getAttribute('data-look')||'office', _fontEpoch,
+    document.documentElement.getAttribute('data-look')||'office', _fontEpoch, linkFaviconsEnabled()?'fav':'nofav',
     JSON.stringify(map.styleConfig||{}), JSON.stringify(map.lookConfig||{})].join('|');
   const _seen=new Set();
   // nodes
@@ -1765,6 +1765,20 @@ function prettyUrl(u){
     return label;
   }catch(_){ return u; }
 }
+// Link favicons come from DuckDuckGo's icon service, which tells a third party
+// the hostname of every link in a map - at odds with "no server in between",
+// and the fetch leaves the user's browser whatever hosts the app. So they are
+// a per-browser choice that starts OFF (ToDo #3, option 1); the toggle lives
+// in Preferences > Appearance and names the host. Both places that fetch an
+// icon ask here: the live render below and the PNG export.
+const LINK_FAVICONS_KEY = 'mindspark:linkFavicons';
+function linkFaviconsEnabled(){
+  try{ return localStorage.getItem(LINK_FAVICONS_KEY)==='1'; }catch(e){ return false; }
+}
+function setLinkFavicons(on){
+  try{ localStorage.setItem(LINK_FAVICONS_KEY, on?'1':'0'); }catch(e){}
+  if(map) render();   // the flag is part of every node's signature, so this rebuilds them
+}
 function appendTextWithLinks(container, text){
   let last=0, m;
   URL_RE.lastIndex=0;
@@ -1775,7 +1789,7 @@ function appendTextWithLinks(container, text){
     a.className='node-link';
     // Favicon (best-effort; removed if it fails to load - e.g. offline).
     let _host=''; try{ _host=new URL(m[0]).hostname.replace(/^www\./,''); }catch(_){}
-    if(_host){
+    if(_host && linkFaviconsEnabled()){
       const fav=document.createElement('img');
       fav.className='node-link-fav'; fav.alt=''; fav.loading='lazy'; fav.decoding='async';
       fav.src='https://icons.duckduckgo.com/ip3/'+_host+'.ico';
@@ -2126,6 +2140,107 @@ function renderFormattedWithMath(container, text){
     }
     node.parentNode.replaceChild(frag, node);
   });
+}
+// ---- Math inside the notes editor --------------------------------------------
+// $...$ and $$...$$ render IN PLACE, the moment the closing $ is typed, into an
+// uneditable <span class="np-math"> that holds the MathML and, in data-tex, the
+// source. Click a formula to get its source back for editing (it renders again
+// when the caret leaves it); Backspace right after one does the same instead
+// of deleting it. What gets STORED is always the $ source - npSerialize() turns
+// the spans back - so notes stay editable and round-trip to Markdown, exactly
+// as node text does. The keystroke path goes through execCommand('insertHTML')
+// so the browser's own undo stack knows about the swap.
+function npMathSpan(tex, display){
+  let mathml=null; try{ mathml=latexToMathML(tex, display); }catch(e){ mathml=null; }
+  if(!mathml) return null;
+  const span=document.createElement('span');
+  span.className='np-math'; span.contentEditable='false';
+  span.dataset.tex=tex; span.dataset.display=display?'1':'0';
+  span.title='Click to edit this formula';
+  span.innerHTML=mathml;
+  return span;
+}
+function npMathSource(span){ const d=span.dataset.display==='1'; return (d?'$$':'$')+span.dataset.tex+(d?'$$':'$'); }
+// Render every complete expression in one text node (the one the caret just
+// left, or each under the editor on open). Text that does not parse as LaTeX
+// stays as it is. Returns the number of formulas made.
+function npRenderText(node){
+  const s=node.nodeValue||''; if(s.indexOf('$')<0 || !containsMath(s)) return 0;
+  const re=new RegExp(MATH_DELIM_RE.source,'g'), frag=document.createDocumentFragment();
+  let last=0, n=0, m;
+  while((m=re.exec(s))){
+    const span=npMathSpan(m[1]!=null?m[1]:m[2], m[1]!=null); if(!span) continue;
+    if(m.index>last) frag.appendChild(document.createTextNode(s.slice(last, m.index)));
+    frag.appendChild(span); last=m.index+m[0].length; n++;
+  }
+  if(!n) return 0;
+  if(last<s.length) frag.appendChild(document.createTextNode(s.slice(last)));
+  node.parentNode.replaceChild(frag, node);
+  return n;
+}
+function npRenderAll(root){
+  const walker=document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const hits=[]; let tn;
+  while((tn=walker.nextNode())) hits.push(tn);
+  return hits.reduce((n, node)=>n+npRenderText(node), 0);
+}
+// The stored form: spans back to their $ source, then the usual sanitizer.
+function npSerialize(editor){
+  const clone=editor.cloneNode(true);
+  clone.querySelectorAll('.np-math').forEach(sp=>sp.replaceWith(document.createTextNode(npMathSource(sp))));
+  return sanitizeNotes(clone.innerHTML.replace(/\u200B/g,''));   // the caret anchors from npRenderAtCaret
+}
+// A formula back to its source, with the caret just inside the closing $.
+// The caret anchor npRenderAtCaret put after it goes too, so an expression
+// edited and rendered again does not collect one per round.
+function npUnrender(span){
+  const t=document.createTextNode(npMathSource(span)); span.replaceWith(t);
+  const nx=t.nextSibling;
+  if(nx && nx.nodeType===3 && nx.nodeValue.charAt(0)==='\u200B'){ nx.nodeValue=nx.nodeValue.slice(1); if(!nx.nodeValue) nx.remove(); }
+  const r=document.createRange(); r.setStart(t, t.nodeValue.length-(span.dataset.display==='1'?2:1)); r.collapse(true);
+  const sel=getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  return t;
+}
+// After a keystroke: the text before the caret ends in a complete expression,
+// so the user has just typed its closing $ - render it where it stands. The
+// inline form may not start right after another $: while $$...$$ is being
+// typed the text reads $$x$ for a moment, and that has to wait for its second
+// closing $ rather than render $x$ inline with a stray $ on either side.
+const NP_MATH_AT_END=/(\$\$([\s\S]+?)\$\$|(?<!\$)\$(?!\s)([^$\n]+?)(?<!\s)\$)$/;
+function npRenderAtCaret(editor){
+  const sel=getSelection(); if(!sel||!sel.rangeCount||!sel.isCollapsed) return false;
+  const node=sel.anchorNode; if(!node||node.nodeType!==3||!editor.contains(node)) return false;
+  const m=node.nodeValue.slice(0, sel.anchorOffset).match(NP_MATH_AT_END); if(!m) return false;
+  const display=m[2]!=null, span=npMathSpan(display?m[2]:m[3], display); if(!span) return false;
+  const start=sel.anchorOffset-m[0].length, end=sel.anchorOffset;
+  const r=document.createRange(); r.setStart(node, start); r.setEnd(node, end);
+  sel.removeAllRanges(); sel.addRange(r);
+  // insertHTML keeps the browser's undo stack in step. It is a no-op when
+  // called from inside another command's input event, which is why the caller
+  // defers to a timeout; if it still declines, swap the DOM by hand rather
+  // than leave the source selected for the next keystroke to overwrite.
+  // When the formula is the last thing in its text, a zero-width space goes
+  // after the span to give the caret a text node to land in; without it the
+  // next keystrokes have nowhere to go. npSerialize strips it again, and
+  // npUnrender drops it, so the notes never collect them.
+  const atEnd=end===node.nodeValue.length, anchor=atEnd?'&#8203;':'', count=editor.querySelectorAll('.np-math').length;
+  let ok=false; try{ ok=document.execCommand('insertHTML', false, span.outerHTML+anchor); }catch(e){ ok=false; }
+  if(!ok || editor.querySelectorAll('.np-math').length===count){
+    const after=node.splitText(end); node.nodeValue=node.nodeValue.slice(0, start);
+    node.parentNode.insertBefore(span, after);
+    if(atEnd) after.nodeValue='\u200B';
+    const c=document.createRange(); c.setStart(after, atEnd ? 1 : 0); c.collapse(true);
+    sel.removeAllRanges(); sel.addRange(c);
+  }
+  return true;
+}
+// The formula sitting immediately before a collapsed caret, if any.
+function npSpanBeforeCaret(editor){
+  const sel=getSelection(); if(!sel||!sel.rangeCount||!sel.isCollapsed) return null;
+  let node=sel.anchorNode, off=sel.anchorOffset;
+  if(node.nodeType===3){ if(node.nodeValue.slice(0, off).replace(/\u200B/g,'')) return null; node=node.previousSibling; }   // only the anchor before the caret: still "right after"
+  else { node=node.childNodes[off-1]||null; }
+  return (node && node.nodeType===1 && node.classList.contains('np-math') && editor.contains(node)) ? node : null;
 }
 // Formats a node's created/updated timestamp for the hover watermark - e.g. "Jul 15, 2026 · 3:42 PM".
 // Uses the browser's own locale, same as everything else in the app that shows a date.
@@ -6767,7 +6882,7 @@ function showNotesEditor(nodeId){
       <button data-c="unlink"      title="Remove link">⊘🔗</button>
       <button data-c="removeFormat" title="Clear formatting">⨯</button>
     </div>
-    <div class="np-editor" contenteditable="true" data-placeholder="Type your notes - Markdown-style formatting available via the toolbar."></div>
+    <div class="np-editor" contenteditable="true" data-placeholder="Type your notes - formatting via the toolbar, $x^2$ or $$...$$ for math."></div>
     <div class="np-actions">
       ${has?'<button class="np-clear">Remove</button>':''}
       <button class="np-cancel">Cancel</button>
@@ -6783,6 +6898,23 @@ function showNotesEditor(nodeId){
   popup.addEventListener('mousedown',e=>e.stopPropagation());
   const editor=popup.querySelector('.np-editor');
   editor.innerHTML = sanitizeNotes(n.notes||'');   // safe: inert-parsed, whitelisted
+  npRenderAll(editor);                              // saved $...$ shows rendered from the start
+  // Math renders in place as it is typed (see npRenderAtCaret). A formula the
+  // user opened for editing (click, or Backspace onto it) is the one text node
+  // the caret is in; it renders again once the caret leaves it.
+  let editingNode=null;
+  // Not after undo/redo: Ctrl+Z on a fresh formula gives its source back, and
+  // rendering that again at once would make the undo impossible to see.
+  editor.addEventListener('input', e=>{ if(!e.isComposing && !/^history/.test(e.inputType||'')) setTimeout(()=>npRenderAtCaret(editor), 0); });
+  editor.addEventListener('click', e=>{ const sp=e.target.closest('.np-math'); if(sp && editor.contains(sp)){ e.preventDefault(); editingNode=npUnrender(sp); } });
+  const onSel=()=>{
+    if(!editingNode || !editingNode.parentNode) return;
+    const sel=getSelection();
+    if(sel && sel.rangeCount && sel.anchorNode===editingNode) return;   // still in it
+    const node=editingNode; editingNode=null;
+    npRenderText(node);
+  };
+  document.addEventListener('selectionchange', onSel);
   editor.focus();
   // Place cursor at end
   const range=document.createRange(); range.selectNodeContents(editor); range.collapse(false);
@@ -6802,10 +6934,11 @@ function showNotesEditor(nodeId){
     });
   });
 
-  const close=()=>popup.remove();
+  const close=()=>{ document.removeEventListener('selectionchange', onSel); popup.remove(); };
   const save=()=>{
-    // Robust sanitize (inert parse + tag/attr whitelist) before storing.
-    const html=sanitizeNotes(editor.innerHTML);
+    // Stored as $ source (rendered formulas turned back), then the robust
+    // sanitize (inert parse + tag/attr whitelist).
+    const html=npSerialize(editor);
     const plain=html.replace(/<[^>]*>/g,'').trim();
     if(plain) map.nodes[nodeId].notes=html; else delete map.nodes[nodeId].notes;
     pushHistory(); render(); close();
@@ -6820,6 +6953,8 @@ function showNotesEditor(nodeId){
     if(isComposingKey(e)) return;
     if(e.key==='Escape'){ e.preventDefault(); close(); }
     if(e.key==='Enter' && (e.ctrlKey||e.metaKey)){ e.preventDefault(); save(); }
+    // Backspace onto a formula reopens its source rather than deleting it whole.
+    if(e.key==='Backspace'){ const sp=npSpanBeforeCaret(editor); if(sp){ e.preventDefault(); editingNode=npUnrender(sp); } }
   });
 }
 
@@ -9757,7 +9892,7 @@ async function exportPNG(){
         try{ hosts.add(new URL(m[0]).hostname.replace(/^www\./,'')); }catch(_){}
       }
     });
-    await Promise.all([...hosts].map(async h=>{
+    if(linkFaviconsEnabled()) await Promise.all([...hosts].map(async h=>{
       favicons[h]=await loadFavicon('https://icons.duckduckgo.com/ip3/'+h+'.ico');
     }));
   }
@@ -10869,21 +11004,24 @@ $('#sideTabTpls').onclick=()=>setSideTab('tpls');
     }
   }catch(e){}
 })();
-// On phones, default the sidebar to collapsed (slid off-screen overlay).
-// And tapping the dimmed canvas while it's open should close it.
-if(window.matchMedia('(max-width: 720px)').matches){
-  $('#side').classList.add('collapsed');
-  $('#stage').addEventListener('click', e=>{
-    const side=$('#side');
-    if(side.classList.contains('collapsed')) return;
-    // Only close if the user tapped the dimming overlay (the ::after pseudo) -
-    // which sits on top of all the topbar/zoombar at z-index 150. Easiest
-    // proxy: tap landed on #stage or #viewport (not on a node or chrome).
-    if(e.target.id==='stage' || e.target.id==='viewport'){
-      side.classList.add('collapsed');
-    }
-  });
-}
+// On phones, default the sidebar to collapsed (slid off-screen overlay), and
+// let a tap on the dimmed canvas close it while it is open. The tap handler is
+// always attached and asks the media query PER TAP, not once at load: a phone
+// loaded in portrait and rotated to landscape leaves the narrow-viewport rules
+// behind, and the handler has to leave with them. It also closes through
+// toggleSidePanel() rather than adding the class itself - the expand path
+// writes an inline width, and a class added over it left a blank 200px column
+// beside the canvas with only the rail's toggle showing.
+if(window.matchMedia('(max-width: 720px)').matches) $('#side').classList.add('collapsed');
+$('#stage').addEventListener('click', e=>{
+  if(!window.matchMedia('(max-width: 720px)').matches) return;
+  const side=$('#side');
+  if(side.classList.contains('collapsed')) return;
+  // Only close if the user tapped the dimming overlay (the ::after pseudo) -
+  // which sits on top of all the topbar/zoombar at z-index 150. Easiest
+  // proxy: tap landed on #stage or #viewport (not on a node or chrome).
+  if(e.target.id==='stage' || e.target.id==='viewport') toggleSidePanel();
+});
 $('#hintClose').onclick=()=>$('#hint').style.display='none';
 
 /* ---------- UI scale (whole-interface zoom, persisted) ---------- */
@@ -11282,7 +11420,10 @@ function attachColorSwatches(ta, onLive){
       if(pre.length - pre.replace(/[ \t]+$/, '').length < 2) continue;
       const x = span.offsetLeft - CS_SIZE - CS_GAP - ta.scrollLeft;
       const y = span.offsetTop + (lh - CS_SIZE)/2 - ta.scrollTop;
-      if(x < 0) continue;
+      // Only squares that sit wholly inside the visible text area: a line
+      // scrolled out of view, or one under the textarea's own scrollbar,
+      // gets no square rather than one peeking out past the box.
+      if(x < 0 || y < 0 || y + CS_SIZE > ta.clientHeight || x + CS_SIZE > ta.clientWidth) continue;
       const b = document.createElement('button');
       b.type = 'button'; b.className = 'cs-swatch'; b.title = 'Pick a colour';
       b.style.left = x+'px'; b.style.top = y+'px';
@@ -12175,7 +12316,10 @@ function _syncLookFx(){
   if(cls){
     _fxEl=document.createElement('div');
     _fxEl.className=cls;
-    stage.appendChild(_fxEl);
+    // First child, not last: it is scenery and has to paint UNDER the map.
+    // Appended after #viewport it sat on top, and the wave lines ran through
+    // every card - which reads as the whole map having gone transparent.
+    stage.insertBefore(_fxEl, stage.firstChild);
   }
 }
 
@@ -12479,6 +12623,7 @@ function applyUiLayout(id){
     topbar.querySelectorAll('.tb-orphan').forEach(g=>g.remove());
     document.getElementById('zenPin')?.remove();   // pin toggle is zen-only
     [$('#savePill'),$('#tokenTotal'),$('#userPill')].forEach(p=>{ if(p) sbRight.appendChild(p); });
+    document.querySelector('.rail-float')?.remove();   // rail's top-right group, now empty: its pills were just moved back
     side.classList.remove('collapsed','side-open'); side.style.width='';
   };
   rewireSide();   // every layout starts with the plain tab/toggle wiring; dock overrides below
@@ -12530,7 +12675,13 @@ function applyUiLayout(id){
     stage.appendChild(overview);
     stage.appendChild(zoomRow);
     stage.appendChild(hint);
-    stage.appendChild($('#savePill'));           // floating save feedback, top-right
+    // Save feedback and the signed-in pill float top-right together. The rail
+    // is 46px wide and the status bar is hidden in this layout, so this is the
+    // only place the username and sign-out can be seen; before, the pill sat in
+    // the hidden status bar and the layout offered no way to sign out.
+    let fl=document.querySelector('.rail-float');
+    if(!fl){ fl=document.createElement('div'); fl.className='rail-float'; stage.appendChild(fl); }
+    [$('#userPill'), $('#savePill')].forEach(p=>{ if(p) fl.appendChild(p); });
     overview.classList.remove('collapsed');
     // If coming from classic, the wide new-map row must go back to a compact
     // brand button (toggleSide stays on the rail here, so no insertBefore).
@@ -13731,6 +13882,7 @@ const PREFS = [
   { key:'mindspark:overviewCollapsed', kind:'pref',      section:'Appearance', label:'Minimap',           show:v=>v==='1' ? 'collapsed' : 'open' },
   { key:'mindspark:zenPinned',         kind:'pref',      section:'Appearance', label:'Zen toolbar',       show:v=>v==='1' ? 'pinned' : 'auto-hide' },
   { key:'mindspark:tabs',              kind:'pref',      section:'Appearance', label:'Tabbed workspace',  show:v=>v==='1' ? 'on' : 'off' },
+  { key:'mindspark:linkFavicons',      kind:'pref',      section:'Appearance', label:'Link favicons',     show:v=>v==='1' ? 'on' : 'off (default)' },
   { key:'mindspark:prefs:folds',       kind:'pref',      section:'Appearance', label:'Preferences card folds', show:v=>{ try{ return Object.entries(JSON.parse(v)).map(([k,o])=>k+(o?' open':' closed')).join(', '); }catch(e){ return '(unreadable)'; } } },
   // Account - where maps are saved, and the credentials that get there
   { key:'mindspark:forge',             kind:'session',   section:'Account',    label:'Git host',          show:v=>v||'(not signed in)' },
@@ -14089,6 +14241,7 @@ function showPreferences(){
     row(ap, 'Minimap', check('Collapsed', isOverviewCollapsed(), setOverviewCollapsed));
     row(ap, 'Zen toolbar', check('Pinned (always visible in the Zen layout)', document.body.classList.contains('zen-pinned'), setZenPinned));
     row(ap, 'Tabbed workspace', check('On', tabsEnabled, setTabsEnabled));
+    row(ap, 'Link favicons', check('Show (fetched from icons.duckduckgo.com, which learns each link\u2019s host)', linkFaviconsEnabled(), setLinkFavicons));
     // The nuclear option, last and unstyled as primary.
     const dz=section('everything','Everything');
     digest('everything', 'start over');
@@ -14374,6 +14527,7 @@ function showUserPill(){
     }
   };
 }
+function hideUserPill(){ const pill=$('#userPill'); if(pill) pill.style.display='none'; }
 
 // ============================================================
 // OPTIONAL GitHub OAuth ("Sign in with GitHub") - second cloud login option.
@@ -14506,7 +14660,7 @@ async function completeCloudLogin(token, forgeId, instance, refresh){
 // refresh grant is refused, or there is none) ends here: back to sign-in, with
 // the reason. Signing in again boots the workspace as a fresh sign-in does.
 CloudStore.onSessionExpired = ()=>{
-  const pill=$('#userPill'); if(pill) pill.style.display='none';
+  hideUserPill();
   showLoginOverlay({expired:true});
 };
 
