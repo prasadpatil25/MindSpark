@@ -136,6 +136,11 @@ const FORGES = {
       }));
     },
     normalizeUser(u){ return (u && u.id!=null && u.login) ? {id:u.id, login:u.login, avatar_url:u.avatar_url} : null; },
+    // Looking a collaborator up by the login someone typed. Same API and auth
+    // scheme as every other call on this forge, so a self-hosted instance comes
+    // along for free; readUser() answers the same {id, login} shape as normalizeUser().
+    userUrl(r, login){ return r.api+'/users/'+encodeURIComponent(login); },
+    readUser(json){ const u=this.normalizeUser(json); return u ? {id:String(u.id), login:u.login} : null; },
     // No branch is ever named: every call falls through to the repo default.
     defaultBranch(){ return null; },
     writeBody(r, path, encoded, sha){ return {message:`MindSpark: update ${path}`, content:encoded, ...(sha?{sha}:{})}; },
@@ -223,6 +228,8 @@ const FORGES = {
       }));
     },
     normalizeUser(u){ return (u && u.id!=null && u.login) ? {id:u.id, login:u.login, avatar_url:u.avatar_url} : null; },
+    userUrl(r, login){ return r.api+'/users/'+encodeURIComponent(login); },
+    readUser(json){ const u=this.normalizeUser(json); return u ? {id:String(u.id), login:u.login} : null; },
     // No branch is ever named: every call falls through to the repo default.
     defaultBranch(){ return null; },
     writeBody(r, path, encoded, sha){ return {message:`MindSpark: update ${path}`, content:encoded, ...(sha?{sha}:{})}; },
@@ -317,6 +324,10 @@ const FORGES = {
     // `username` is the handle; `name` is a display name and is not unique, so
     // it must never become the owner segment of a project path.
     normalizeUser(u){ return (u && u.id!=null && u.username) ? {id:u.id, login:u.username, avatar_url:u.avatar_url} : null; },
+    // GitLab has no /users/<login>: it searches by username and answers a list,
+    // empty for an unknown name rather than 404.
+    userUrl(r, login){ return r.api+'/users?username='+encodeURIComponent(login); },
+    readUser(json){ const u=this.normalizeUser(Array.isArray(json)?json[0]:null); return u ? {id:String(u.id), login:u.login} : null; },
     // `encoding` must be declared: the default is text, which mangles any map
     // whose content is not plain ASCII.
     writeBody(r, path, encoded, sha){
@@ -7287,7 +7298,7 @@ function exportMenu(){
     <button data-a="collab"><span class="ex-ic">👥</span><span><b>Collaborate live</b><i>Real-time editing - share an invite link</i></span></button>
     <button data-a="cloudshare"><span class="ex-ic">☁</span><span><b>Cloud share (editable)</b><i>Publish + copy an edit link collaborators can save to</i></span></button>` : '';
   // Live collab is capability-based (the room id IS the access) and works on any
-  // forge; only this one needs the identity the worker can't issue for Gitea.
+  // forge; only this one needs an identity the backend has actually minted.
   const _accessItem = accessControlAvailable() ? `
     <button data-a="manageaccess"><span class="ex-ic">🔐</span><span><b>Manage access</b><i>Named collaborators &amp; link permissions</i></span></button>` : '';
   pop.innerHTML=`
@@ -14607,14 +14618,23 @@ function collabBase(){
 // CORS/origin is bound to the deployed app - so, as before, neither works from
 // local server-mode hosting or from static PAT-only hosting with no worker.
 function collabAvailable(){ return MODE==='cloud' && !!collabBase(); }
-// Named collaborators and link permissions need a VERIFIED identity, and the
-// worker mints one only from a GitHub token (/api/session calls api.github.com).
-// A Gitea/Forgejo session therefore reaches the collab DO anonymously, where
-// every owner-only route answers 401 - which the UI used to surface as "Sign in
-// to manage access" to a user who was already signed in. Hidden beats broken.
+// Named collaborators and link permissions need a VERIFIED identity, minted by
+// the backend from the forge token (/api/session). Which forges a backend can
+// vouch for is its business - the worker verifies GitHub tokens, a companion
+// whichever forges its operator allows - so the test is whether an identity
+// was actually minted, not which forge this session is on. Without one every
+// owner-only route answers 401, which the UI used to surface as "Sign in to
+// manage access" to a user who was already signed in. Hidden beats broken.
 function accessControlAvailable(){
-  return collabAvailable() && typeof CloudStore!=='undefined'
-      && !!CloudStore.forge && CloudStore.forge.id==='github';
+  return collabAvailable() && typeof Session!=='undefined' && !!Session.id;
+}
+// Ask the backend for that identity as soon as a forge session exists, so the
+// share menu can answer accessControlAvailable() without a round trip. Bounded:
+// a backend that hangs must not hold the boot, and every collab call asks
+// Session.ensure() again anyway.
+async function ensureCollabIdentity(timeoutMs=4000){
+  if(!collabAvailable()) return;
+  try{ await Promise.race([Session.ensure(), new Promise(r=>setTimeout(r, timeoutMs))]); }catch(e){}
 }
 
 // Shared success path for BOTH login methods (PAT and OAuth).
@@ -14649,6 +14669,7 @@ async function completeCloudLogin(token, forgeId, instance, refresh){
   await CloudStore.login(token, forgeId, instance, repoTargetFor(forgeId||DEFAULT_FORGE), refresh);
   const ov=$('#loginOverlay'); if(ov) ov.style.display='none';
   showUserPill();
+  await ensureCollabIdentity();
   await proceedBoot();
   if(_pendingSharedLink){
     const s=_pendingSharedLink; _pendingSharedLink=null;
@@ -15391,7 +15412,7 @@ const Session = {
       try{
         if(typeof CloudStore==='undefined' || !CloudStore.token) return null;
         const base=(collabBase()||'').replace(/\/+$/,''); if(!base) return null;
-        const r=await fetch(base+'/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:CloudStore.token})});
+        const r=await fetch(base+'/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:CloudStore.token, forge:CloudStore.forge&&CloudStore.forge.id, instance:CloudStore.instance||undefined})});
         if(r.status===501){ this._off=true; return null; }
         if(!r.ok) return null;
         const d=await r.json(); this.jwt=d.token; this.exp=d.exp||0; this.id=d.id||null; this.login=d.login||null;
@@ -15496,7 +15517,7 @@ async function publishSharedMap(){
   if(!named && !confirm(
       'Publish an edit link for this map?\n\n'
     + 'Anyone who gets the link will be able to edit it, and it can\u2019t be restricted '
-    + 'to named collaborators - that needs a GitHub sign-in.\n\n'
+    + 'to named collaborators - that needs a '+forgeName()+' sign-in.\n\n'
     + 'The link stays editable until you remove the map from "Shared by me".')) return;
   if(!map._editToken) map._editToken = 'e'+Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,6);
   let room = map._shareRoom || map.id;
@@ -15518,7 +15539,7 @@ async function publishSharedMap(){
     if(named){ try{ await accessApi(room, 'link', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ access:'edit-auth' }) }); }catch(e){} }
     rememberSharedByMe({ id: map.id, room, token: map._editToken, title: map.title, color: map.color });
     if(typeof scheduleSave==='function' && !map._cloudEdit) scheduleSave();   // persist the token in the owner repo so re-publishing reuses it
-    toast(named ? 'Edit link copied - collaborators sign in with GitHub to open it.'
+    toast(named ? 'Edit link copied - collaborators sign in with '+forgeName()+' to open it.'
                 : 'Edit link copied - anyone with this link can edit.');
   }catch(e){ toast('Could not publish: '+(e.message||e)); }
 }
@@ -15529,12 +15550,23 @@ async function accessApi(roomId, sub, opts){
   try{ const r=await _collabFetch(base+(sub?('/'+sub):''), opts||{}); let d={}; try{ d=await r.json(); }catch(e){} return { status:r.status, ok:r.ok, d }; }
   catch(e){ return { status:0, ok:false, d:{} }; }
 }
-async function _resolveGitHubUser(login){
-  login=String(login||'').trim().replace(/^@/,''); if(!login) return null;
+// Resolve a typed login to the collaborator the backend will recognise. The
+// lookup runs on the forge THIS session is signed in to (endpoint, auth scheme
+// and response shape come from its FORGES descriptor), and the id is namespaced
+// the way the backend namespaced the caller's own identity: a companion mints
+// "<forge>:<host>:<id>" subjects, the worker bare GitHub ids, and a collaborator
+// looked up through the same forge and instance shares the caller's prefix
+// either way - so the client never has to know a backend's subject format.
+async function _resolveCollaborator(login){
+  login=String(login||'').trim().replace(/^@/,'').trim(); if(!login) return null;
+  if(typeof CloudStore==='undefined' || !CloudStore.forge || !CloudStore.token) return null;
   try{
-    const h=(typeof CloudStore!=='undefined'&&CloudStore.token)?{Authorization:'token '+CloudStore.token,Accept:'application/vnd.github+json'}:{Accept:'application/vnd.github+json'};
-    const r=await fetch('https://api.github.com/users/'+encodeURIComponent(login),{headers:h});
-    if(!r.ok) return null; const u=await r.json(); return (u&&u.id!=null)?{ id:String(u.id), login:u.login }:null;
+    const f=CloudStore.forge;
+    const r=await fetch(f.userUrl(CloudStore._ref(), login),{headers:f.headers(CloudStore.token)});
+    if(!r.ok) return null;
+    const u=f.readUser(await r.json()); if(!u) return null;
+    const mine=String((typeof Session!=='undefined' && Session.id)||''); const cut=mine.lastIndexOf(':');
+    return { id: (cut>=0 ? mine.slice(0,cut+1) : '')+u.id, login:u.login };
   }catch(e){ return null; }
 }
 function _accessRoomId(){ return (map && (map._cloudView || map._shareRoom || map.id)) || null; }
@@ -15581,10 +15613,10 @@ function _renderAccessPanel(roomId, data){
       '<label><input type="radio" name="amlink" value="view" '+(level==='view'?'checked':'')+'> Can view</label>'+
       '<label><input type="radio" name="amlink" value="edit" '+(level==='edit'?'checked':'')+'> Can edit</label>'+
     '</div>'+
-    '<label class="am-auth"><input type="checkbox" class="am-reqauth" '+(requireAuth?'checked':'')+' '+(level==='none'?'disabled':'')+'> Require GitHub sign-in to open</label>'+
+    '<label class="am-auth"><input type="checkbox" class="am-reqauth" '+(requireAuth?'checked':'')+' '+(level==='none'?'disabled':'')+'> Require '+forgeName()+' sign-in to open</label>'+
     '</div>'+
     '<div class="am-sec"><div class="am-lbl">Collaborators</div><div class="am-list">'+rows+'</div>'+
-      '<div class="am-add"><input class="am-user" type="text" placeholder="GitHub username" autocomplete="off">'+
+      '<div class="am-add"><input class="am-user" type="text" placeholder="'+forgeName()+' username" autocomplete="off">'+
       '<select class="am-newrole"><option value="editor">Editor</option><option value="viewer">Viewer</option></select>'+
       '<button class="am-addbtn">Add</button></div></div>'+
     visitorsHtml+
@@ -15615,8 +15647,8 @@ function _renderAccessPanel(roomId, data){
   ov.querySelector('.am-addbtn').onclick=async()=>{
     const login=ov.querySelector('.am-user').value; const role=ov.querySelector('.am-newrole').value;
     if(!login.trim()) return;
-    const u=await _resolveGitHubUser(login);
-    if(!u){ toast('No such GitHub user'); return; }
+    const u=await _resolveCollaborator(login);
+    if(!u){ toast('No such user on '+forgeName()); return; }
     const res=await accessApi(roomId,'acl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId:u.id, login:u.login, role})});
     if(res&&res.ok){ toast('Added @'+u.login); openAccessPanel(roomId); }
     else toast(res&&res.status===400?'That user is already the owner':'Couldn\u2019t add collaborator');
@@ -16012,7 +16044,7 @@ else loadQotd();
   const _openSharedAfterBoot=async()=>{ if(_sh) await openSharedInPlace(decodeURIComponent(_sh[1]), _sh[2]?decodeURIComponent(_sh[2]):null); };
   const {mode, loggedIn} = await initStore();
   if(mode==='cloud'){
-    if(loggedIn){ showUserPill(); await proceedBoot(); await _openSharedAfterBoot(); }
+    if(loggedIn){ showUserPill(); await ensureCollabIdentity(); await proceedBoot(); await _openSharedAfterBoot(); }
     else if(_sh){ _pendingSharedLink={ id:decodeURIComponent(_sh[1]), token:_sh[2]?decodeURIComponent(_sh[2]):null }; showLoginOverlay({ shared:true }); }   // shared link -> require sign-in first
     else { showLoginOverlay(CloudStore.sessionExpired ? {expired:true} : undefined); }
   } else {
