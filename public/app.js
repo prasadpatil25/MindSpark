@@ -1045,11 +1045,33 @@ function execCmd(cmd, value){
 // catch up on 'compositionend' - see startEdit().
 function isComposingKey(e){ return !!e && (e.isComposing || e.keyCode===229); }
 
+// The collaboration backend for this deployment. Empty by default; set to this
+// origin when a companion is discovered (see probeHealth). collabBase() turns it,
+// or the configured GitHub worker, into the one URL every collab call uses.
+const COLLAB = { url: '' };
+// /healthz tells three deployments apart, and the answer is needed before
+// initStore() AND before a #live= guest join that runs earlier - so it is probed
+// once and shared:
+//   ok + {"mode":"collab"}  a companion: maps still live in the user's forge,
+//                           but collaboration is served here, on this origin.
+//   ok (anything else)      a plain node server: local ServerStore, no forge.
+//   not ok / unreachable    static hosting: cloud storage, collab only if a
+//                           GitHub worker is configured.
+let _healthProbe=null;
+function probeHealth(){
+  if(!_healthProbe) _healthProbe=(async()=>{
+    try{
+      const r=await fetch(appUrl('healthz'), {cache:'no-store'});
+      if(!r.ok) return null;
+      let j=null; try{ j=await r.clone().json(); }catch(e){}
+      if(j && j.mode==='collab'){ COLLAB.url=location.origin; return 'collab'; }
+      return 'server';
+    }catch(e){ return null; }
+  })();
+  return _healthProbe;
+}
 async function initStore(){
-  try{
-    const r=await fetch(appUrl('healthz'), {cache:'no-store'});
-    if(r.ok){ Store=ServerStore; MODE='server'; return {mode:'server', loggedIn:true}; }
-  }catch(e){}
+  if(await probeHealth()==='server'){ Store=ServerStore; MODE='server'; return {mode:'server', loggedIn:true}; }
   Store=CloudStore; MODE='cloud';
   const loggedIn=await CloudStore.tryInit();
   return {mode:'cloud', loggedIn};
@@ -14415,10 +14437,22 @@ function showOauthSilentFailure(){
   a.textContent='github.com/settings/applications'; err.appendChild(a); err.appendChild(document.createTextNode('.'));
   console.warn('OAuth popup closed without a result. GH_OAUTH.appOrigin and the worker\'s ALLOWED_ORIGIN must both be', location.origin);
 }
-// Live collaboration & cloud share rely on the Cloudflare worker, whose CORS/origin
-// is bound to the deployed app - they can't work from local (server-mode) hosting
-// or from static GitHub Pages (PAT-only).
-function collabAvailable(){ return MODE==='cloud' && oauthConfigured(); }
+// The one place that answers "where is the collaboration backend": a companion
+// serving this app (discovered via /healthz) if there is one, otherwise the
+// configured GitHub worker. Everything collab - the WebSocket, the shared-map
+// API, the identity mint - builds its URL from this, so a companion never sends
+// a (possibly non-GitHub) token to the worker, and the hosted build, with no
+// companion, is byte-for-byte unchanged.
+function collabBase(){
+  if(COLLAB.url) return COLLAB.url;
+  if(oauthConfigured()) return GH_OAUTH.workerUrl;
+  return '';
+}
+// Live collaboration & cloud share need a backend and cloud (forge) storage. That
+// backend is the companion on this origin, or the Cloudflare worker whose
+// CORS/origin is bound to the deployed app - so, as before, neither works from
+// local server-mode hosting or from static PAT-only hosting with no worker.
+function collabAvailable(){ return MODE==='cloud' && !!collabBase(); }
 // Named collaborators and link permissions need a VERIFIED identity, and the
 // worker mints one only from a GitHub token (/api/session calls api.github.com).
 // A Gitea/Forgejo session therefore reaches the collab DO anonymously, where
@@ -14977,7 +15011,7 @@ const Collab = (function(){
   const clone = o => JSON.parse(JSON.stringify(o));
   const snap  = () => ({ nodes:clone(map.nodes), rootId:map.rootId, title:map.title, color:map.color,
                          links:clone(map.links||[]), layout:map.layout, vars:clone(map.vars||{}), style:map.style });
-  function wsUrl(r){ try{ const u=new URL(GH_OAUTH.workerUrl);
+  function wsUrl(r){ const base=collabBase(); if(!base) return null; try{ const u=new URL(base);
     return (u.protocol==='https:'?'wss:':'ws:')+'//'+u.host+'/api/collab/'+encodeURIComponent(r); }catch(e){ return null; } }
 
   function ensureUI(){
@@ -15186,7 +15220,8 @@ function leaveLiveForSwitch(){
 
 // ---- Cloud-hosted shared map (async, persists in the Durable Object) ----
 function sharedApiUrl(id){
-  try{ const u=new URL(GH_OAUTH.workerUrl); return u.origin+'/api/collab/'+encodeURIComponent(id); }
+  const base=collabBase(); if(!base) return null;
+  try{ const u=new URL(base); return u.origin+'/api/collab/'+encodeURIComponent(id); }
   catch(e){ return null; }
 }
 // ---- Session identity: a short-lived signed JWT proving the GitHub identity, sent
@@ -15201,7 +15236,7 @@ const Session = {
     this._pending=(async()=>{
       try{
         if(typeof CloudStore==='undefined' || !CloudStore.token) return null;
-        const base=(GH_OAUTH.workerUrl||'').replace(/\/+$/,''); if(!base) return null;
+        const base=(collabBase()||'').replace(/\/+$/,''); if(!base) return null;
         const r=await fetch(base+'/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:CloudStore.token})});
         if(r.status===501){ this._off=true; return null; }
         if(!r.ok) return null;
@@ -15809,6 +15844,9 @@ else loadQotd();
     }
   }catch(e){}
   requestAnimationFrame(()=>{ try{ if(isUiScaleAuto()) applyUiScale(getUiScale()); }catch(e){} });
+  // A #live= guest joins before initStore() runs, so the collab backend has to be
+  // discovered first - otherwise wsUrl() has no COLLAB.url on a companion deploy.
+  await probeHealth();
   // Read-only shared link? Decode and render a view-only map - no store, no
   // login, no account needed by the recipient.
   if(await tryEnterLiveSession()) return;
