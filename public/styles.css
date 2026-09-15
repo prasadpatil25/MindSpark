@@ -1002,12 +1002,16 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
 
   /* ===== Sidebar ===== */
   .side{width:268px;min-height:0;position:relative;background:var(--chrome);border-right:1px solid var(--chrome-edge);display:flex;flex-direction:column;transition:width .22s cubic-bezier(.4,0,.2,1),background-color .3s ease,border-color .3s ease}
-  .side.collapsed{width:36px;border:none}                 /* icon rail instead of fully gone */
+  /* width is !important on every collapsed rule: the expand path writes an
+     inline width, and whichever code collapses the sidebar next must win over
+     it or the column stays open and blank. */
+  .side.collapsed{width:36px !important;border:none}                 /* icon rail instead of fully gone */
   .side.resizing{transition:none}
   .side.collapsed .brand{display:none !important}  /* never bleed into the slim rail */
   .side.collapsed .side-tabs,
   .side.collapsed .side-pane,
   .side.collapsed .side-foot,
+  .side.collapsed .new-map-row,   /* classic's wide "New mind map" row; left out, it overflowed a 0px sidebar into the tab strip */
   .side.collapsed .side-resize{display:none !important}
   /* Collapsed state = slim rail with the reopen button, so the sidebar can
      never get "lost". The same ☰ button sits in the brand header, beside
@@ -1411,6 +1415,14 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   .notes-popup .np-editor ul,
   .notes-popup .np-editor ol{margin:.3em 0; padding-left:1.6em}
   .notes-popup .np-editor a{color:var(--link); text-decoration:underline}
+  /* A formula rendered in place inside the editor (see npMathSpan). It is not
+     editable itself; clicking it swaps its $ source back in. */
+  .notes-popup .np-math{
+    display:inline-block; padding:0 3px; border-radius:4px; cursor:pointer;
+    font-size:1.05em; line-height:1.3; vertical-align:baseline;
+  }
+  .notes-popup .np-math[data-display="1"]{display:block; text-align:center; margin:.2em 0}
+  .notes-popup .np-math:hover{background:color-mix(in srgb, var(--sticky-ink) 10%, transparent); outline:1px dashed color-mix(in srgb, var(--sticky-ink) 40%, transparent)}
   .notes-popup .np-actions{
     display:flex; gap:8px; padding:10px 12px;
     border-top:1px solid color-mix(in srgb, var(--sticky-edge) 70%, transparent);
@@ -2243,7 +2255,7 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   -webkit-mask-size:var(--look-mask-size, auto); mask-size:var(--look-mask-size, auto);
 }
   .wave-layer{
-    position:absolute; inset:-8px 0 -8px -200px; pointer-events:none; z-index:1;
+    position:absolute; inset:-8px 0 -8px -200px; pointer-events:none; z-index:0;   /* scenery: under #viewport (see _syncLookFx) */
     will-change:transform; contain:paint;
     background:
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cg opacity='0.06' fill='none' stroke='%231a1a1a' stroke-width='1.5' stroke-linecap='round'%3E%3Cpath d='M0 40 Q25 30 50 40 Q75 50 100 40 Q125 30 150 40 Q175 50 200 40'/%3E%3Cpath d='M0 80 Q25 70 50 80 Q75 90 100 80 Q125 70 150 80 Q175 90 200 80'/%3E%3Cpath d='M0 120 Q25 110 50 120 Q75 130 100 120 Q125 110 150 120 Q175 130 200 120'/%3E%3Cpath d='M0 160 Q25 150 50 160 Q75 170 100 160 Q125 150 150 160 Q175 170 200 160'/%3E%3C/g%3E%3C/svg%3E");
@@ -2406,6 +2418,10 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
      The mirror carries the text a second time and must stay invisible but
      laid out, so visibility rather than display. */
   .cs-wrap{position:relative}
+  /* Block, not inline-block: the inline baseline gap made the wrap (and so
+     the layer) a few px taller than the textarea, and a square for the first
+     line scrolled out of view showed in that gap under the box. */
+  .cs-wrap > textarea{display:block}
   .cs-mirror{
     position:absolute; left:0; top:0; margin:0; overflow:hidden;
     visibility:hidden; pointer-events:none;
@@ -2943,7 +2959,7 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
       transition:transform .25s cubic-bezier(.4,0,.2,1);
     }
     .side.collapsed{
-      width:min(280px, 86vw);     /* keep width so transform works */
+      width:min(280px, 86vw) !important;     /* keep width so transform works */
       transform:translateX(-100%);
       border:none; box-shadow:none;
     }
@@ -3844,7 +3860,7 @@ body.no-banner.shared-view .stage{ top:0; }
    cloned, only restyled and repositioned. */
 body.ui-classic .app, body.ui-rail .app{grid-template-rows:minmax(0,1fr)}
 body.ui-classic .side, body.ui-rail .side, body.ui-zen .side{grid-column:1;grid-row:1;width:268px}
-body.ui-classic .side.collapsed, body.ui-rail .side.collapsed, body.ui-zen .side.collapsed{width:0}
+body.ui-classic .side.collapsed, body.ui-rail .side.collapsed, body.ui-zen .side.collapsed{width:0 !important}
 body.ui-classic .side-rail, body.ui-rail .side-rail, body.ui-zen .side-rail,
 body.ui-classic .side-resize, body.ui-rail .side-resize, body.ui-zen .side-resize{display:none}
 body.ui-classic .statusbar, body.ui-rail .statusbar, body.ui-zen .statusbar{display:none}
@@ -3931,7 +3947,7 @@ body.ui-classic.shared-view .breadcrumb.shown{transform:translateX(-50%) transla
 body.ui-rail .app{grid-template-columns:auto 46px minmax(0,1fr)}
 body.ui-rail .side{grid-column:1;grid-row:1}
 body.ui-rail .topbar{
-  grid-column:2;grid-row:1;position:relative;
+  grid-column:2;grid-row:1;position:relative;z-index:20;   /* a solid column above the canvas, whatever overlaps it */
   display:flex;flex-direction:column;align-items:center;gap:5px;
   padding:10px 5px;background:var(--chrome);border-right:1px solid var(--chrome-edge);
   border-bottom:none;overflow:visible;scrollbar-width:none;
@@ -3964,7 +3980,11 @@ body.ui-rail .title-edit{
   background:transparent;border:1px solid transparent;
 }
 body.ui-rail .title-edit:hover, body.ui-rail .title-edit:focus{background:var(--chrome);border-color:var(--chrome-edge)}
-body.ui-rail .save-pill{position:absolute;top:14px;right:14px;z-index:30;margin:0}
+/* Top-right group on the canvas: signed-in pill + save feedback (see the rail
+   branch of applyUiLayout). The pills themselves are unstyled here; the group
+   is what floats, so they never overlap each other whatever their width. */
+body.ui-rail .rail-float{position:absolute;top:14px;right:14px;z-index:30;display:flex;align-items:center;gap:8px}
+body.ui-rail .rail-float .save-pill{margin:0}
 body.ui-rail.md-ready .app{grid-template-columns:auto 46px auto minmax(0,1fr)}
 body.ui-rail #mdPane{grid-column:3;grid-row:1}
 body.ui-rail.md-ready .stage{grid-column:4;grid-row:1}
@@ -4313,7 +4333,7 @@ body.ui-outline.shared-view .stage{grid-column:2;grid-row:3}
   body.ui-classic .app{grid-template-columns:1fr}
   body.ui-classic .side{grid-column:1;grid-row:1;width:min(280px, 86vw)}
   body.ui-classic .stage{grid-column:1;grid-row:1}
-  body.ui-classic .side.collapsed{width:min(280px, 86vw)}
+  body.ui-classic .side.collapsed{width:min(280px, 86vw) !important}
   body.ui-classic .topbar{top:10px;left:10px;right:10px}
   /* Full-width strip on phones. The insets stretch the bar, so the desktop
      translateX(-50%) centering must go too - it shifted the strip half its

@@ -132,3 +132,15 @@ test('search field font matches hint size', () => {
   assert.match(rule[0], /font-size:\s*12px/,
     'search input (Find in nodes / Replace with) must be 12px like .hint (was 14px, overflowed 230px box)');
 });
+
+// Classic layout gives the sidebar a wide "New mind map" row of its own. The
+// collapsed sidebar hides every other section with !important but that row
+// was left out, so with the sidebar folded the button overflowed a 0px-wide
+// sidebar and showed through the tab strip. It belongs in the same hide list.
+test('a collapsed sidebar hides the classic new-map row along with everything else', () => {
+  const rule = css.match(/\.side\.collapsed \.side-tabs,[\s\S]*?\{display:none !important\}/);
+  assert.ok(rule, 'the collapsed-sidebar hide list must exist');
+  for (const part of ['.side-tabs', '.side-pane', '.side-foot', '.new-map-row', '.side-resize']) {
+    assert.ok(rule[0].includes('.side.collapsed ' + part), part + ' must be hidden when the sidebar is collapsed');
+  }
+});
