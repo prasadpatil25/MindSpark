@@ -205,7 +205,7 @@ The login screen has a host picker. Gitea and Forgejo (Codeberg included) share 
 | Version history | ✅ commits | ✅ commits | ✅ commits |
 | Concurrent-write check | ✅ blob `sha` sent with every write | ✅ blob `sha` sent with every write | ✅ `last_commit_id` on every action of a commit |
 | Save = one commit | ❌ map and index are two writes | ❌ same | ✅ map + index (+ tombstones) in one atomic commit |
-| Live collaboration / `#shared=` | ✅ on the Worker deploy | ❌ not yet - the collab worker's identity is GitHub-only | ❌ same |
+| Live collaboration / `#shared=` | ✅ on the Worker deploy, or with a [companion backend](#companion-backend-community-collaboration-for-self-hosters) | ✅ with a companion backend | ✅ with a companion backend |
 
 GitLab writes go through the commits API rather than the files API: a save is one commit carrying the map and the index (a delete also carries the tombstone list), each action locked on the commit its file was last read or written at, and the new commit id becomes the lock for the next save - no read in between. If someone else's save lands in the meantime, GitLab refuses the commit; MindSpark then re-reads, re-merges the index and tombstones (they merge by construction) and commits once more. If the *map itself* was changed elsewhere, that is reported as a conflict - "changed elsewhere, reload or your next save overwrites" - rather than silently winning, the way draw.io handles the same case. On every host, saves also re-read and merge the server index first, so a second device can never drop the first one's maps.
 
@@ -250,6 +250,24 @@ npx wrangler secret put AUTH_SECRET        --config worker/wrangler.toml   # req
 Then set `GH_OAUTH.workerUrl` (and `clientId`) in `public/app.js` to your worker's URL - it is honoured only off-`github.io` (host gate `public/app.js:11534`). If you skip the worker entirely and leave `GH_OAUTH` blank, only the token login shows and collaboration is hidden - everything else keeps working. See [`worker/README.md`](worker/README.md) for the OAuth App setup and the GPT Action schema.
 
 > The app and the worker are **two separate deploys**. `npx wrangler deploy` ships the app (`public/`); `npx wrangler deploy --config worker/wrangler.toml` ships the collab/OAuth worker. Set worker secrets against the worker config, as shown above. Static `*.github.io` deploys stay PAT-only even if `GH_OAUTH` is set - the gate in `public/app.js:11534` prevents the token `postMessage` from leaking to Pages origins.
+
+### Companion backend (community collaboration for self-hosters)
+
+The collaboration backend does not have to be the Cloudflare worker. The client discovers its backend: if the origin that serves `public/` answers `GET /healthz` with `{"mode":"collab"}`, that origin **is** the collaboration backend - the WebSocket, the shared-map API, the identity mint and the *Collaborate* menu all resolve to it through `collabBase()`, and `GH_OAUTH` is not consulted. Any other `200` on `/healthz` still means the SQLite server; no answer means static hosting. Discovery is same-origin only, on purpose: there is nothing to configure, so a fork can never ship pointing at someone else's backend.
+
+A backend that wants to be discovered implements the worker's client contract:
+
+| Route | What the client expects |
+|---|---|
+| `GET /healthz` | `{"mode":"collab"}` |
+| `POST /api/session` | Body `{token, forge, instance}`: the user's forge token, the forge id (`github`, `gitea`, `gitlab`) and, for a self-hosted forge, its origin. Verify the token against **that** forge and answer `{token, exp, id, login}` - a signed identity the client then sends as `Authorization: Bearer` - or `501` to run without identities (sharing still works by capability link; *Manage access* stays hidden). |
+| `GET` / `PUT` / `PATCH /api/collab/<room>` | Shared-map snapshot: read, publish, merge. `X-Edit-Token` carries a capability link's token. |
+| `GET` / `POST /api/collab/<room>/acl`, `DELETE …/acl/<id>`, `POST …/link` | Access list, add or remove a collaborator, link mode. Owner-only, by identity. A collaborator's `userId` is looked up by the client on the signed-in forge and carries the same namespace the backend gave the caller's own `id`. |
+| `/api/collab/<room>` (WebSocket upgrade) | Live-session relay, same messages as `worker/collab-do.js`. |
+
+[`worker/collab-http.js`](worker/collab-http.js) and [`worker/auth-core.js`](worker/auth-core.js) are the reference for the HTTP surface and the authorization rules; both are pure modules a backend can run unmodified. **Maps never touch the backend.** They are read and written by the browser against the user's own forge with the user's own token, which the backend never receives; it holds room state only - snapshots of *shared* maps, access lists, presence.
+
+**Community companion:** [mindspark-collab](https://github.com/sati-home/mindspark-collab) is a self-hostable implementation of this contract - one Node process, zero runtime dependencies, SQLite - that verifies GitLab, Gitea/Forgejo and GitHub tokens, so a team on a self-managed instance gets named collaborators and access control. It is maintained separately and is not part of MindSpark.
 
 ### Self-hosted (VPS / Docker)
 
@@ -341,7 +359,7 @@ Contributions welcome (see the issue templates under **New issue**). Ideas on th
 - **Unify access control across channels.** Bring the real-time collaboration channel under the same identity-based access model as the HTTP sync, so roles and revoke apply everywhere consistently.
 - **"The room is the map."** Optionally make a shared room the single source of truth (Overleaf-style) so the owner doesn't keep a separate copy that can drift.
 - **Upgrade legacy share links.** A one-click re-publish to move older anonymous capability links onto identity-gated access.
-- **Collaboration for self-hosters.** An optional path to run the collaboration backend alongside `node server.js`, so self-hosted instances can share too.
+- **Collaboration for self-hosters.** The client side is in place - the app discovers a backend on its own origin (see [Companion backend](#companion-backend-community-collaboration-for-self-hosters)) and a community companion exists. Still open: running one alongside `node server.js` out of the box.
 - **Docs.** Expand `worker/README.md` with the full `/api/collab/*` and access-control reference.
 - **Mobile polish.** Continue hardening touch/gesture handling and small-screen layout.
 
