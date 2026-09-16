@@ -5,6 +5,13 @@
     --accent:#e0613a; --accent-deep:#b8451f; --teal:#2f6f6a;
     --chrome:#fbf8f2; --chrome-edge:#e7ddcc;
     --node-bg:#ffffff; --node-ink:#23201b;
+    /* The map cards' fill. Every theme's --node-bg is its "surface" colour
+       and is reused by dialogs, panels and inputs; the cards read this
+       derived variable instead, and the per-map "nodeBg" theme setting
+       writes ONLY this one (applyThemeConfigVars) - so a translucent card
+       colour, e.g. #ffffff80 over a look's texture, never bleeds into the
+       Preferences card or the sign-in form. */
+    --card-bg:var(--node-bg);
     --canvas-dot:#d8cfbf;
     --stage-glow:rgba(255,255,255,.5);
     --link:#b8451f;
@@ -1172,7 +1179,7 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   .hint .close{float:right;margin-left:8px;cursor:pointer;color:var(--ink-soft);border:none;background:none;font-size:14px}
 
   /* ===== Nodes ===== */
-  .node{position:absolute;background:var(--node-bg);border:1.5px solid var(--line);border-radius:12px;padding:9px 15px;font-size:15px;font-weight:500;line-height:1.35;box-shadow:var(--shadow);width:max-content;max-width:240px;min-width:34px;user-select:none;transition:background-color .3s ease,color .3s ease,box-shadow .15s,border-color .15s,transform .06s;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;display:flex;align-items:center;justify-content:center;text-align:center;box-sizing:border-box}
+  .node{position:absolute;background:var(--card-bg);border:1.5px solid var(--line);border-radius:12px;padding:9px 15px;font-size:15px;font-weight:500;line-height:1.35;box-shadow:var(--shadow);width:max-content;max-width:240px;min-width:34px;user-select:none;transition:background-color .3s ease,color .3s ease,box-shadow .15s,border-color .15s,transform .06s;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;display:flex;align-items:center;justify-content:center;text-align:center;box-sizing:border-box}
   .node:hover{box-shadow:var(--shadow-lg)}
   .node.root{font-family:var(--serif);font-weight:600;font-size:19px;padding:12px 22px;border-width:0}
   .node.sel{outline:2.5px solid var(--accent);outline-offset:2px}
@@ -1186,8 +1193,8 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
      background styles that win over these classes. Subtle color-mix so the
      stripes follow every theme, and they ride the theme-switch transition. */
   :root{
-    --zebra-1:color-mix(in srgb, var(--node-bg) 93%, var(--accent));
-    --zebra-2:color-mix(in srgb, var(--node-bg) 93%, var(--teal));
+    --zebra-1:color-mix(in srgb, var(--card-bg) 93%, var(--accent));
+    --zebra-2:color-mix(in srgb, var(--card-bg) 93%, var(--teal));
   }
   .node[data-depth="1"],.node[data-depth="3"],.node[data-depth="5"],
   .node[data-depth="7"]{background:var(--zebra-1)}
@@ -1259,7 +1266,7 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
     display:flex; align-items:center; justify-content:center;
     font-size:15px; font-weight:600; line-height:1; cursor:pointer;
     user-select:none; box-shadow:0 2px 5px rgba(0,0,0,.22);
-    border:2px solid var(--node-bg, #fff); opacity:0; transition:opacity .12s, transform .1s;
+    border:2px solid var(--card-bg, #fff); opacity:0; transition:opacity .12s, transform .1s;
     z-index:8;
   }
   .node:hover .handle{opacity:1}
@@ -1268,7 +1275,7 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
 
   /* Collapse / expand - at the outer edge, always visible (subtle) */
   .node .h-collapse{
-    background:var(--node-bg, #fff); color:var(--ink); border:1.5px solid var(--line-2);
+    background:var(--card-bg, #fff); color:var(--ink); border:1.5px solid var(--line-2);
     width:18px; height:18px; font-size:13px; opacity:.8;
     right:-10px; top:50%; margin-top:-9px;
   }
@@ -1306,11 +1313,11 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
      more than one signal to notice mid-drag. */
   .node.drop-before{
     box-shadow:0 -5px 0 3px var(--accent), var(--shadow);
-    background:color-mix(in srgb, var(--accent) 12%, var(--node-bg)) !important;
+    background:color-mix(in srgb, var(--accent) 12%, var(--card-bg)) !important;
   }
   .node.drop-after{
     box-shadow:0 5px 0 3px var(--accent), var(--shadow);
-    background:color-mix(in srgb, var(--accent) 12%, var(--node-bg)) !important;
+    background:color-mix(in srgb, var(--accent) 12%, var(--card-bg)) !important;
   }
   /* File-drop target - deliberately distinct from .drop-target above.
      That one means "nest as child" during node dragging; this one means
@@ -1323,8 +1330,8 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   .node.drop-target{
     outline:3px dashed var(--accent); outline-offset:5px;
     background:linear-gradient(0deg,
-      color-mix(in srgb, var(--accent) 22%, var(--node-bg)),
-      color-mix(in srgb, var(--accent) 22%, var(--node-bg))) !important;
+      color-mix(in srgb, var(--accent) 22%, var(--card-bg)),
+      color-mix(in srgb, var(--accent) 22%, var(--card-bg))) !important;
     box-shadow:0 0 0 6px color-mix(in srgb, var(--accent) 20%, transparent);
   }
 
@@ -1472,7 +1479,7 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   #viewport[data-style="blueprint"] .node.root{border-radius:13px; border-style:dashed}
   #viewport[data-style="blueprint"] #edges path{stroke-dasharray:6 4}
   #viewport[data-style="clay"]     {--edge-color:var(--line-2);--edge-width:1.6}
-  #viewport[data-style="clay"]     .node{border-radius:16px; border-width:1px; border-color:color-mix(in srgb, var(--line) 40%, transparent); background:var(--node-bg); box-shadow:inset 2px 2px 4px color-mix(in srgb, #fff 70%, transparent), inset -2px -2px 6px color-mix(in srgb, var(--ink) 12%, transparent), 0 8px 20px color-mix(in srgb, var(--ink) 14%, transparent)}
+  #viewport[data-style="clay"]     .node{border-radius:16px; border-width:1px; border-color:color-mix(in srgb, var(--line) 40%, transparent); background:var(--card-bg); box-shadow:inset 2px 2px 4px color-mix(in srgb, #fff 70%, transparent), inset -2px -2px 6px color-mix(in srgb, var(--ink) 12%, transparent), 0 8px 20px color-mix(in srgb, var(--ink) 14%, transparent)}
   #viewport[data-style="clay"]     .node.root{border-radius:18px; box-shadow:inset 3px 3px 6px color-mix(in srgb, #fff 75%, transparent), inset -3px -3px 8px color-mix(in srgb, var(--ink) 14%, transparent), 0 12px 28px color-mix(in srgb, var(--ink) 16%, transparent)}
   #viewport[data-style="clay"]     #edges path{opacity:.95}
   #viewport[data-style="ink"]      {--edge-color:var(--ink);--edge-width:2.6}
@@ -1480,7 +1487,7 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   #viewport[data-style="ink"]      .node.root{border-radius:10px; border-width:3px; box-shadow:4px 4px 0 var(--ink)}
   #viewport[data-style="ink"]      #edges path{stroke-linecap:square}
   #viewport[data-style="paper"]    {--edge-color:var(--line-2);--edge-width:1.5}
-  #viewport[data-style="paper"]    .node{border-radius:6px; border-width:1px; border-color:var(--line); background-color:var(--node-bg); background-image:repeating-linear-gradient(180deg, transparent 0 22px, color-mix(in srgb, var(--line) 22%, transparent) 23px); background-size:100% 23px; box-shadow:0 2px 6px color-mix(in srgb, var(--ink) 10%, transparent), 0 1px 2px color-mix(in srgb, var(--ink) 8%, transparent)}
+  #viewport[data-style="paper"]    .node{border-radius:6px; border-width:1px; border-color:var(--line); background-color:var(--card-bg); background-image:repeating-linear-gradient(180deg, transparent 0 22px, color-mix(in srgb, var(--line) 22%, transparent) 23px); background-size:100% 23px; box-shadow:0 2px 6px color-mix(in srgb, var(--ink) 10%, transparent), 0 1px 2px color-mix(in srgb, var(--ink) 8%, transparent)}
   #viewport[data-style="paper"]    .node::after{content:""; position:absolute; top:0; right:0; width:14px; height:14px; background:linear-gradient(135deg, transparent 50%, color-mix(in srgb, var(--line) 55%, transparent) 50%, color-mix(in srgb, var(--paper) 92%, transparent) 56%); border-radius:0 6px 0 4px; box-shadow:-1px 1px 2px color-mix(in srgb, var(--ink) 10%, transparent); pointer-events:none}
   #viewport[data-style="paper"]    .node.root{border-radius:8px}
   #viewport[data-style="paper"]    .node.root::after{width:16px; height:16px; border-radius:0 8px 0 5px}
@@ -3197,7 +3204,7 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
     font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     font-size:10px; font-weight:600; line-height:1.4;
     opacity:.85; pointer-events:auto; z-index:5;
-    border:1.5px solid var(--node-bg, #fff);
+    border:1.5px solid var(--card-bg, #fff);
     white-space:nowrap;
   }
   .node .token-badge:hover{opacity:1}
@@ -3451,7 +3458,7 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
     border:2px solid var(--line-2); border-radius:5px;
     display:inline-flex; align-items:center; justify-content:center;
     font-size:12px; font-weight:700; cursor:pointer; vertical-align:middle;
-    background:var(--node-bg);
+    background:var(--card-bg);
   }
   .node .task-check.task-doing{border-color:#c98a1a; color:#c98a1a}
   .node .task-check.task-done{background:#4a9d5b; border-color:#4a9d5b; color:#fff}
@@ -3461,7 +3468,7 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
     padding:1px 7px; border-radius:9px;
     background:var(--toolbar-bg); color:var(--toolbar-text);
     font-size:10px; font-weight:700; line-height:1.4;
-    border:1.5px solid var(--node-bg); white-space:nowrap; z-index:5; opacity:.9;
+    border:1.5px solid var(--card-bg); white-space:nowrap; z-index:5; opacity:.9;
     font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
   .node .task-progress.complete{background:#4a9d5b; color:#fff}
@@ -3474,7 +3481,7 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   .node .ref-mark{
     position:absolute; top:-9px; left:-9px;
     width:22px; height:22px; border-radius:50%;
-    background:var(--node-bg); border:1.5px solid var(--accent);
+    background:var(--card-bg); border:1.5px solid var(--accent);
     display:flex; align-items:center; justify-content:center;
     font-size:11px; cursor:pointer; z-index:6;
     box-shadow:0 1px 3px rgba(0,0,0,.18);
