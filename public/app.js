@@ -4969,7 +4969,16 @@ function showThemeConfigForm(){
     // Merge, do not replace: only the ACTIVE theme's section is shown, so a
     // whole fresh object would silently reset every other theme the user had
     // tuned - exactly the trap the style dialog guards against.
-    map.themeConfig = { ...(map.themeConfig || {}), ...section };
+    // And store only what differs from the theme's own colours: the section
+    // the dialog shows is resolved against the palette of the moment, and
+    // storing it whole froze that palette onto the custom slot - importing
+    // another theme kept the previous one's canvas until "Reset to defaults".
+    const next = { ...(map.themeConfig || {}) };
+    for(const [t, sec] of Object.entries(section)){
+      const diff = themeConfigOverrides(t, sec);
+      if(diff) next[t] = diff; else delete next[t];
+    }
+    if(Object.keys(next).length) map.themeConfig = next; else delete map.themeConfig;
     pushHistory(); render(); autoLayout();
     try{ scheduleSave(); }catch(e){ console.warn('saving theme settings failed:', e.message); }
     previewed = false;   // the render above already settled it, close() need not repeat it
@@ -11852,6 +11861,17 @@ function validateThemeConfig(raw){
     }
   }
   return out;
+}
+// The knobs of one section that differ from the theme's own colours - what
+// gets STORED on the map (see the settings dialog's apply). null when nothing
+// differs, so an untouched theme carries no section at all.
+function themeConfigOverrides(theme, section){
+  const defaults = themeConfigDefaults(theme) || {};
+  const out = {};
+  for(const [k, v] of Object.entries(section || {})){
+    if(typeof v === 'string' && v && v !== defaults[k]) out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
 }
 // The knobs that apply to one theme - what the settings dialog shows.
 function themeConfigFor(theme, raw){

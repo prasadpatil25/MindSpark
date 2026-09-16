@@ -117,7 +117,8 @@ describe('(b) the client carries the identity on the socket', () => {
   function loadWsUrl({ collabBase, Session }) {
     const start = APP.indexOf('function wsUrl(r)');
     assert.notEqual(start, -1, 'wsUrl() not found in the Collab module');
-    const end = APP.indexOf('\n\n', start);
+    const m = /\r?\n\r?\n/.exec(APP.slice(start));   // first blank line after the function: LF or CRLF checkout
+    const end = m ? start + m.index : -1;
     return new Function('collabBase', 'Session', `${APP.slice(start, end)}\nreturn wsUrl;`)(collabBase, Session);
   }
   test('wsUrl() appends ?token=<jwt> when an identity was minted', () => {

@@ -20,7 +20,7 @@ const glass = {
   vars: Object.fromEntries(CUSTOM_THEME_VARS.map(k => [k, ({ '--paper': '#101010', '--ink': '#eeeeee', '--accent': '#ff00aa', '--node-bg': '#ffffff80', '--line': '#333333', '--stage-glow': 'rgba(255,0,170,.06)' })[k] || '#000000'])),
 };
 const withTheme = theme => loadFns(
-  ['validateThemeConfig', 'themeConfigFor', 'themeConfigDefaults'],
+  ['validateThemeConfig', 'themeConfigFor', 'themeConfigDefaults', 'themeConfigOverrides'],
   { THEME_CONFIG_DEFAULTS: DEFAULTS, THEME_CONFIG_BOUNDS: BOUNDS, THEME_CONFIG_VARS: VARS, THEME_CONFIG_PALETTE: PALETTE, loadCustomTheme: () => theme }
 );
 
@@ -52,6 +52,27 @@ describe('the custom theme has a settings section while it exists', () => {
     assert.equal(themeConfigDefaults('custom'), null);
     assert.deepEqual(themeConfigFor('custom', { custom: { ink: '#ff0000' } }), {});
     assert.deepEqual(validateThemeConfig({ custom: { ink: '#ff0000' } }), DEFAULTS);
+  });
+});
+
+describe('what gets stored is the difference from the theme, not the resolved section', () => {
+  // Storing the full resolved section froze the palette of the moment onto the
+  // custom slot: importing another theme kept the previous canvas colour until
+  // "Reset to defaults". Only tuned knobs are stored now.
+  test('a section equal to the palette stores nothing', () => {
+    const { themeConfigOverrides, themeConfigFor } = withTheme(glass);
+    assert.equal(themeConfigOverrides('custom', themeConfigFor('custom', null).custom), null);
+    assert.equal(themeConfigOverrides('dracula', { ...DEFAULTS.dracula }), null);
+  });
+  test('only the tuned knobs are kept; blanks and non-strings never are', () => {
+    const { themeConfigOverrides } = withTheme(glass);
+    assert.deepEqual(themeConfigOverrides('custom', { paper: '#101010', ink: '#ff0000', accent: '', line: 3 }), { ink: '#ff0000' });
+    assert.deepEqual(themeConfigOverrides('dracula', { ...DEFAULTS.dracula, paper: '#123456' }), { paper: '#123456' });
+  });
+  test('the dialog stores through it and drops an emptied section', () => {
+    const src = extractFunction('showThemeConfigForm');
+    assert.match(src, /const diff = themeConfigOverrides\(t, sec\);\r?\n\s*if\(diff\) next\[t\] = diff; else delete next\[t\];/);
+    assert.match(src, /if\(Object\.keys\(next\)\.length\) map\.themeConfig = next; else delete map\.themeConfig;/);
   });
 });
 
