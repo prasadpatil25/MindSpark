@@ -4937,7 +4937,7 @@ function showThemeConfigForm(){
       <h2>Colour theme settings - ${escapeHtml(((THEMES.find(t=>t.id===theme)||{name:theme}).name).replace(/<br\s*\/?>/gi, ' '))}</h2>
       <div class="vf-hint">Saved with this map and included in share links. Each
         key is any CSS colour: paper (canvas background), ink (text), accent
-        (highlights), nodeBg (cards), line (borders), glow (the stage wash).
+        (highlights), nodeBg (the cards only - dialogs keep the theme's surface), line (borders), glow (the stage wash).
         Typing "" keeps the theme's own colour; everything else in the theme's
         palette is untouched. Values are capped at 40 characters and unknown
         keys ignored, so what you get back may differ from what you type.
@@ -6460,6 +6460,9 @@ stage.addEventListener('scroll',()=>{ if(stage.scrollLeft||stage.scrollTop){ sta
    ============================================================ */
 function openSearch(withReplace){
   const w=$('#searchWrap');
+  // closeSearch() empties the field, so anything in it while the bar is closed
+  // was not typed here (see doSearch) - start clean rather than search for it.
+  if(!w.classList.contains('open')) $('#search').value='';
   w.classList.add('open');
   if(withReplace) w.classList.add('replace-mode');
   if(document.body.classList.contains('ui-rail')){
@@ -6541,6 +6544,13 @@ window.addEventListener('keydown', e=>{
 let searchMatches=[], searchPos=-1;
 function doSearch(q){
   q=q.trim().toLowerCase();
+  // Never dim the map behind a CLOSED search bar. A value can land in the
+  // hidden field without anyone opening search - browser or extension
+  // autofill on the first click of a session, a restored form value - and
+  // its input event then dimmed every node to 28% with no search bar in
+  // sight: the whole map read as faded/transparent until the next map
+  // switch re-rendered the nodes. The match state is cleared all the same.
+  if(q && !$('#searchWrap').classList.contains('open')) q='';
   searchMatches=[]; searchPos=-1;
   document.querySelectorAll('.node').forEach(el=>{
     el.classList.remove('dim','match','match-current');
@@ -9822,7 +9832,7 @@ async function exportPNG(){
   const themeBg     = css('--paper')     || '#f4efe6';
   const themeEdge   = css('--line-2')    || '#c8bda8';
   const themeInk    = css('--ink')       || '#23201b';
-  const themeNodeBg = css('--node-bg')   || '#ffffff';
+  const themeNodeBg = css('--card-bg')   || css('--node-bg') || '#ffffff';   // the cards' fill, with the per-map nodeBg setting applied
   const themeLine   = css('--line')      || '#d8cfbf';
   const accent      = css('--accent')    || '#e0613a';
   const toolbarBg   = css('--toolbar-bg') || '#fbf8f2';
@@ -11799,7 +11809,14 @@ const THEME_CONFIG_BOUNDS = { color:[0,40] };
 // The six knobs and the CSS variable each one drives. One table: applying,
 // previewing from the colour picker and reading a custom theme's palette all
 // need the same mapping.
-const THEME_CONFIG_VARS = { paper:'--paper', ink:'--ink', accent:'--accent', nodeBg:'--node-bg', line:'--line', glow:'--stage-glow' };
+// nodeBg drives --card-bg, the cards' own variable, never --node-bg itself:
+// that one is the theme's surface colour and paints the dialogs, panels and
+// inputs too, so a translucent card colour would have made every dialog
+// see-through (styles.css :root explains the split).
+const THEME_CONFIG_VARS = { paper:'--paper', ink:'--ink', accent:'--accent', nodeBg:'--card-bg', line:'--line', glow:'--stage-glow' };
+// Where each knob's default lives in a palette (a theme JSON, the custom
+// theme): the cards default to the surface colour.
+const THEME_CONFIG_PALETTE = { ...THEME_CONFIG_VARS, nodeBg:'--node-bg' };
 // Repairs rather than rejects, like validateLookConfig: every colour is kept
 // as a short CSS colour string (typing "" keeps the theme's own colour),
 // unknown keys and unknown themes are dropped, and every theme gets its
@@ -11840,7 +11857,7 @@ function applyThemeConfigVars(){
   if(theme==='custom'){
     const custom = loadCustomTheme();
     if(custom){
-      defaults = Object.fromEntries(Object.entries(THEME_CONFIG_VARS).map(([k,v])=>[k, custom.vars[v]]));
+      defaults = Object.fromEntries(Object.keys(THEME_CONFIG_VARS).map(k=>[k, custom.vars[THEME_CONFIG_PALETTE[k]]]));
     } else defaults = THEME_CONFIG_DEFAULTS.light;
   }
   const cfg = { ...defaults, ...(((map && map.themeConfig) || {})[theme] || {}) };
@@ -13190,8 +13207,8 @@ function buildStyleThumb(id){
   // panel rows read as the same kind of card.
   const ROOT={x:12,y:22,w:14,h:12}, CH1={x:56,y:6,w:14,h:10}, CH2={x:56,y:42,w:14,h:10};
   const rects=(rx)=>`<rect x="${ROOT.x}" y="${ROOT.y}" width="${ROOT.w}" height="${ROOT.h}" rx="${rx}" fill="var(--accent)"/>
-      <rect x="${CH1.x}" y="${CH1.y}" width="${CH1.w}" height="${CH1.h}" rx="${rx}" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-      <rect x="${CH2.x}" y="${CH2.y}" width="${CH2.w}" height="${CH2.h}" rx="${rx}" fill="var(--node-bg,#fff)" stroke="var(--line)"/>`;
+      <rect x="${CH1.x}" y="${CH1.y}" width="${CH1.w}" height="${CH1.h}" rx="${rx}" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+      <rect x="${CH2.x}" y="${CH2.y}" width="${CH2.w}" height="${CH2.h}" rx="${rx}" fill="var(--card-bg,#fff)" stroke="var(--line)"/>`;
   if(id==='neon') return `<span class="style-thumb">
     <svg viewBox="0 0 70 60" width="70" height="40">
       ${rects(6)}
@@ -13235,16 +13252,16 @@ function buildStyleThumb(id){
     <svg viewBox="0 0 70 60" width="70" height="40">
       <defs><filter id="clayF"><feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="var(--ink)" flood-opacity="0.14"/><feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="var(--ink)" flood-opacity="0.1"/></filter></defs>
       ${rects(6)}
-      <rect x="${CH1.x}" y="${CH1.y}" width="${CH1.w}" height="${CH1.h}" rx="6" fill="var(--node-bg,#fff)" stroke="color-mix(in srgb, var(--line) 40%, transparent)" stroke-width="1" filter="url(#clayF)"/>
-      <rect x="${CH2.x}" y="${CH2.y}" width="${CH2.w}" height="${CH2.h}" rx="6" fill="var(--node-bg,#fff)" stroke="color-mix(in srgb, var(--line) 40%, transparent)" stroke-width="1" filter="url(#clayF)"/>
+      <rect x="${CH1.x}" y="${CH1.y}" width="${CH1.w}" height="${CH1.h}" rx="6" fill="var(--card-bg,#fff)" stroke="color-mix(in srgb, var(--line) 40%, transparent)" stroke-width="1" filter="url(#clayF)"/>
+      <rect x="${CH2.x}" y="${CH2.y}" width="${CH2.w}" height="${CH2.h}" rx="6" fill="var(--card-bg,#fff)" stroke="color-mix(in srgb, var(--line) 40%, transparent)" stroke-width="1" filter="url(#clayF)"/>
       <path d="M26,28 C38,28 47,11 56,11 M26,28 C38,28 47,47 56,47" fill="none" stroke="var(--line)" stroke-width="1.6" stroke-linecap="round"/>
     </svg>
   </span>`;
   if(id==='ink') return `<span class="style-thumb">
     <svg viewBox="0 0 70 60" width="70" height="40">
       <rect x="${ROOT.x}" y="${ROOT.y}" width="${ROOT.w}" height="${ROOT.h}" rx="4" fill="var(--accent)"/>
-      <rect x="${CH1.x}" y="${CH1.y}" width="${CH1.w}" height="${CH1.h}" rx="4" fill="var(--node-bg,#fff)" stroke="var(--ink)" stroke-width="2.2"/>
-      <rect x="${CH2.x}" y="${CH2.y}" width="${CH2.w}" height="${CH2.h}" rx="4" fill="var(--node-bg,#fff)" stroke="var(--ink)" stroke-width="2.2"/>
+      <rect x="${CH1.x}" y="${CH1.y}" width="${CH1.w}" height="${CH1.h}" rx="4" fill="var(--card-bg,#fff)" stroke="var(--ink)" stroke-width="2.2"/>
+      <rect x="${CH2.x}" y="${CH2.y}" width="${CH2.w}" height="${CH2.h}" rx="4" fill="var(--card-bg,#fff)" stroke="var(--ink)" stroke-width="2.2"/>
       <rect x="${CH1.x+1}" y="${CH1.y+1}" width="${CH1.w}" height="${CH1.h}" rx="4" fill="none" stroke="var(--ink)" stroke-width="0.7" opacity="0.18"/>
       <rect x="${CH2.x+1}" y="${CH2.y+1}" width="${CH2.w}" height="${CH2.h}" rx="4" fill="none" stroke="var(--ink)" stroke-width="0.7" opacity="0.18"/>
       <path d="M26,28 C38,28 47,11 56,11 M26,28 C38,28 47,47 56,47" fill="none" stroke="var(--ink)" stroke-width="2.6" stroke-linecap="square"/>
@@ -13253,10 +13270,10 @@ function buildStyleThumb(id){
   if(id==='paper') return `<span class="style-thumb">
     <svg viewBox="0 0 70 60" width="70" height="40">
       <rect x="${ROOT.x}" y="${ROOT.y}" width="${ROOT.w}" height="${ROOT.h}" rx="3" fill="var(--accent)"/>
-      <rect x="${CH1.x}" y="${CH1.y}" width="${CH1.w}" height="${CH1.h}" rx="3" fill="var(--node-bg,#fff)" stroke="var(--line)" stroke-width="1"/>
+      <rect x="${CH1.x}" y="${CH1.y}" width="${CH1.w}" height="${CH1.h}" rx="3" fill="var(--card-bg,#fff)" stroke="var(--line)" stroke-width="1"/>
       <line x1="${CH1.x+2}" y1="${CH1.y+4}" x2="${CH1.x+12}" y2="${CH1.y+4}" stroke="var(--line)" stroke-width="0.7" opacity="0.5"/>
       <line x1="${CH1.x+2}" y1="${CH1.y+7}" x2="${CH1.x+12}" y2="${CH1.y+7}" stroke="var(--line)" stroke-width="0.7" opacity="0.5"/>
-      <rect x="${CH2.x}" y="${CH2.y}" width="${CH2.w}" height="${CH2.h}" rx="3" fill="var(--node-bg,#fff)" stroke="var(--line)" stroke-width="1"/>
+      <rect x="${CH2.x}" y="${CH2.y}" width="${CH2.w}" height="${CH2.h}" rx="3" fill="var(--card-bg,#fff)" stroke="var(--line)" stroke-width="1"/>
       <line x1="${CH2.x+2}" y1="${CH2.y+4}" x2="${CH2.x+12}" y2="${CH2.y+4}" stroke="var(--line)" stroke-width="0.7" opacity="0.5"/>
       <line x1="${CH2.x+2}" y1="${CH2.y+7}" x2="${CH2.x+12}" y2="${CH2.y+7}" stroke="var(--line)" stroke-width="0.7" opacity="0.5"/>
       <path d="M26,28 C38,28 47,11 56,11 M26,28 C38,28 47,47 56,47" fill="none" stroke="var(--line)" stroke-width="1.5" stroke-linecap="round"/>
@@ -13286,68 +13303,68 @@ function buildLayoutThumb(id){
   if(id==='radial') return `<span class="style-thumb"><svg viewBox="0 0 70 60" width="70" height="40">
     <path d="M35,30 L35,12 M35,30 L52,40 M35,30 L18,40" fill="none" stroke="var(--ink-soft)" stroke-width="1.2"/>
     <circle cx="35" cy="30" r="7" fill="var(--accent)"/>
-    <circle cx="35" cy="10" r="5" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <circle cx="54" cy="42" r="5" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <circle cx="16" cy="42" r="5" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
+    <circle cx="35" cy="10" r="5" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <circle cx="54" cy="42" r="5" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <circle cx="16" cy="42" r="5" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
   </svg></span>`;
   if(id==='grid') return `<span class="style-thumb"><svg viewBox="0 0 70 60" width="70" height="40">
     <rect x="28" y="4"  width="14" height="12" rx="2" fill="var(--accent)"/>
-    <rect x="6"  y="20" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="38" y="20" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="6"  y="40" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="38" y="40" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
+    <rect x="6"  y="20" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="38" y="20" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="6"  y="40" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="38" y="40" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
   </svg></span>`;
   if(id==='timeline') return `<span class="style-thumb"><svg viewBox="0 0 70 60" width="70" height="40">
     <path d="M11,30 L62,30" fill="none" stroke="var(--ink-soft)" stroke-width="1.2"/>
     <path d="M26,30 L26,16 L34,16 M46,30 L46,44 L54,44" fill="none" stroke="var(--ink-soft)" stroke-width="1.2"/>
     <rect x="4"  y="24" width="14" height="12" rx="2" fill="var(--accent)"/>
-    <rect x="20" y="25" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="40" y="25" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="34" y="11" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="54" y="39" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
+    <rect x="20" y="25" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="40" y="25" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="34" y="11" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="54" y="39" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
   </svg></span>`;
   if(id==='down') svg=`<svg viewBox="0 0 70 60" width="70" height="40">
     <rect x="28" y="6"  width="14" height="12" rx="2" fill="var(--accent)"/>
-    <rect x="8"  y="36" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="28" y="36" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="48" y="36" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
+    <rect x="8"  y="36" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="28" y="36" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="48" y="36" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
     <path d="M35,18 L35,26 L15,26 L15,36 M35,26 L35,36 M35,26 L55,26 L55,36" fill="none" stroke="var(--ink-soft)" stroke-width="1.2"/>
   </svg>`;
   else if(id==='up') svg=`<svg viewBox="0 0 70 60" width="70" height="40">
     <rect x="28" y="42" width="14" height="12" rx="2" fill="var(--accent)"/>
-    <rect x="8"  y="14" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="28" y="14" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="48" y="14" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
+    <rect x="8"  y="14" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="28" y="14" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="48" y="14" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
     <path d="M35,42 L35,34 L15,34 L15,24 M35,34 L35,24 M35,34 L55,34 L55,24" fill="none" stroke="var(--ink-soft)" stroke-width="1.2"/>
   </svg>`;
   else if(id==='stair') svg=`<svg viewBox="0 0 70 60" width="70" height="40">
     <rect x="28" y="4"  width="14" height="12" rx="2" fill="var(--accent)"/>
-    <rect x="38" y="20" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="38" y="32" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="38" y="44" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
+    <rect x="38" y="20" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="38" y="32" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="38" y="44" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
     <path d="M35,16 L35,50" fill="none" stroke="var(--ink-soft)" stroke-width="1.2"/>
     <path d="M35,22 L38,22 M35,34 L38,34 M35,46 L38,46" fill="none" stroke="var(--ink-soft)" stroke-width="1.2"/>
   </svg>`;
   else if(id==='left') svg=`<svg viewBox="0 0 70 60" width="70" height="40">
     <rect x="50" y="22" width="14" height="12" rx="2" fill="var(--accent)"/>
-    <rect x="6"  y="6"  width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="6"  y="22" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="6"  y="38" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
+    <rect x="6"  y="6"  width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="6"  y="22" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="6"  y="38" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
     <path d="M50,28 C38,28 30,11 20,11 M50,28 L20,27 M50,28 C38,28 30,43 20,43" fill="none" stroke="var(--ink-soft)" stroke-width="1.2"/>
   </svg>`;
   else if(id==='right') svg=`<svg viewBox="0 0 70 60" width="70" height="40">
     <rect x="6"  y="22" width="14" height="12" rx="2" fill="var(--accent)"/>
-    <rect x="48" y="6"  width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="48" y="22" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="48" y="38" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
+    <rect x="48" y="6"  width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="48" y="22" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="48" y="38" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
     <path d="M20,28 C32,28 40,11 48,11 M20,28 L48,27 M20,28 C32,28 40,43 48,43" fill="none" stroke="var(--ink-soft)" stroke-width="1.2"/>
   </svg>`;
   else svg=`<svg viewBox="0 0 70 60" width="70" height="40">
     <rect x="28" y="22" width="14" height="12" rx="2" fill="var(--accent)"/>
-    <rect x="2"  y="8"  width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="2"  y="38" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="52" y="8"  width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
-    <rect x="52" y="38" width="14" height="10" rx="2" fill="var(--node-bg,#fff)" stroke="var(--line)"/>
+    <rect x="2"  y="8"  width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="2"  y="38" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="52" y="8"  width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="52" y="38" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
     <path d="M28,28 C22,28 22,13 16,13 M28,28 C22,28 22,43 16,43 M42,28 C48,28 48,13 52,13 M42,28 C48,28 48,43 52,43" fill="none" stroke="var(--ink-soft)" stroke-width="1.2"/>
   </svg>`;
   return `<span class="style-thumb">${svg}</span>`;
