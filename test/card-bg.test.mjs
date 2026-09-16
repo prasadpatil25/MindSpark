@@ -64,8 +64,9 @@ describe('the nodeBg theme setting reaches the cards only', () => {
 
   test('a custom theme still supplies the default card colour from its --node-bg', () => {
     assert.match(APP, /const THEME_CONFIG_PALETTE = { ...THEME_CONFIG_VARS, nodeBg:'--node-bg' };/);
-    const src = extractFunction('applyThemeConfigVars');
+    const src = extractFunction('themeConfigDefaults');
     assert.match(src, /custom\.vars\[THEME_CONFIG_PALETTE\[k\]\]/);
+    assert.match(extractFunction('applyThemeConfigVars'), /themeConfigDefaults\(theme\)/);
   });
 
   test('PNG export draws the cards with the card colour, falling back to the surface', () => {

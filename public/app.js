@@ -4934,7 +4934,7 @@ function showThemeConfigForm(){
   const theme = document.documentElement.getAttribute('data-theme') || 'light';
   const current = spaceForSwatches(JSON.stringify(themeConfigFor(theme, map.themeConfig), null, 2));
   const {m, dismissOn}=openVarForm(`
-      <h2>Colour theme settings - ${escapeHtml(((THEMES.find(t=>t.id===theme)||{name:theme}).name).replace(/<br\s*\/?>/gi, ' '))}</h2>
+      <h2>Colour theme settings - ${escapeHtml(((THEMES.find(t=>t.id===theme)||(theme==='custom'&&loadCustomTheme())||{name:theme}).name).replace(/<br\s*\/?>/gi, ' '))}</h2>
       <div class="vf-hint">Saved with this map and included in share links. Each
         key is any CSS colour: paper (canvas background), ink (text), accent
         (highlights), nodeBg (the cards only - dialogs keep the theme's surface), line (borders), glow (the stage wash).
@@ -11821,10 +11821,25 @@ const THEME_CONFIG_PALETTE = { ...THEME_CONFIG_VARS, nodeBg:'--node-bg' };
 // as a short CSS colour string (typing "" keeps the theme's own colour),
 // unknown keys and unknown themes are dropped, and every theme gets its
 // defaults merged in so a section never comes back half-formed.
+// The knobs' starting values for one theme: the built-in table, or - for the
+// imported custom theme, which has no table entry - its own palette (see
+// THEME_CONFIG_PALETTE). null for a theme that does not exist right now, so a
+// "custom" section in a map is dropped once its theme has been removed.
+function themeConfigDefaults(theme){
+  if(THEME_CONFIG_DEFAULTS[theme]) return THEME_CONFIG_DEFAULTS[theme];
+  if(theme==='custom'){
+    const custom = loadCustomTheme();
+    if(custom) return Object.fromEntries(Object.keys(THEME_CONFIG_VARS).map(k=>[k, custom.vars[THEME_CONFIG_PALETTE[k]]]));
+  }
+  return null;
+}
 function validateThemeConfig(raw){
   const out = {};
-  for(const theme of Object.keys(THEME_CONFIG_DEFAULTS)){
-    out[theme] = { ...THEME_CONFIG_DEFAULTS[theme] };
+  // The custom theme is a section like any other while it exists: without
+  // this the settings dialog showed "{}" for it and could save nothing.
+  const themes = Object.keys(THEME_CONFIG_DEFAULTS).concat(themeConfigDefaults('custom') ? ['custom'] : []);
+  for(const theme of themes){
+    out[theme] = { ...themeConfigDefaults(theme) };
   }
   if(!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
   for(const theme of Object.keys(out)){
@@ -11852,14 +11867,8 @@ function applyThemeConfigVars(){
   if(!root) return;
   const theme = root.getAttribute('data-theme') || 'light';
   // A custom theme has no THEME_CONFIG_DEFAULTS entry - its own palette takes
-  // that role, so the six config knobs still start from (and can tune) it.
-  let defaults = THEME_CONFIG_DEFAULTS[theme];
-  if(theme==='custom'){
-    const custom = loadCustomTheme();
-    if(custom){
-      defaults = Object.fromEntries(Object.keys(THEME_CONFIG_VARS).map(k=>[k, custom.vars[THEME_CONFIG_PALETTE[k]]]));
-    } else defaults = THEME_CONFIG_DEFAULTS.light;
-  }
+  // that role (themeConfigDefaults), so the six knobs still start from it.
+  const defaults = themeConfigDefaults(theme) || THEME_CONFIG_DEFAULTS.light;
   const cfg = { ...defaults, ...(((map && map.themeConfig) || {})[theme] || {}) };
   for(const key of Object.keys(THEME_CONFIG_VARS)){
     const v = cfg[key];
@@ -12055,6 +12064,32 @@ function applyTheme(id){
 // 20 variables as themes/*.json and they are applied inline on :root. There is
 // exactly one slot: importing again replaces the previous theme.
 const CUSTOM_THEME_VARS = ['--toolbar-bg','--toolbar-text','--paper','--paper-2','--ink','--ink-soft','--line','--line-2','--accent','--accent-deep','--teal','--chrome','--chrome-edge','--node-bg','--node-ink','--canvas-dot','--stage-glow','--link','--shadow','--shadow-lg'];
+// What a custom theme leaves inline on :root: its 20 variables plus --card-bg
+// (see setPaletteVar). Snapshot, restore and clear all of these together.
+const CUSTOM_THEME_INLINE = [...CUSTOM_THEME_VARS, '--card-bg'];
+// A colour with any alpha channel removed: #rgba, #rrggbbaa, rgba()/hsla() and
+// the slash syntax. Anything else (a name, color-mix()) is returned as it is.
+function opaqueColor(c){
+  c=String(c||'').trim(); let m;
+  if((m=c.match(/^#([0-9a-f]{3})[0-9a-f]$/i))) return '#'+m[1];
+  if((m=c.match(/^#([0-9a-f]{6})[0-9a-f]{2}$/i))) return '#'+m[1];
+  if((m=c.match(/^(rgb|hsl)a?\((.+)\)$/i))){
+    const inner=m[2].trim();
+    if(inner.includes('/')) return m[1]+'('+inner.split('/')[0].trim()+')';
+    const parts=inner.split(',').map(s=>s.trim());
+    if(parts.length===4) return m[1]+'('+parts.slice(0,3).join(', ')+')';
+  }
+  return c;
+}
+// One palette variable onto :root. The swatch a theme calls --node-bg is the
+// CARD colour to the person editing it, so it goes to --card-bg; --node-bg
+// itself, the surface the dialogs, panels and inputs are painted with, gets
+// the same colour with its alpha stripped - a glassy card must not make the
+// Add-a-theme card or the Preferences see-through (styles.css :root).
+function setPaletteVar(root, key, val){
+  if(key==='--node-bg'){ root.style.setProperty('--card-bg', val); root.style.setProperty('--node-bg', opaqueColor(val)); }
+  else root.style.setProperty(key, val);
+}
 // Repairs rather than rejects: out-of-range or non-colour values are dropped
 // and the rest rebuilt, so a slightly-off paste still imports cleanly.
 function validateCustomTheme(raw){
@@ -12083,7 +12118,7 @@ function saveCustomTheme(theme){
 }
 function clearCustomThemeVars(){
   const root = document.documentElement;
-  for(const key of CUSTOM_THEME_VARS) root.style.removeProperty(key);
+  for(const key of CUSTOM_THEME_INLINE) root.style.removeProperty(key);
 }
 function applyCustomTheme(){
   const theme = loadCustomTheme();
@@ -12098,7 +12133,7 @@ function applyCustomTheme(){
   }
   clearCustomThemeVars();
   const root = document.documentElement;
-  for(const [key, val] of Object.entries(theme.vars)) root.style.setProperty(key, val);
+  for(const [key, val] of Object.entries(theme.vars)) setPaletteVar(root, key, val);
   root.setAttribute('data-theme', 'custom');
   try{ localStorage.setItem('mindspark:theme', 'custom'); }catch(e){}
   if(map) render();
@@ -12115,7 +12150,7 @@ function previewCustomThemeVars(text){
   const root = document.documentElement;
   for(const key of CUSTOM_THEME_VARS){
     const v = vars[key];
-    if(typeof v === 'string' && v.trim() && v.trim().length <= 80) root.style.setProperty(key, v.trim());
+    if(typeof v === 'string' && v.trim() && v.trim().length <= 80) setPaletteVar(root, key, v.trim());
   }
 }
 // Import / manage the single custom theme. Mirrors the layout import form: the
@@ -12126,7 +12161,9 @@ function showThemeImportForm(){
   const live = getComputedStyle(document.documentElement);
   const sample = spaceForSwatches(JSON.stringify({
     v:1, id:'my-theme', name:'My theme',
-    vars: Object.fromEntries(CUSTOM_THEME_VARS.map(k=>[k, live.getPropertyValue(k).trim()])),
+    // --node-bg is the card swatch: for a custom theme its own value (the live
+    // --node-bg is that colour with the alpha stripped, see setPaletteVar).
+    vars: Object.fromEntries(CUSTOM_THEME_VARS.map(k=>[k, (k==='--node-bg' && cur) ? cur.vars[k] : live.getPropertyValue(k).trim()])),
   }, null, 2));
   const {m, dismissOn}=openVarForm(`
       <h2>Add a theme</h2>
@@ -12163,7 +12200,7 @@ function showThemeImportForm(){
   // set it: a custom theme's 20 variables and the six theme-config knobs both
   // live here, and only one of them is ours to undo.
   const rootInline = {};
-  for(const key of CUSTOM_THEME_VARS) rootInline[key] = document.documentElement.style.getPropertyValue(key);
+  for(const key of CUSTOM_THEME_INLINE) rootInline[key] = document.documentElement.style.getPropertyValue(key);
   let previewed = false;
   attachColorSwatches(ta, text=>{ previewed = true; previewCustomThemeVars(text); });
   ta.focus();
@@ -12171,7 +12208,7 @@ function showThemeImportForm(){
     closeColorPicker(); m.remove();
     if(!previewed) return;
     const root = document.documentElement;
-    for(const key of CUSTOM_THEME_VARS){
+    for(const key of CUSTOM_THEME_INLINE){
       if(rootInline[key]) root.style.setProperty(key, rootInline[key]);
       else root.style.removeProperty(key);
     }
@@ -12226,16 +12263,14 @@ function importLibraryTheme(id){
   // theme is active) the previous custom theme's 20 inline variables. Clear
   // them for the read, then restore exactly what was there before.
   const saved={};
-  for(const key of CUSTOM_THEME_VARS) saved[key]=root.style.getPropertyValue(key);
+  for(const key of CUSTOM_THEME_INLINE) saved[key]=root.style.getPropertyValue(key);
   const prev=root.getAttribute('data-theme');
   root.setAttribute('data-theme', id);
   const cs=getComputedStyle(root);
   const vars={};
-  for(const key of CUSTOM_THEME_VARS){
-    root.style.removeProperty(key);
-    vars[key]=cs.getPropertyValue(key).trim();
-  }
-  for(const key of CUSTOM_THEME_VARS){
+  for(const key of CUSTOM_THEME_INLINE) root.style.removeProperty(key);
+  for(const key of CUSTOM_THEME_VARS) vars[key]=cs.getPropertyValue(key).trim();
+  for(const key of CUSTOM_THEME_INLINE){
     if(saved[key]) root.style.setProperty(key, saved[key]);
     else root.style.removeProperty(key);
   }
