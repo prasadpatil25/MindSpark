@@ -134,3 +134,26 @@ export async function handleCollabHttp(storage, env, request){
   }
   return { status: 405, body: { error: 'method not allowed' } };
 }
+
+// ---- Live-session WebSocket -------------------------------------------------
+// A browser WebSocket cannot set headers, so the socket's identity rides on the
+// upgrade URL as ?token=<jwt> - the same JWT /api/session minted and the HTTP
+// API reads as a Bearer. An unverifiable token simply means anonymous.
+export async function socketIdentity(env, request){
+  const secret = env && env.AUTH_SECRET; if(!secret) return null;
+  let token = ''; try{ token = new URL(request.url).searchParams.get('token') || ''; }catch(e){ return null; }
+  if(!token) return null;
+  const p = await verifyJWT(token, secret); if(!p || p.sub == null) return null;
+  return { sub: String(p.sub), login: p.login || '' };
+}
+// The socket is gated like the HTTP API: `read` to join, `write` to store a
+// snapshot or relay an op. A room without an access list (a live session of an
+// unpublished map) stays open. The ACL is re-read on every call so a revoke
+// takes effect mid-session, and a socket never claims ownership - that stays
+// with the first authed PUT.
+export async function socketAllowed(storage, identity, need){
+  const acl = await storage.get('acl');
+  if(!acl) return true;
+  const editToken = await storage.get('editToken');
+  return authorizeRequest({ acl, editToken, identity, tokenHeader: '', need, allowClaim: false }).ok;
+}

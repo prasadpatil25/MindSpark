@@ -4,13 +4,19 @@
 // late joiner can sync immediately. It never parses the map model itself.
 // Uses the WebSocket Hibernation API so idle rooms cost nothing.
 import { DurableObject } from 'cloudflare:workers';
-import { handleCollabHttp } from './collab-http.js';
+import { handleCollabHttp, socketIdentity, socketAllowed } from './collab-http.js';
 
 const COLORS = ['#e0613a','#3a6ea5','#2e9e6b','#9a5bb8','#d0902e','#c14d7a','#1f8a8a','#b8513a'];
 
 export class CollabRoom extends DurableObject {
   async fetch(request){
     if (request.headers.get('Upgrade') !== 'websocket') return this._http(request);
+    // The identity rides on the URL as ?token= (see collab-http.js). A room with
+    // an access list is gated here exactly like its HTTP API: `read` to join,
+    // and the same 401 (anonymous) / 403 (stranger) the API answers.
+    const identity = await socketIdentity(this.env, request);
+    if (!(await socketAllowed(this.ctx.storage, identity, 'read')))
+      return new Response(identity ? 'Forbidden' : 'Unauthorized', { status: identity ? 403 : 401 });
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);                       // hibernatable
 
@@ -18,7 +24,7 @@ export class CollabRoom extends DurableObject {
     for (const w of this.ctx.getWebSockets()) { const a=this._att(w); if(a) taken.add(a.color); }
     const color = COLORS.find(c=>!taken.has(c)) || COLORS[Math.floor(Math.random()*COLORS.length)];
     const id = crypto.randomUUID().slice(0,8);
-    server.serializeAttachment({ id, color, name:'' });
+    server.serializeAttachment({ id, color, name:'', identity });
 
     const snapshot = await this.ctx.storage.get('snapshot');
     server.send(JSON.stringify({ t:'welcome', id, color, snapshot: snapshot||null, peers: this._peers(server) }));
@@ -42,13 +48,17 @@ export class CollabRoom extends DurableObject {
   async webSocketMessage(ws, message){
     let m; try{ m = JSON.parse(message); }catch{ return; }
     const me = this._att(ws) || {};
-    if (m.t === 'snapshot'){ await this.ctx.storage.put('snapshot', m.map); return; }   // store opaque
+    // `write` is decided per message against the ACL as it is now, so a revoke
+    // takes effect on the next edit. Cursors, names and pings are not writes.
+    const mayWrite = () => socketAllowed(this.ctx.storage, me.identity || null, 'write');
+    if (m.t === 'snapshot'){ if (await mayWrite()) await this.ctx.storage.put('snapshot', m.map); return; }   // store opaque
     if (m.t === 'name'){
       const name = String(m.name||'').slice(0,40);
       ws.serializeAttachment({ ...me, name });
       this._broadcast(ws, { t:'name', id: me.id, name });
       return;
     }
+    if (m.t === 'op' && !(await mayWrite())) return;         // a viewer's edits go nowhere
     m.from = me.id;                                          // tag ops/cursor with sender, relay to others
     this._broadcast(ws, m);
   }

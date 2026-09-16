@@ -15238,8 +15238,12 @@ const Collab = (function(){
   const clone = o => JSON.parse(JSON.stringify(o));
   const snap  = () => ({ nodes:clone(map.nodes), rootId:map.rootId, title:map.title, color:map.color,
                          links:clone(map.links||[]), layout:map.layout, vars:clone(map.vars||{}), style:map.style });
+  // The identity rides on the upgrade URL: a room that has an access list is
+  // gated on the socket exactly like the HTTP API (read to join, write to
+  // change anything). No identity = anonymous, which open rooms still accept.
   function wsUrl(r){ const base=collabBase(); if(!base) return null; try{ const u=new URL(base);
-    return (u.protocol==='https:'?'wss:':'ws:')+'//'+u.host+'/api/collab/'+encodeURIComponent(r); }catch(e){ return null; } }
+    const tok=(typeof Session!=='undefined' && Session.jwt) ? '?token='+encodeURIComponent(Session.jwt) : '';
+    return (u.protocol==='https:'?'wss:':'ws:')+'//'+u.host+'/api/collab/'+encodeURIComponent(r)+tok; }catch(e){ return null; } }
 
   function ensureUI(){
     if(!layer){ layer=document.createElement('div'); layer.id='collabCursors'; document.body.appendChild(layer); }
@@ -15274,7 +15278,8 @@ const Collab = (function(){
   }
   function join(roomId){ joiner=true; firstSnap=true; connect(roomId, false); }
 
-  function connect(roomId, asHost){
+  async function connect(roomId, asHost){
+    await ensureCollabIdentity();   // so wsUrl() can carry the identity; a no-op when nobody is signed in
     const url=wsUrl(roomId); if(!url){ toast('Live editing isn\u2019t configured'); return; }
     room=roomId;
     try{ ws=new WebSocket(url); }catch(e){ toast('Could not start live session'); return; }
@@ -15935,6 +15940,10 @@ async function tryEnterLiveSession(){
   sel=null; history=[]; hpos=-1;
   const t=$('#mapTitle'); if(t) t.value=map.title;
   render();
+  // A returning user may hold a saved forge session; restoring it (and asking
+  // the collab backend for an identity) is what lets them join rooms that
+  // have an access list. Nobody signed in = anonymous guest, as before.
+  if(COLLAB.url){ Store=CloudStore; MODE='cloud'; try{ await CloudStore.tryInit(); }catch(e){} await ensureCollabIdentity(); }
   Collab.join(room);
   return true;
 }
