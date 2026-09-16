@@ -263,7 +263,7 @@ A backend that wants to be discovered implements the worker's client contract:
 | `POST /api/session` | Body `{token, forge, instance}`: the user's forge token, the forge id (`github`, `gitea`, `gitlab`) and, for a self-hosted forge, its origin. Verify the token against **that** forge and answer `{token, exp, id, login}` - a signed identity the client then sends as `Authorization: Bearer` - or `501` to run without identities (sharing still works by capability link; *Manage access* stays hidden). |
 | `GET` / `PUT` / `PATCH /api/collab/<room>` | Shared-map snapshot: read, publish, merge. `X-Edit-Token` carries a capability link's token. |
 | `GET` / `POST /api/collab/<room>/acl`, `DELETE …/acl/<id>`, `POST …/link` | Access list, add or remove a collaborator, link mode. Owner-only, by identity. A collaborator's `userId` is looked up by the client on the signed-in forge and carries the same namespace the backend gave the caller's own `id`. |
-| `/api/collab/<room>` (WebSocket upgrade) | Live-session relay, same messages as `worker/collab-do.js`. |
+| `/api/collab/<room>` (WebSocket upgrade) | Live-session relay, same messages as `worker/collab-do.js`. The identity rides on the URL as `?token=<jwt>` (a browser socket cannot set headers); a room with an access list is gated like its HTTP API - `read` to join, `write` per snapshot or op, re-read so a revoke lands mid-session. A room without one stays open. |
 
 [`worker/collab-http.js`](worker/collab-http.js) and [`worker/auth-core.js`](worker/auth-core.js) are the reference for the HTTP surface and the authorization rules; both are pure modules a backend can run unmodified. **Maps never touch the backend.** They are read and written by the browser against the user's own forge with the user's own token, which the backend never receives; it holds room state only - snapshots of *shared* maps, access lists, presence.
 
@@ -356,7 +356,6 @@ mindspark/
 Contributions welcome (see the issue templates under **New issue**). Ideas on the list:
 
 - **Cross-device shared-maps sidebar.** The "shared by me / with me" list is currently per-browser (localStorage). Now that sign-in provides a stable identity, sync it per-user so the same list follows you across devices.
-- **Unify access control across channels.** Bring the real-time collaboration channel under the same identity-based access model as the HTTP sync, so roles and revoke apply everywhere consistently.
 - **"The room is the map."** Optionally make a shared room the single source of truth (Overleaf-style) so the owner doesn't keep a separate copy that can drift.
 - **Upgrade legacy share links.** A one-click re-publish to move older anonymous capability links onto identity-gated access.
 - **Collaboration for self-hosters.** The client side is in place - the app discovers a backend on its own origin (see [Companion backend](#companion-backend-community-collaboration-for-self-hosters)) and a community companion exists. Still open: running one alongside `node server.js` out of the box.
