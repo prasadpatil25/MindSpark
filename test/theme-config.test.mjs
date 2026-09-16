@@ -9,9 +9,11 @@ import { loadFns, extractConst } from './helpers/load-app-fns.mjs';
 
 const DEFAULTS = extractConst('THEME_CONFIG_DEFAULTS');
 const BOUNDS = extractConst('THEME_CONFIG_BOUNDS');
+const VARS = extractConst('THEME_CONFIG_VARS');
+// No custom theme imported here: the custom section appears only while one exists (theme-config-custom.test.mjs).
 const { validateThemeConfig, themeConfigFor } = loadFns(
-  ['validateThemeConfig', 'themeConfigFor'],
-  { THEME_CONFIG_DEFAULTS: DEFAULTS, THEME_CONFIG_BOUNDS: BOUNDS }
+  ['validateThemeConfig', 'themeConfigFor', 'themeConfigDefaults'],
+  { THEME_CONFIG_DEFAULTS: DEFAULTS, THEME_CONFIG_BOUNDS: BOUNDS, THEME_CONFIG_VARS: VARS, THEME_CONFIG_PALETTE: { ...VARS, nodeBg: '--node-bg' }, loadCustomTheme: () => null }
 );
 
 const dracula = raw => validateThemeConfig(raw).dracula;
