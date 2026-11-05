@@ -11,7 +11,7 @@ it.
 
 ## Why these are data, not code
 
-A layout picks one of the four placement **strategies** MindSpark implements
+A layout picks one of the placement **strategies** MindSpark implements
 and tunes it. It cannot define a new algorithm, and that is deliberate: a
 layout travels inside every `#view=` share link, so anything executable here
 would run on the machine of whoever opened a shared map.
@@ -23,10 +23,15 @@ would run on the machine of whoever opened a shared map.
 | `radial` | Root at the centre, depth as distance | `ring`, `startAngle`, `sweep` |
 | `grid`   | Top-level topics as cards, sub-trees as outlines | `columns`, `indent` |
 | `matrix` | Columns with rows aligned across them, like a table | `colGap`, `rowGap`, `cellGap` |
+| `treetable` | Depth as columns, each block spanning its subtree | `colGap`, `rowGap`, `rootSide` |
 
 `chain` also takes an `angle`: 90 is square to the spine (a timeline), and
 anything less slants the ribs (a fishbone). Existing timelines are unaffected,
 since 90 is the default.
+
+`treetable` also takes a `rootSide`: `left` (the default), `right`, `top` or
+`bottom`. The gap between depth levels is always `colGap` and the gap between
+sibling blocks is always `rowGap`, whichever edge the root sits on.
 
 Values outside the allowed range are clamped and unrecognised keys are ignored,
 so a layout written against a newer version still loads - it just ignores what

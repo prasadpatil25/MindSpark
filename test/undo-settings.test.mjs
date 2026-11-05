@@ -45,15 +45,16 @@ describe('undo covers the settings dialogs', () => {
   test('map style, look, theme, preset and title-auto round-trip through undo and redo', () => {
     const { api, map } = harness();
     api.pushHistory();
-    Object.assign(map, { style: 'neon', layoutPreset: 'org-chart', styleConfig: { neon: { glow: 2 } },
+    Object.assign(map, { style: 'neon', layoutPreset: 'org-chart', layoutParams: { colGap: 64, rowGap: 16 }, styleConfig: { neon: { glow: 2 } },
       lookConfig: { lab: { radius: 3 } }, themeConfig: { dark: { paper: '#000' } } });
     api.pushHistory();
     api.undo();
-    for (const k of ['style', 'layoutPreset', 'styleConfig', 'lookConfig', 'themeConfig']) {
+    for (const k of ['style', 'layoutPreset', 'layoutParams', 'styleConfig', 'lookConfig', 'themeConfig']) {
       assert.equal(api.map[k], undefined, k + ' reverted');
     }
     api.redo();
     assert.equal(api.map.style, 'neon');
+    assert.deepEqual(api.map.layoutParams, { colGap: 64, rowGap: 16 });
     assert.deepEqual(api.map.styleConfig, { neon: { glow: 2 } });
     assert.deepEqual(api.map.themeConfig, { dark: { paper: '#000' } });
   });

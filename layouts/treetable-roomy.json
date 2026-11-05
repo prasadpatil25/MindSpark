@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "id": "treetable-roomy",
+  "name": "Tree table (roomy)",
+  "desc": "Depth as columns, with extra room between blocks",
+  "strategy": "treetable",
+  "params": {
+    "colGap": 64,
+    "rowGap": 16
+  }
+}

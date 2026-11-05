@@ -1301,6 +1301,14 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   .node{position:absolute;background:var(--card-bg);border:1.5px solid var(--line);border-radius:var(--node-radius, 12px);padding:var(--node-pad-y, 9px) var(--node-pad-x, 15px);font-size:calc(15px * var(--look-node-size, 1));font-weight:500;line-height:1.35;box-shadow:var(--shadow);width:max-content;max-width:240px;min-width:34px;user-select:none;transition:background-color .3s ease,color .3s ease,box-shadow .15s,border-color .15s,transform .06s;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;display:flex;align-items:center;justify-content:center;text-align:center;box-sizing:border-box}
   .node:hover{box-shadow:var(--shadow-lg)}
   .node.root{font-family:var(--serif);font-weight:600;font-size:calc(19px * var(--look-node-size, 1));padding:var(--node-pad-y, 12px) var(--node-pad-x, 22px);border-width:0}
+
+  /* Tree table cells are sized by the layout engine, not by their text. The
+     class is removed for one measurement pass per render() so the natural size
+     underneath is still known (see the cell pass at the end of render()). */
+  #viewport[data-layout="treetable"] .node.tt-cell{width:var(--tt-w) !important;height:var(--tt-h) !important;max-width:none !important}
+  /* A cell fills its column, so dragging one corner would be overwritten by
+     the next render. Column and row spacing live in Layout settings instead. */
+  #viewport[data-layout="treetable"] .node .resize-grip{display:none}
   .node.sel{outline:2.5px solid var(--accent);outline-offset:2px}
   .node.editing{cursor:text;user-select:text;outline:none !important;box-shadow:none}
   .node.editing .node-text{outline:none}

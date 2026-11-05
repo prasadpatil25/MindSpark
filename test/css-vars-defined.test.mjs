@@ -18,6 +18,8 @@ const SET_FROM_SCRIPT = {
   '--p-color': 'inline on .donate-provider, app.js renderDonateProviders',
   '--look-radius': "root.style.setProperty('--look-radius', ...) in applyLookConfigVars; " +
                    'every use is guarded by .user-look-radius',
+  '--tt-w': "el.style.setProperty('--tt-w', cell.w+'px') in the render tree-table cell pass",
+  '--tt-h': "el.style.setProperty('--tt-h', cell.h+'px') in the render tree-table cell pass",
 };
 
 function declaredNames(css) {

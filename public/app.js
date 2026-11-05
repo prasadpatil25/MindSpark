@@ -1507,6 +1507,45 @@ function clearNodes(){
   _nodeEls.clear(); _nodeSig.clear(); _lastNodeOrder=[];
 }
 
+// Tree table cells. The layout engine knows the width of every depth column and
+// the height of every subtree block; render() applies those as real element
+// sizes so the cards form one grid instead of an indented tree. Kept keyed by
+// map id so a stale cell from the previous map can never size a new one, and
+// cleared by any other layout, which uses natural card sizes.
+let _treeTableCellSizes = null;
+
+// The tree table stretches w/h to the cell, so the text size it was measured at
+// is kept beside them. Non-enumerable on purpose: this is a measurement cache,
+// and map JSON, undo snapshots and cloud diffs must not carry it as content.
+function rememberNaturalSize(n, w, h){
+  const hidden = Object.prototype.hasOwnProperty.call(n, '_nw')
+    && !Object.prototype.propertyIsEnumerable.call(n, '_nw');
+  if(hidden){ n._nw=w; n._nh=h; return; }
+  Object.defineProperty(n, '_nw', { value:w, writable:true, configurable:true });
+  Object.defineProperty(n, '_nh', { value:h, writable:true, configurable:true });
+}
+
+// Apply the measured cells to the existing node elements. Shared by render()
+// and the live edit reflow: both need the same width/height/top on screen and
+// the same w/h for export, the minimap and fit. Elements missing from the DOM
+// are skipped so a stale cell can never resurrect a deleted node.
+function applyTreeTableCells(cells){
+  if(!cells) return;
+  for(const [id, cell] of cells){
+    const n=map.nodes[id], el=_nodeEls.get(id);
+    if(!n || !el) continue;
+    n.w=cell.w; n.h=cell.h;
+    if(cell.x != null){ n.x=cell.x; el.style.left=cell.x+'px'; }
+    if(cell.y != null){ n.y=cell.y; el.style.top=cell.y+'px'; }
+    el.style.setProperty('--tt-w', cell.w+'px');
+    el.style.setProperty('--tt-h', cell.h+'px');
+    el.classList.add('tt-cell');
+    // The layout may have just flipped this node's side (a map switching in
+    // from 'balanced' keeps the old class on a reused element).
+    el.classList.toggle('left', n.side==='left');
+  }
+}
+
 function render(){
   // The Build Prompt panel is bound to one map. Switching maps (or closing the
   // map) leaves it showing the previous map's branch, and select() cannot catch
@@ -1522,6 +1561,7 @@ function render(){
     $('#mapTitle').value='';              // reset title field
     viewport.removeAttribute('data-style');
     viewport.removeAttribute('data-layout');   // reset style/background
+    _treeTableCellSizes = null;
     applyStyleConfigVars(); applyLookConfigVars(); applyThemeConfigVars();   // back to the defaults, not the last map's
     sel=null;
     updateBreadcrumb();                   // hides (no map)
@@ -1533,6 +1573,9 @@ function render(){
   const mapStyle = resolvedMapStyle(map);
   viewport.dataset.style = mapStyle;
   viewport.dataset.layout = map.layout || 'balanced';
+  // Resolve once: the placement engine is also needed after the measure pass
+  // below, because a tree table's cell sizes depend on the text just measured.
+  const _run = layoutRunForMap(map.layout || 'balanced', map.layoutParams, map.layoutConfig);
   // Sketch cards carry a deterministic per-id tilt as --tilt (sketchTiltDeg).
   // Resolved once; only freshly built elements receive it, and a style or
   // styleConfig change lands in _metricsKey, which busts every node signature
@@ -1566,6 +1609,16 @@ function render(){
   // or reordered) the rest are re-appended in order - except the node being
   // edited, which keeps its place and its caret.
   const _order=[]; let _inOrder=true;
+  // Drop last render's cell sizing before measuring, so a tree-table parent
+  // reports its natural text size rather than the tall block it was stretched
+  // to. The class goes back on with fresh numbers at the end of this pass.
+  for(const el of _nodeEls.values()){
+    if(el.classList.contains('tt-cell')){
+      el.classList.remove('tt-cell');
+      el.style.removeProperty('--tt-w');
+      el.style.removeProperty('--tt-h');
+    }
+  }
   // nodes
   for(const id in map.nodes){
     if(hidden.has(id)) continue;
@@ -1583,6 +1636,10 @@ function render(){
       _old.style.left=n.x+'px'; _old.style.top=n.y+'px';
       _old.classList.toggle('sel', id===sel);
       if(!_inOrder && !_old.classList.contains('editing')) viewport.appendChild(_old);
+      // A tree table always re-measures: its cell width/height is derived from
+      // the natural text size, and an element kept across renders still has the
+      // stretched size from the last one. One batched read pass below.
+      if(_run.strategy==='treetable') toMeasure.push({el:_old, n});
       continue;
     }
     _inOrder=false;                     // this element goes to the end: everything after it must follow
@@ -1819,6 +1876,20 @@ function render(){
   for(const {el, n} of toMeasure){
     const r=el.getBoundingClientRect();
     n.w=r.width/sz; n.h=r.height/sz;
+    // The layout reads these, never the cell-stretched w/h set below: a column
+    // must be sized by its text, not by the previous layout pass.
+    if(_run.strategy==='treetable') rememberNaturalSize(n, n.w, n.h);
+  }
+  // The tree table is re-placed from the sizes just measured. Doing it here,
+  // not only in autoLayout(), is what makes a saved map open with its cells
+  // intact: loadMap() renders without a layout pass, so there would otherwise
+  // be no cell sizes until the user happened to tidy the map.
+  if(_run.strategy==='treetable'){
+    const _cells = layoutTreeTable(map.nodes, map.rootId, childrenOf, _run.params);
+    _treeTableCellSizes = _cells ? { mapId: map.id, cells: _cells } : null;
+    if(_cells) applyTreeTableCells(_cells);
+  } else {
+    _treeTableCellSizes = null;
   }
   drawEdges(hidden);
   positionNodeBar();
@@ -2463,6 +2534,10 @@ function drawEdges(hidden){
   for(const id in map.nodes){
     const n=map.nodes[id]; if(!n.parent||hidden.has(id)||hidden.has(n.parent)) continue;
     const p=map.nodes[n.parent]; if(!p) continue;
+    // Tree table reads from the grid itself: the spanning block already says
+    // which cells belong together, and stubs between columns only add noise.
+    // Cross-links below are still drawn, being explicit references.
+    if(layout==='treetable') continue;
     // Choose attach points based on layout orientation
     let x1,y1,x2,y2,horizontal=true,leftSide=(n.side==='left'),d;
     if(layout==='timeline' && n.parent!==map.rootId){
@@ -2590,7 +2665,7 @@ function edgePathsHTML(merged){
 // `label` property. Positioned at the midpoint of the parent-child connection,
 // offset above the line. Only horizontal (balanced/right/left) layouts supported.
 function buildEdgeLabels(hidden, layout){
-  if(layout==='radial' || layout==='grid' || layout==='matrix') return '';
+  if(layout==='radial' || layout==='grid' || layout==='matrix' || layout==='treetable') return '';
   let svg='';
   for(const id in map.nodes){
     const n=map.nodes[id]; if(!n.label || hidden.has(id)) continue;
@@ -3005,6 +3080,7 @@ const LAYOUT_CONFIG_DEFAULTS = {
     start: 'above',     // which side the first step's sub-topics take
   },
   matrix: { colGap:40, rowGap:24, cellGap:10, headGap:60 },
+  treetable: { colGap:16, rowGap:6, rootSide:'left' },
   fishbone: {
     gap: 70,            // gap between consecutive spine items
     stem: 30,           // clearance between the spine and a rib's sub-topic block
@@ -3027,6 +3103,7 @@ const LAYOUT_CONFIG_BOUNDS = {
   timeline: { gap:[8,400], stem:[0,300], indent:[0,300] },
   stair:    { gap:[8,400], stem:[0,300], indent:[0,300] },
   matrix:   { colGap:[8,300], rowGap:[8,300], cellGap:[0,120], headGap:[8,300] },
+  treetable:{ colGap:[8,300], rowGap:[4,120] },
   fishbone: { gap:[8,400], stem:[0,300], indent:[0,300], angle:[10,170] },
 };
 
@@ -3050,6 +3127,9 @@ function validateLayoutConfig(raw){
     if(engine === 'timeline' || engine === 'fishbone' || engine === 'stair'){
       if(typeof sec.alternate === 'boolean') out[engine].alternate = sec.alternate;
       if(sec.start === 'above' || sec.start === 'below') out[engine].start = sec.start;
+    }
+    if(engine === 'treetable' && ['left','right','top','bottom'].includes(sec.rootSide)){
+      out[engine].rootSide = sec.rootSide;
     }
   }
   return out;
@@ -3375,6 +3455,124 @@ function layoutMatrix(nodes, rootId, kidsOf, opts){
 }
 
 /* ------------------------------------------------------------
+   Tree table placement - depth becomes a column, every cell spans the
+   height of its own subtree.
+
+   This is XMind's tree table rather than a spreadsheet: the columns are
+   structural (depth 1, depth 2, ...), and a parent's block covers every row
+   beneath it. That is what lets a phase sit beside one date and a whole list of
+   to-dos while still reading as one group, which a matrix cannot express - a
+   matrix aligns row N across columns instead of letting one cell span rows.
+
+   Blocks are measured bottom-up, then placed top-down. A node is centred in its
+   own block, so a parent points at the middle of its children without any extra
+   connector pass.
+
+   Mutates x/y/side on the given nodes.
+   ------------------------------------------------------------ */
+function layoutTreeTable(nodes, rootId, kidsOf, opts){
+  if(!nodes[rootId]) return;
+  const colGap = opts.colGap != null ? opts.colGap : 16;
+  const rowGap = opts.rowGap != null ? opts.rowGap : 6;
+  // Where the root band sits. The table is depth along one axis and sibling
+  // blocks along the other, so 'top'/'bottom' turn it on its side rather than
+  // mirroring a finished grid. An unknown value falls through to the left form.
+  const rootSide = opts.rootSide;
+  const vertical = rootSide === 'top' || rootSide === 'bottom';
+  const childSide = rootSide === 'right' ? 'left'
+    : rootSide === 'top' ? 'down'
+    : rootSide === 'bottom' ? 'up'
+    : 'right';
+
+  // A collapsed node is a leaf here, exactly as it is on screen.
+  const visibleKids = id => (nodes[id].collapsed ? [] : kidsOf(id));
+  // While a map is in tree table, w/h hold the stretched cell size. The natural
+  // text size is kept beside them so a later pass sizes rows and columns by
+  // content instead of feeding a stretched cell back into itself.
+  const naturalW = n => n._nw || n.w || 120;
+  const naturalH = n => n._nh || n.h || 40;
+  const cells = new Map();
+
+  // Span of the sibling axis owned by a node's block: its own card, or the
+  // stacked blocks of its children when those are larger. Horizontally that is
+  // a height, vertically a width. Memoised because placement asks for the same
+  // spans repeatedly on a deep map.
+  const spanCache = new Map();
+  const blockSpan = id => {
+    if(spanCache.has(id)) return spanCache.get(id);
+    const n = nodes[id], cs = visibleKids(id);
+    let span = vertical ? naturalW(n) : naturalH(n);
+    if(cs.length){
+      let sum = 0;
+      cs.forEach((c, i) => { sum += blockSpan(c) + (i ? rowGap : 0); });
+      span = Math.max(span, sum);
+    }
+    spanCache.set(id, span);
+    return span;
+  };
+
+  // One thickness per depth: the widest card at a level when depth runs
+  // sideways, the tallest when it runs down. Every row starts on the same line,
+  // which is what makes this a table rather than a tree.
+  const thickness = [];
+  const measureDepths = (id, depth) => {
+    const n = nodes[id];
+    thickness[depth] = Math.max(thickness[depth] || 0, vertical ? naturalH(n) : naturalW(n));
+    visibleKids(id).forEach(c => measureDepths(c, depth + 1));
+  };
+  measureDepths(rootId, 0);
+  const depthPos = [];
+  let main = 0;
+  for(let d = 0; d < thickness.length; d++){ depthPos[d] = main; main += thickness[d] + colGap; }
+  const tableMain = main - colGap;
+
+  const place = (id, depth, cross) => {
+    const n = nodes[id];
+    const span = blockSpan(id);
+    n.side = depth === 0 ? 'root' : childSide;
+    if(vertical){
+      n.x = cross;
+      n.y = depthPos[depth];
+      cells.set(id, { x: cross, y: depthPos[depth], w: span, h: thickness[depth] });
+    } else {
+      n.x = depthPos[depth];
+      n.y = cross;
+      cells.set(id, { x: depthPos[depth], y: cross, w: thickness[depth], h: span });
+    }
+
+    const cs = visibleKids(id);
+    if(!cs.length) return;
+    let childSpan = 0;
+    cs.forEach((c, i) => { childSpan += blockSpan(c) + (i ? rowGap : 0); });
+    // Children sit in the middle of a parent block that is larger than its
+    // subtree, matching the parent's own centring.
+    let cpos = cross + (span - childSpan) / 2;
+    cs.forEach(c => { place(c, depth + 1, cpos); cpos += blockSpan(c) + rowGap; });
+  };
+
+  place(rootId, 0, 0);
+
+  // Mirror the finished grid so the root moves to the opposite edge. Every
+  // subtree span and sibling order stays identical; computing a second
+  // placement walk per side would repeat the same code and drift.
+  if(rootSide === 'right'){
+    for(const [id, c] of cells){
+      c.x = tableMain - (c.x + c.w);
+      nodes[id].x = c.x;
+    }
+  } else if(rootSide === 'bottom'){
+    for(const [id, c] of cells){
+      c.y = tableMain - (c.y + c.h);
+      nodes[id].y = c.y;
+    }
+  }
+
+  // The caller stretches each node to its cell; render() and autoLayout() both
+  // need the same map, and returning it keeps the engine free of app state.
+  return cells;
+}
+
+/* ------------------------------------------------------------
    Grid placement - root children as cards in a grid, each with its
    sub-tree as an indented outline beneath it.
 
@@ -3607,34 +3805,33 @@ function autoLayout(noRender){
   const root=map.nodes[map.rootId];
   root.side='root';
   const layout = map.layout || 'balanced';
-  // Spacing comes from this map's config. Local names, so the module constants
-  // stay the defaults and other callers (drag-insertion, FLIP) are unaffected.
-  const _lc = validateLayoutConfig(map.layoutConfig)[layout] || LAYOUT_CONFIG_DEFAULTS.balanced;
-  const LH = (_lc.hGap != null) ? _lc.hGap : HGAP;
-  const LV = (_lc.vGap != null) ? _lc.vGap : VGAP;
 
   // ----- PLACEMENT -----
   // One dispatch for every layout: resolve to a strategy plus a complete
   // parameter set, then run it. Adding a layout is now a table entry rather
   // than another branch here.
-  const _run = resolveLayout(layout, map.layoutParams);
-  const _p = { ..._run.params };
-  // The per-map spacing config still applies on top, so the settings dialog
-  // keeps working for the built-ins.
-  const _cfg = validateLayoutConfig(map.layoutConfig)[layout];
-  if(_cfg){
-    if(_cfg.hGap != null && _run.strategy === 'tree'){
-      if(_p.axis === 'y'){ _p.gapCross = _cfg.hGap; _p.gapMain = _cfg.vGap; }
-      else { _p.gapMain = _cfg.hGap; _p.gapCross = _cfg.vGap; }
-    }
-    for(const k of ['gap','stem','indent','alternate','start','ring','startAngle','sweep',
-                    'columns','gapX','gapY','rowGap','angle','colGap','cellGap','headGap']){
-      if(_cfg[k] !== undefined) _p[k] = _cfg[k];
+  const _run = layoutRunForMap(layout, map.layoutParams, map.layoutConfig);
+  const _p = _run.params;
+  // Leaving the tree table: w/h currently hold stretched cell sizes. Restore
+  // the natural text sizes first, or the next layout would place cards as wide
+  // as the table columns they used to fill.
+  if(_run.strategy !== 'treetable'){
+    for(const id in map.nodes){
+      const n = map.nodes[id];
+      if(n._nw > 0){ n.w = n._nw; if(n._nh > 0) n.h = n._nh; }
+      // The natural size is now on w/h, so the cache would only go stale after
+      // a resize in another layout. Drop it; the next treetable render refills.
+      delete n._nw; delete n._nh;
     }
   }
-  ({ tree: layoutTree, chain: layoutChain, radial: layoutRadial, grid: layoutGrid,
-     matrix: layoutMatrix }[_run.strategy])
+  const _cells = ({ tree: layoutTree, chain: layoutChain, radial: layoutRadial, grid: layoutGrid,
+     matrix: layoutMatrix, treetable: layoutTreeTable }[_run.strategy])
     (map.nodes, map.rootId, childrenOf, _p);
+  if(_run.strategy === 'treetable'){
+    _treeTableCellSizes = _cells ? { mapId: map.id, cells: _cells } : null;
+  } else {
+    _treeTableCellSizes = null;
+  }
   if(!noRender){ render(); scheduleSave(); flipAnimateNodes(_beforePos); } return;
   if(!noRender){ render(); scheduleSave(); flipAnimateNodes(_beforePos); }
   } finally { _ci=_prevCI; }
@@ -3661,9 +3858,23 @@ function relayoutDuringEdit(id){
   if(!el) return;
   const n=map.nodes[id]; if(!n) return;
   const sz=view.k*_uiZ();
+  const _run = layoutRunForMap(map.layout || 'balanced', map.layoutParams, map.layoutConfig);
+  // A tree-table cell is stretched to its block, and that stretched height is
+  // not the text's height. Drop the cell sizing for this one measurement so a
+  // growing paragraph widens its column, then put the fresh cells back below.
+  const wasCell=el.classList.contains('tt-cell');
+  if(wasCell){
+    el.classList.remove('tt-cell');
+    el.style.removeProperty('--tt-w');
+    el.style.removeProperty('--tt-h');
+  }
   const r=el.getBoundingClientRect();
   n.w=r.width/sz; n.h=r.height/sz;
+  if(_run.strategy==='treetable') rememberNaturalSize(n, n.w, n.h);
   autoLayout(true);   // positions only - no DOM rebuild
+  if(_run.strategy==='treetable' && _treeTableCellSizes && _treeTableCellSizes.mapId===map.id){
+    applyTreeTableCells(_treeTableCellSizes.cells);
+  }
   paintPositions();   // shift existing elements + redraw edges
 }
 
@@ -4501,7 +4712,8 @@ function toggleMdMode(on){
 // edit instead. restore() must put back every field listed here.
 function historySnapshot(){
   return JSON.stringify({nodes:map.nodes,rootId:map.rootId,title:map.title,color:map.color,links:map.links||[],layout:map.layout,vars:map.vars||{},
-    style:map.style, layoutPreset:map.layoutPreset, layoutConfig:map.layoutConfig, styleConfig:map.styleConfig,
+    style:map.style, layoutPreset:map.layoutPreset, layoutParams:map.layoutParams,
+    layoutConfig:map.layoutConfig, styleConfig:map.styleConfig,
     lookConfig:map.lookConfig, themeConfig:map.themeConfig});
 }
 function pushHistory(){
@@ -4520,7 +4732,7 @@ function updateUndo(){ $('#undo').disabled=hpos<=0; $('#redo').disabled=hpos>=hi
 function restore(s){ const o=JSON.parse(s); map.nodes=o.nodes; map.rootId=o.rootId; map.title=o.title; map.color=o.color; if(o.links) map.links=o.links; if(o.layout) map.layout=o.layout; if(o.vars) map.vars=o.vars;
   // Absent in the snapshot means absent on the map: a setting the user had just
   // added must go away on undo, so these are assigned, not guarded.
-  map.style=o.style; map.layoutPreset=o.layoutPreset; map.layoutConfig=o.layoutConfig; map.styleConfig=o.styleConfig; map.lookConfig=o.lookConfig; map.themeConfig=o.themeConfig;
+  map.style=o.style; map.layoutPreset=o.layoutPreset; map.layoutParams=o.layoutParams; map.layoutConfig=o.layoutConfig; map.styleConfig=o.styleConfig; map.lookConfig=o.lookConfig; map.themeConfig=o.themeConfig;
   $('#mapTitle').value=map.title; autoLayout(); if(mdMode && !_mdSyncing) syncTextFromMap(); }
 function undo(){ if(hpos>0){hpos--;restore(history[hpos]);updateUndo();} }
 function redo(){ if(hpos<history.length-1){hpos++;restore(history[hpos]);updateUndo();} }
@@ -7941,7 +8153,7 @@ function normalizeLoadedMap(m){
            nodes:m.nodes||{}, links:m.links||[], vars:m.vars||{} };
   // Per-map settings are content too: a version restored without them came back
   // with default spacing, style, look and colours.
-  for(const k of ['layoutPreset','layoutConfig','styleConfig','lookConfig','themeConfig','frontmatter']) if(m[k]!=null) out[k]=m[k];
+  for(const k of ['layoutPreset','layoutParams','layoutConfig','styleConfig','lookConfig','themeConfig','frontmatter']) if(m[k]!=null) out[k]=m[k];
   return sanitizeMapData(out);
 }
 // ---- Map ingress ------------------------------------------------------------
@@ -10818,6 +11030,8 @@ async function exportPNG(){
   ids.forEach(i=>{
     const n=map.nodes[i]; if(!n.parent||hidden.has(n.parent)) return;
     const p=map.nodes[n.parent]; if(!p) return;
+    // Same rule as drawEdges(): tree table draws no structural connectors.
+    if(mapLayout==='treetable') return;
     // Reproduce drawEdges() branching: timeline/radial/grid/matrix/down vs generic
     let d=null, x1,y1,x2,y2,leftSide=(n.side==='left'),horizontal=true;
     if(mapLayout==='timeline' && n.parent!==map.rootId){
@@ -10952,7 +11166,7 @@ async function exportPNG(){
   }
 
   // Branch labels - text above branch lines for nodes with a `label` property
-  if(mapLayout!=='radial' && mapLayout!=='grid' && mapLayout!=='matrix'){
+  if(mapLayout!=='radial' && mapLayout!=='grid' && mapLayout!=='matrix' && mapLayout!=='treetable'){
     ctx.save();
     ctx.font = '500 11px var(--sans)';
     ctx.fillStyle = css('--ink-soft') || '#636e72';
@@ -12812,6 +13026,7 @@ const LAYOUT_PARAMS = {
   },
   radial: { ring:[60,600], startAngle:[-360,360], sweep:[30,360], pad:[0,30], padV:[0,40] },
   matrix: { colGap:[8,300], rowGap:[8,300], cellGap:[0,120], headGap:[8,300] },
+  treetable: { colGap:[8,300], rowGap:[4,120], rootSide:['left','right','top','bottom'] },
   grid:   { columns:[1,8], gapX:[8,300], gapY:[8,300], rowGap:[0,120], indent:[0,120] },
 };
 // The built-in layouts, now expressed as strategy + parameters. These are the
@@ -12828,6 +13043,7 @@ const ENGINE_PARAMS = {
   stair:   { strategy:'chain', params:{ axis:'y', dir:1, gap:45, stem:24, indent:42, alternate:true,  start:'above', sideName:'down', gapMain:70, gapCross:40 } },
   grid:    { strategy:'grid',  params:{ columns:3, gapX:60, gapY:60, rowGap:14, indent:24 } },
   matrix:  { strategy:'matrix',params:{ colGap:40, rowGap:24, cellGap:10, headGap:60 } },
+  treetable:{ strategy:'treetable', params:{ colGap:16, rowGap:6, rootSide:'left' } },
   fishbone:{ strategy:'chain', params:{ axis:'x', dir:1, gap:70, stem:30, indent:26,
                                         alternate:true, start:'above', angle:35,
                                         gapMain:70, gapCross:22 } },
@@ -12866,7 +13082,39 @@ function resolveLayout(name, params){
   return { strategy, params: { ...base, ...validateLayoutParams(strategy, params) } };
 }
 
-const LAYOUT_ENGINES = ['balanced','right','left','down','up','timeline','stair','radial','grid','matrix','fishbone'];
+// The parameters one map actually renders with: the layout name resolves to a
+// strategy and defaults, then the per-map config section applies on top.
+//
+// A preset's params belong to the preset, so the built-in config DEFAULTS must
+// not overwrite them. Without that distinction every imported layout that
+// names a strategy with config knobs (treetable's colGap/rowGap, radial's ring)
+// silently snapped back to the built-in values and looked broken. A config
+// section actually stored on the map is an explicit user choice and still wins.
+function layoutRunForMap(layout, layoutParams, layoutConfig){
+  const run = resolveLayout(layout, layoutParams);
+  const params = { ...run.params };
+  const hasParams = !!layoutParams && typeof layoutParams === 'object'
+    && !Array.isArray(layoutParams) && Object.keys(layoutParams).length > 0;
+  const savedCfg = !!layoutConfig && typeof layoutConfig === 'object'
+    && !Array.isArray(layoutConfig)
+    && Object.prototype.hasOwnProperty.call(layoutConfig, layout)
+    && !!layoutConfig[layout] && typeof layoutConfig[layout] === 'object'
+    && !Array.isArray(layoutConfig[layout]);
+  const cfg = (savedCfg || !hasParams) ? validateLayoutConfig(layoutConfig)[layout] : null;
+  if(cfg){
+    if(cfg.hGap != null && run.strategy === 'tree'){
+      if(params.axis === 'y'){ params.gapCross = cfg.hGap; params.gapMain = cfg.vGap; }
+      else { params.gapMain = cfg.hGap; params.gapCross = cfg.vGap; }
+    }
+    for(const k of ['gap','stem','indent','alternate','start','ring','startAngle','sweep',
+                    'columns','gapX','gapY','rowGap','angle','colGap','cellGap','headGap','rootSide']){
+      if(cfg[k] !== undefined) params[k] = cfg[k];
+    }
+  }
+  return { strategy: run.strategy, params };
+}
+
+const LAYOUT_ENGINES = ['balanced','right','left','down','up','timeline','stair','radial','grid','matrix','treetable','fishbone'];
 const BUILTIN_LAYOUTS = [
   {v:1, id:'balanced', name:'Balanced', desc:'Branches split left & right', engine:'balanced'},
   {v:1, id:'right',    name:'Right',    desc:'All branches grow right',     engine:'right'},
@@ -12880,6 +13128,7 @@ const BUILTIN_LAYOUTS = [
   {v:1, id:'grid',     name:'Grid',     desc:'Top-level topics as cards, sub-topics as outlines',
         engine:'grid'},
   {v:1, id:'matrix',   name:'Matrix',   desc:'Columns and aligned rows, read like a table', engine:'matrix'},
+  {v:1, id:'treetable', name:'Tree table', desc:'Depth as columns, each block spans its subtree', engine:'treetable'},
   {v:1, id:'fishbone', name:'Fishbone', desc:'Spine with angled ribs, for cause-and-effect', engine:'fishbone'},
 ];
 const CUSTOM_LAYOUTS_KEY = 'mindspark:layouts';
@@ -14541,6 +14790,16 @@ function buildLayoutThumb(id){
     <rect x="38" y="20" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
     <rect x="6"  y="40" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
     <rect x="38" y="40" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+  </svg></span>`;
+  if(id==='treetable') return `<span class="style-thumb"><svg viewBox="0 0 70 60" width="70" height="40">
+    <rect x="2"  y="12" width="14" height="30" rx="2" fill="var(--accent)"/>
+    <rect x="22" y="4"  width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="22" y="18" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="22" y="32" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="42" y="4"  width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="42" y="18" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <rect x="42" y="32" width="14" height="10" rx="2" fill="var(--card-bg,#fff)" stroke="var(--line)"/>
+    <path d="M16,27 L19,27 M19,9 L19,45 M19,9 L22,9 M19,23 L22,23 M19,37 L22,37 M36,9 L39,9 M39,9 L39,37 M39,9 L42,9 M39,23 L42,23 M39,37 L42,37" fill="none" stroke="var(--ink-soft)" stroke-width="1.1"/>
   </svg></span>`;
   if(id==='timeline') return `<span class="style-thumb"><svg viewBox="0 0 70 60" width="70" height="40">
     <path d="M11,30 L62,30" fill="none" stroke="var(--ink-soft)" stroke-width="1.2"/>
@@ -16321,6 +16580,7 @@ function _shareePayload(m){
   const p = { v:1, title:m.title, color:m.color, style:m.style, layout:m.layout,
               rootId:m.rootId, nodes:m.nodes, links:m.links||[], vars:m.vars||{} };
   if(m.layoutConfig) p.layoutConfig = m.layoutConfig;   // omitted entirely when unset
+  if(m.layoutParams) p.layoutParams = m.layoutParams;   // structural spacing, e.g. a tree-table preset
   if(m.styleConfig) p.styleConfig = m.styleConfig;
   if(m.lookConfig) p.lookConfig = m.lookConfig;
   if(m.themeConfig) p.themeConfig = m.themeConfig;   // the Theme dialog promises "included in share links"
@@ -16379,7 +16639,7 @@ async function tryEnterSharedView(){
   map=sanitizeMapData({ id:'shared', title:payload.title||'Shared map', color:payload.color||'#e0613a',
         style:payload.style, layout:payload.layout, rootId:payload.rootId,
         nodes:payload.nodes||{}, links:payload.links||[], vars:payload.vars||{},
-        layoutConfig:payload.layoutConfig, styleConfig:payload.styleConfig, lookConfig:payload.lookConfig, themeConfig:payload.themeConfig });
+        layoutParams:payload.layoutParams, layoutConfig:payload.layoutConfig, styleConfig:payload.styleConfig, lookConfig:payload.lookConfig, themeConfig:payload.themeConfig });
   sel=null;
   $('#mapTitle').value=map.title; $('#mapTitle').readOnly=true;
   // Grow the title <input> to fit the whole title (it clips to its width) so a
@@ -16932,6 +17192,9 @@ function cloudDiff(base, cur){
   for(const id in cn){ if(JSON.stringify(bn[id])!==JSON.stringify(cn[id])) ops.push({t:'node', id, n:cn[id]}); }
   for(const id in bn){ if(!cn[id]) ops.push({t:'del', id}); }
   ['title','color','rootId','layout','style'].forEach(k=>{ if((base||{})[k]!==(cur||{})[k]) ops.push({t:'meta',k,v:cur[k]}); });
+  ['layoutParams','layoutConfig','styleConfig','lookConfig','themeConfig'].forEach(k=>{
+    if(JSON.stringify((base||{})[k])!==JSON.stringify((cur||{})[k])) ops.push({t:'meta',k,v:cur[k]});
+  });
   if(JSON.stringify((base&&base.links)||[])!==JSON.stringify((cur&&cur.links)||[])) ops.push({t:'meta',k:'links',v:cur.links});
   if(JSON.stringify((base&&base.vars)||{})!==JSON.stringify((cur&&cur.vars)||{})) ops.push({t:'meta',k:'vars',v:cur.vars});
   return ops;
@@ -16946,6 +17209,9 @@ function adoptCloudMerged(merged){
   if(merged.color) map.color=merged.color;
   if(merged.rootId) map.rootId=merged.rootId;
   if(merged.layout) map.layout=merged.layout;
+  for(const k of ['layoutParams','layoutConfig','styleConfig','lookConfig','themeConfig']){
+    if(merged[k]!=null) map[k]=merged[k]; else delete map[k];
+  }
   sanitizeMapData(map);                  // the room's copy is as untrusted as a share link
   if('style' in merged) map.style=merged.style;
   if(merged.vars) map.vars=merged.vars;
@@ -17079,7 +17345,7 @@ function _applySharedMap(id, token, data){
   map=sanitizeMapData({ id:'shared-'+id, title:data.title||'Shared map', color:data.color||'#e0613a',
         style:data.style, layout:data.layout||'balanced', rootId:data.rootId,
         nodes:data.nodes||{}, links:data.links||[], vars:data.vars||{},
-        layoutConfig:data.layoutConfig, styleConfig:data.styleConfig, lookConfig:data.lookConfig, themeConfig:data.themeConfig });   // collaborators see the owner's spacing, style, look and colours
+        layoutParams:data.layoutParams, layoutConfig:data.layoutConfig, styleConfig:data.styleConfig, lookConfig:data.lookConfig, themeConfig:data.themeConfig });   // collaborators see the owner's spacing, style, look and colours
   map._cloudView=id;
   map._opening=true;                 // opening a shared map isn't an edit - suppress the save pill until it settles
   if(editable){ map._cloudEdit={ id, token }; }
