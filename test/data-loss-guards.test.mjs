@@ -23,9 +23,9 @@ const { normalizeLoadedMap } = loadFns(['normalizeLoadedMap', 'sanitizeMapData',
 describe('version history', () => {
   test('a loaded version keeps its per-map settings', () => {
     const v = normalizeLoadedMap({ id: 'm', title: 'T', rootId: 'r', nodes: { r: { text: 'R', parent: null } },
-      layoutPreset: 'tl', layoutConfig: { balanced: { hGap: 90 } }, styleConfig: { modern: { dash: 3 } },
+      layoutPreset: 'tl', layoutParams: { colGap: 64, rowGap: 16 }, layoutConfig: { balanced: { hGap: 90 } }, styleConfig: { modern: { dash: 3 } },
       lookConfig: { office: { nodeSize: 1.2 } }, themeConfig: { light: { paper: '#fff' } }, frontmatter: '---\na: 1\n---' });
-    for (const k of ['layoutPreset', 'layoutConfig', 'styleConfig', 'lookConfig', 'themeConfig', 'frontmatter']) assert.ok(v[k], k);
+    for (const k of ['layoutPreset', 'layoutParams', 'layoutConfig', 'styleConfig', 'lookConfig', 'themeConfig', 'frontmatter']) assert.ok(v[k], k);
   });
 
   test('previewing makes the map read-only and marks the preview object', () => {

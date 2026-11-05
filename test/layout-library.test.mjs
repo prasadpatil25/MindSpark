@@ -15,7 +15,7 @@ const DIR = join(here, '..', 'layouts');
 
 const fns = loadFns(
   ['validateLayoutConfig', 'validateLayoutParams', 'validateLayoutPreset',
-   'resolveLayout', 'layoutTree', 'layoutChain', 'layoutRadial', 'layoutGrid', 'layoutMatrix'],
+   'resolveLayout', 'layoutTree', 'layoutChain', 'layoutRadial', 'layoutGrid', 'layoutMatrix', 'layoutTreeTable'],
   {
     LAYOUT_PARAMS: extractConst('LAYOUT_PARAMS'),
     ENGINE_PARAMS: extractConst('ENGINE_PARAMS'),
@@ -29,6 +29,7 @@ const fns = loadFns(
 const ENGINES = {
   tree: fns.layoutTree, chain: fns.layoutChain,
   radial: fns.layoutRadial, grid: fns.layoutGrid, matrix: fns.layoutMatrix,
+  treetable: fns.layoutTreeTable,
 };
 
 test('the engine map covers every strategy the app declares', () => {
