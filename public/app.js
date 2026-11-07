@@ -1126,6 +1126,12 @@ function probeHealth(){
   return _healthProbe;
 }
 async function initStore(){
+  // A host may supply an API-compatible store without changing standalone mode.
+  if(window.MINDSPARK_HOST){
+    await window.MINDSPARK_HOST.ready();
+    Store=window.MINDSPARK_HOST.store; MODE='server';
+    return {mode:'server', loggedIn:true};
+  }
   if(await probeHealth()==='server'){ Store=ServerStore; MODE='server'; return {mode:'server', loggedIn:true}; }
   Store=CloudStore; MODE='cloud';
   const loggedIn=await CloudStore.tryInit();
@@ -7801,7 +7807,7 @@ async function loadMap(id){
   endHistoryPreview(false);
   exitSharedMode();            // if we were viewing a shared map, leave it cleanly
   let m=null;
-  try{ m=await Store.get(id); }catch(e){ toast('Could not load map'); return false; }
+  try{ m=await Store.get(id); }catch(e){ if(window.MINDSPARK_HOST) throw e; toast('Could not load map'); return false; }
   if(!m){ toast('Map not found'); return false; }
   // Legacy migration: old maps may still store `comment` - promote it to `notes`
   for(const n of Object.values(m.nodes||{})){
@@ -15981,9 +15987,9 @@ async function _proceedBoot(){
   loadUserTemplates();   // merge any saved "My templates" into the catalog
   // A shared map queued for copying takes priority over loading the last map.
   if(await consumePendingImport()) return;
-  try{ const _mid=new URLSearchParams(location.search).get('map'); if(_mid && await loadMap(_mid)) return; }catch(e){}
+  try{ const _mid=new URLSearchParams(location.search).get('map'); if(_mid && await loadMap(_mid)) return; }catch(e){ if(window.MINDSPARK_HOST) throw e; }
   let idx=[];
-  try{ idx=await Store.list(); }catch(e){ console.warn('could not list maps; starting with an empty list:', e.message); }
+  try{ idx=await Store.list(); }catch(e){ if(window.MINDSPARK_HOST) throw e; console.warn('could not list maps; starting with an empty list:', e.message); }
   if(idx && idx.length){
     const ok=await loadMap(idx[0].id);
     if(!ok) createMap();
@@ -16590,7 +16596,8 @@ async function buildShareLink(){
   const json=JSON.stringify(_shareePayload(map));
   const gz=await _gzip(json);
   const token = gz ? ('g'+_b64urlFromBytes(gz)) : ('r'+_b64urlFromBytes(new TextEncoder().encode(json)));
-  return location.origin + location.pathname + '#view=' + token;
+  const base = window.MINDSPARK_HOST?.shareBase || location.origin + location.pathname;
+  return base + '#view=' + token;
 }
 async function decodeShareToken(token){
   const scheme=token[0], body=token.slice(1);
@@ -17721,4 +17728,8 @@ else loadQotd();
   } else {
     await proceedBoot(); await _openSharedAfterBoot();   // server / local mode
   }
-})().catch(e=>{ console.error(e); if(!map) createMap(); });
+})().catch(e=>{
+  console.error(e);
+  if(window.MINDSPARK_HOST){ window.MINDSPARK_HOST.onError(e); return; }
+  if(!map) createMap();
+});
