@@ -44,7 +44,15 @@ describe('render() moves elements only when it has to', () => {
   const body = fn('render');
   test('an unchanged element stays put while the order still matches', () => {
     assert.match(body, /if\(!_inOrder && !_old\.classList\.contains\('editing'\)\) viewport\.appendChild\(_old\);/);
-    assert.match(body, /_lastNodeOrder=_order;/);
+  });
+  test('a rebuilt element goes back at its own index, not the end', () => {
+    // Appending a rebuilt element to the end forced every later element to be
+    // re-appended too: about 1500 DOM moves for one changed node on a big map.
+    assert.match(body, /if\(_sameOrder\)\{[\s\S]*?_nodeEls\.get\(_order\[j\]\)[\s\S]*?viewport\.insertBefore\(el,_next\)/);
+  });
+  test('the order check covers hidden nodes, so collapse/expand is not a reorder', () => {
+    assert.match(body, /_allOrder\.push\(id\)/);
+    assert.match(body, /_lastNodeOrder=_allOrder;/);
   });
 });
 

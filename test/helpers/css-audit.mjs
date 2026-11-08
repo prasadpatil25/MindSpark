@@ -428,6 +428,10 @@ export const ROOT_SURFACE = {
   '.diff-row.del': 'var(--paper)',
   '.ex-grp': 'var(--chrome)', '.map-group-label': 'var(--chrome)',
   '.collab-cursor': 'var(--paper)',   // drawn over the canvas
+  // Organic nodes paint no card (background:transparent), so the word sits on
+  // the canvas. Its --branch colour is written from script and reads here as
+  // the --ink fallback; organic-style.test.mjs scores the real palette.
+  '#viewport[data-style="organic"] .node[data-depth="1"]': 'var(--paper)',
   '.theme-panel-large': 'var(--chrome)',
   // The rows sit inside .am-card (styles.css:4248), which the selectors do not
   // name. Naming .access-modal instead would be wrong: it is a 45 percent black

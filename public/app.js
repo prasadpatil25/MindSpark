@@ -1474,7 +1474,7 @@ function applyView(){
 // deliberately: a missed field shows up as a node that silently never updates,
 // which is far worse than an occasional redundant rebuild.
 const _nodeEls=new Map();    // id -> element currently in the DOM
-let _lastNodeOrder=[];       // ids in the DOM order the last render() left them
+let _lastNodeOrder=[];       // all map node ids, in the order the last render left their DOM slots
 const _nodeSig=new Map();    // id -> signature it was built from
 // Bumped whenever a web font finishes loading. A node's cached size was
 // measured against whatever font was resolved at build time, and a font
@@ -1581,6 +1581,20 @@ function render(){
   // styleConfig change lands in _metricsKey, which busts every node signature
   // and rebuilds them - so a cached element can never wear a stale angle.
   const _tiltAmp = mapStyle==='sketch' ? sketchTiltAmp() : 0;
+  // Organic underlines wear their branch's colour and weight. Set on cached
+  // elements too, not only fresh ones: recolouring a main branch changes the
+  // colour of nodes whose own signature has not changed.
+  let _orgVars=null;
+  if(mapStyle==='organic'){
+    const _osc={ ...STYLE_CONFIG_DEFAULTS.organic, ...((map.styleConfig||{}).organic||{}) };
+    const _oi=organicBranchInfo(_osc.edgeColor);
+    _orgVars=(el, id)=>{
+      if(id===map.rootId) return;
+      const c=_oi.color[id]||'', w=organicBranchWidth(_oi.depth[id]||1, _osc.edgeWidth)+'px';
+      if(el.style.getPropertyValue('--branch')!==c) el.style.setProperty('--branch', c);
+      if(el.style.getPropertyValue('--branch-w')!==w) el.style.setProperty('--branch-w', w);
+    };
+  }
   applyStyleConfigVars();
   applyLookConfigVars();
   applyThemeConfigVars();
@@ -1605,10 +1619,34 @@ function render(){
   // Unchanged elements used to be re-appended on EVERY render - a DOM move per
   // node per pass, and a move takes focus away, so a collaborator's edit threw the
   // user out of the node they were typing in. Now nothing moves while the order
-  // still matches the last render; from the first node that differs (new, rebuilt
-  // or reordered) the rest are re-appended in order - except the node being
-  // edited, which keeps its place and its caret.
-  const _order=[]; let _inOrder=true;
+  // still matches the last render; from the first node that differs (new or
+  // reordered) the rest are re-appended in order - except the node being edited,
+  // which keeps its place and its caret.
+  //
+  // Collect the visible order first so a REBUILT element can go back in at its
+  // own index. Appending it to the end used to flip _inOrder off and re-append
+  // every later element - 1500+ DOM moves, and most of the render time, each
+  // time one early node's text changed (typing commit, task toggle, collapse).
+  //
+  // _allOrder is every node in map order, hidden ones included. That is the
+  // order the DOM follows once hidden elements are removed, and it does NOT
+  // change when a branch is collapsed or expanded - so those passes are not
+  // mistaken for a reorder and do not re-append the whole map.
+  const _order=[], _allOrder=[];
+  for(const id in map.nodes){
+    _allOrder.push(id);
+    if(!hidden.has(id)) _order.push(id);
+  }
+  // Is the map's own insertion order unchanged since the last render? If so the
+  // existing elements are still in the right relative order and a rebuilt or
+  // newly revealed element only needs inserting before its next visible peer.
+  let _sameOrder=_allOrder.length===_lastNodeOrder.length;
+  if(_sameOrder){
+    for(let i=0;i<_allOrder.length;i++){
+      if(_allOrder[i]!==_lastNodeOrder[i]){ _sameOrder=false; break; }
+    }
+  }
+  let _inOrder=_sameOrder;
   // Drop last render's cell sizing before measuring, so a tree-table parent
   // reports its natural text size rather than the tall block it was stretched
   // to. The class goes back on with fresh numbers at the end of this pass.
@@ -1620,13 +1658,11 @@ function render(){
     }
   }
   // nodes
-  for(const id in map.nodes){
-    if(hidden.has(id)) continue;
+  for(let _oi=0;_oi<_order.length;_oi++){
+    const id=_order[_oi];
     const n=map.nodes[id];
     const hasKids=childrenOf(id).length>0;
     _seen.add(id);
-    if(_inOrder && _lastNodeOrder[_order.length]!==id) _inOrder=false;
-    _order.push(id);
     const _sig=_nodeSignature(id, n, hasKids, roll, zd, _metricsKey);
     const _old=_nodeEls.get(id);
     if(_old && _nodeSig.get(id)===_sig){
@@ -1635,6 +1671,7 @@ function render(){
       // a re-measure.
       _old.style.left=n.x+'px'; _old.style.top=n.y+'px';
       _old.classList.toggle('sel', id===sel);
+      if(_orgVars) _orgVars(_old, id);
       if(!_inOrder && !_old.classList.contains('editing')) viewport.appendChild(_old);
       // A tree table always re-measures: its cell width/height is derived from
       // the natural text size, and an element kept across renders still has the
@@ -1642,7 +1679,6 @@ function render(){
       if(_run.strategy==='treetable') toMeasure.push({el:_old, n});
       continue;
     }
-    _inOrder=false;                     // this element goes to the end: everything after it must follow
     if(_old) _old.remove();
     const el=document.createElement('div');
     el.className='node'+(id===map.rootId?' root':'')+(id===sel?' sel':'')+(hasKids&&n.collapsed?' collapsed':'')+(n.side==='left'?' left':'');
@@ -1671,6 +1707,12 @@ function render(){
         el.style.background = _isInk ? _base : colorFor(_base);
         el.style.color = pickContrast(_isInk ? _base : colorFor(_base));
       }
+    } else if(_orgVars){
+      // Organic has no cards: a node's colour tints its branch instead (see
+      // organicBranchInfo), so paint none here.
+      el.style.background = '';
+      el.style.color = '';
+      _orgVars(el, id);
     } else if(n.color && n.color!=='#fff' && n.color!=='#ffffff'){
       el.style.background = n.color;
       el.style.color = pickContrast(n.color);
@@ -1857,7 +1899,18 @@ function render(){
       tb.addEventListener('click',ev=>ev.stopPropagation());
       el.appendChild(tb);
     }
-    viewport.appendChild(el);
+    // Put the element back at its own index when the map's id order is
+    // unchanged. A genuine reorder (add, delete or move mid-list) still appends
+    // this and the rest in sequence, which is what keeps stacking correct.
+    let _next=null;
+    if(_sameOrder){
+      for(let j=_oi+1;j<_order.length;j++){
+        const cand=_nodeEls.get(_order[j]);
+        if(cand && cand.parentElement===viewport){ _next=cand; break; }
+      }
+    }
+    if(_next) viewport.insertBefore(el,_next);
+    else viewport.appendChild(el);
     _nodeEls.set(id, el); _nodeSig.set(id, _sig);
     toMeasure.push({el, n});
   }
@@ -1866,7 +1919,7 @@ function render(){
   for(const [id, el] of _nodeEls){
     if(!_seen.has(id)){ el.remove(); _nodeEls.delete(id); _nodeSig.delete(id); }
   }
-  _lastNodeOrder=_order;
+  _lastNodeOrder=_allOrder;
   // Measure ALL nodes in one pass AFTER appending - reading getBoundingClientRect
   // interleaved with appends forces a layout reflow per node (O(n) thrash). One
   // batched read loop triggers a single reflow. getBoundingClientRect returns
@@ -2522,6 +2575,115 @@ function stairEdgePath(p, n){
   const edgeY = ncy >= pcy ? n.y : n.y + (n.h||0);
   return `M${sx},${sy} L${ncx},${sy} L${ncx},${edgeY}`;
 }
+// ── Organic style: Tony Buzan's hand-drawn Mind Map ─────────────────────────
+// Three of Buzan's rules carry the look, and each needs code rather than CSS:
+// every main branch has its own colour, kept by everything that grows from it;
+// branches are thick at the centre and thin out with each level; and every
+// word sits on a line of its own, which the next branches grow out of.
+// drawEdges(), render() and exportPNG() all go through these helpers so the
+// screen and the PNG cannot drift apart.
+//
+// Vivid enough to read as a thin line on a light paper and to stay visible on
+// a dark one. Yellow is a darker gold because pure yellow vanishes on white.
+const ORGANIC_BRANCH_COLORS=['#e53935','#fb8c00','#7cb342','#1e88e5','#8e24aa','#00acc1','#d81b60','#f9a825'];
+// A node's own colour is a pale card tint (NODE_COLORS) picked for a dark text
+// on top of it. As a 2px line that tint disappears, so keep the hue and push
+// saturation and lightness into line range. Greys have no hue to strengthen
+// and only get darker.
+function vividBranchColor(c){
+  const v=parseInt(hex6(c).slice(1),16);
+  const r=(v>>16&255)/255, g=(v>>8&255)/255, b=(v&255)/255;
+  const mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2, d=mx-mn;
+  let h=0, s=0;
+  if(d){
+    s=d/(1-Math.abs(2*l-1));
+    h=mx===r ? ((g-b)/d)%6 : mx===g ? (b-r)/d+2 : (r-g)/d+4;
+    h*=60; if(h<0) h+=360;
+  }
+  const S = s<0.08 ? s : Math.max(s, 0.62);
+  const L = Math.min(0.5, Math.max(0.4, l));
+  const C=(1-Math.abs(2*L-1))*S, X=C*(1-Math.abs((h/60)%2-1)), m=L-C/2;
+  const rgb = h<60?[C,X,0]: h<120?[X,C,0]: h<180?[0,C,X]: h<240?[0,X,C]: h<300?[X,0,C]: [C,0,X];
+  return '#'+rgb.map(x=>Math.round((x+m)*255).toString(16).padStart(2,'0')).join('');
+}
+// Line thickness by depth. `base` is the main branch (styleConfig edgeWidth);
+// depth 0 is where a trunk leaves the central topic, about twice that.
+function organicBranchWidth(depth, base){
+  const k = depth<=0 ? 2.2 : [1, 0.5, 0.34, 0.27][Math.min(depth,4)-1];
+  return Math.max(1.2, Math.round(base*k*10)/10);
+}
+// Filled outline of a cubic bezier whose width runs from w1 to w2. Offsetting
+// only the control points along one axis pinches a steep S-curve to nothing in
+// its middle, so this samples the curve and offsets along the true normal.
+// pts = [x1,y1, c1x,c1y, c2x,c2y, x2,y2].
+function taperedBezierPath(pts, w1, w2){
+  const [x1,y1,ax,ay,bx,by,x2,y2]=pts, N=14, L=[], R=[];
+  const f=v=>Math.round(v*10)/10;
+  for(let i=0;i<=N;i++){
+    const t=i/N, u=1-t;
+    const px=u*u*u*x1+3*u*u*t*ax+3*u*t*t*bx+t*t*t*x2;
+    const py=u*u*u*y1+3*u*u*t*ay+3*u*t*t*by+t*t*t*y2;
+    let dx=3*u*u*(ax-x1)+6*u*t*(bx-ax)+3*t*t*(x2-bx);
+    let dy=3*u*u*(ay-y1)+6*u*t*(by-ay)+3*t*t*(y2-by);
+    const len=Math.hypot(dx,dy);
+    if(len<1e-6){ dx=1; dy=0; } else { dx/=len; dy/=len; }
+    const hw=(w1+(w2-w1)*t)/2;
+    L.push(f(px-dy*hw)+','+f(py+dx*hw));
+    R.push(f(px+dy*hw)+','+f(py-dx*hw));
+  }
+  return 'M'+L.join(' L')+' L'+R.reverse().join(' L')+' Z';
+}
+// The tapered branch from parent p to child n for the bezier layouts. In the
+// horizontal ones a branch leaves the END of the parent's underline and lands
+// on the START of the child's, so the curve and the line under each word read
+// as one stroke; a trunk starts just inside the central topic, hidden under
+// it. Vertical layouts keep the caller's attach points (x1..y2).
+function organicEdgePath(p, n, o){
+  let {x1,y1,x2,y2}=o;
+  const {fromRoot, leftSide, horizontal, wp, wn}=o;
+  if(horizontal){
+    const pw=p.w||0, ph=p.h||0;
+    if(fromRoot){
+      const inset=Math.min(12, pw/4);
+      x1 = leftSide ? p.x+inset : p.x+pw-inset;
+      y1 = p.y+ph/2;
+    } else {
+      x1 = leftSide ? p.x : p.x+pw;
+      y1 = p.y+ph-wp/2;
+    }
+    x2 = leftSide ? n.x+(n.w||0) : n.x;
+    y2 = n.y+(n.h||0)-wn/2;
+    const dx=Math.abs(x2-x1)*0.5, s=leftSide?-1:1;
+    return taperedBezierPath([x1,y1, x1+s*dx,y1, x2-s*dx,y2, x2,y2], wp, wn);
+  }
+  const dy=Math.abs(y2-y1)*0.5, s=y2>y1?1:-1;
+  return taperedBezierPath([x1,y1, x1,y1+s*dy, x2,y2-s*dy, x2,y2], wp, wn);
+}
+// Depth and branch colour of every node, in one indexed pass. A main branch
+// takes its own colour when it has one (made line-strength), else the next
+// palette entry; its whole subtree inherits that. A styleConfig edgeColor
+// overrides the lot, for anyone who wants one ink. Colours on deeper nodes
+// are not consulted: maps made in the card styles carry a random tint on
+// every node, and honouring those would turn every sub-branch a new colour.
+function organicBranchInfo(override){
+  return withChildIndex(()=>{
+    const depth=zebraDepth(), color=Object.create(null);
+    if(!map || !map.nodes[map.rootId]) return {depth, color};
+    childrenOf(map.rootId).forEach((id,i)=>{
+      const own=map.nodes[id].color;
+      const c = override
+        || (own && !/^#fff(fff)?$/i.test(own) ? vividBranchColor(own) : ORGANIC_BRANCH_COLORS[i % ORGANIC_BRANCH_COLORS.length]);
+      const stack=[id];
+      while(stack.length){
+        const k=stack.pop();
+        if(color[k]) continue;   // a cycle repairTree() missed must not spin
+        color[k]=c;
+        for(const ch of childrenOf(k)) stack.push(ch);
+      }
+    });
+    return {depth, color};
+  });
+}
 function drawEdges(hidden){
   const style=resolvedMapStyle(map);
   const layout=map.layout||'balanced';
@@ -2531,6 +2693,7 @@ function drawEdges(hidden){
   // from the style config. Resolved once per pass - it was rebuilt for every edge.
   const _sc = { ...STYLE_CONFIG_DEFAULTS[style], ...((map.styleConfig || {})[style] || {}) };
   const _edgeDash = _sc.dash > 0 ? `${_sc.dash} ${Math.max(2, Math.round(_sc.dash * 0.7))}` : null;
+  const _org = style==='organic' ? organicBranchInfo(_sc.edgeColor) : null;
   for(const id in map.nodes){
     const n=map.nodes[id]; if(!n.parent||hidden.has(id)||hidden.has(n.parent)) continue;
     const p=map.nodes[n.parent]; if(!p) continue;
@@ -2607,7 +2770,23 @@ function drawEdges(hidden){
         x2=leftSide ? n.x+(n.w||0) : n.x;
         y2=n.y+(n.h||0)/2;
       }
+      if(_org){
+        // A filled shape, not a stroke: a stroke cannot change width along
+        // its length. Its own colour per branch, so it merges by colour only.
+        const wp=organicBranchWidth(_org.depth[n.parent]||0, _sc.edgeWidth);
+        const wn=organicBranchWidth(_org.depth[id]||1, _sc.edgeWidth);
+        d = organicEdgePath(p, n, {x1,y1,x2,y2, fromRoot:n.parent===map.rootId, leftSide, horizontal, wp, wn});
+        segs.push({d, color:_org.color[id]||'var(--line-2)', width:null, dash:null, fill:true});
+        continue;
+      }
       d = edgePath(x1,y1,x2,y2,leftSide,horizontal,style);
+    }
+    if(_org){
+      // Timeline, stair, radial, grid and matrix draw elbows and spokes of
+      // their own; those keep their shape and take the branch colour and the
+      // child's line weight.
+      segs.push({d, color:_org.color[id]||'var(--line-2)', width:organicBranchWidth(_org.depth[id]||1, _sc.edgeWidth), dash:null});
+      continue;
     }
     // Stroke settings per style: colour (null → CSS var), width (null → CSS
     // var), dash (null → solid). Dashed dashes, Minimal thins - the rest keep
@@ -2622,7 +2801,7 @@ function drawEdges(hidden){
   // on, minimal: thin) multiply the element count.
   const merged=new Map();
   for(const s of segs){
-    const key=s.color+'|'+s.width+'|'+(s.dash||'');
+    const key=s.color+'|'+s.width+'|'+(s.dash||'')+(s.fill?'|fill':'');
     merged.set(key, (merged.get(key)||'')+' '+s.d);
   }
   // Cross-links: non-tree edges (references / dependencies). Drawn as separate
@@ -2655,8 +2834,12 @@ function drawEdges(hidden){
 // as invisible edges (SVG ignores stroke="null", defaulting to none).
 function edgePathsHTML(merged){
   return [...merged].map(([key,d])=>{
-    const [color,width,dash]=key.split('|');
+    const [color,width,dash,mode]=key.split('|');
     const stroke = (color && color!=='null') ? color : 'var(--edge-color, var(--line-2))';
+    // Organic branches are closed tapered outlines. The hairline stroke in the
+    // same colour closes the anti-aliasing seam where a branch meets the line
+    // under its word.
+    if(mode==='fill') return `<path d="${d}" fill="${stroke}" stroke="${stroke}" stroke-width="0.6" stroke-linejoin="round"/>`;
     const sw     = (width && width!=='null') ? width : 'var(--edge-width, 2.2)';
     return `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round"${dash&&dash!=='null'?` stroke-dasharray="${dash}"`:''}/>`;
   }).join('');
@@ -2744,6 +2927,9 @@ let _bpPanel=null; // open Build Prompt panel, if any
 const EMPTY_KIDS=Object.freeze([]);
 function buildChildIndex(){
   const idx=Object.create(null);
+  // withChildIndex() also wraps renderOutline(), which runs at boot and on the
+  // empty state, before any map is open.
+  if(!map) return idx;
   for(const id in map.nodes){
     const p=map.nodes[id].parent;
     if(p==null) continue;
@@ -3794,7 +3980,13 @@ function autoLayout(noRender){
   // "collapse/expand all" ease into place instead of jumping. render() clears and rebuilds
   // node DOM elements from scratch, so a plain CSS left/top transition can't apply here -
   // this replays the movement manually via a transform on the fresh elements instead.
-  const _beforePos={}; for(const id in map.nodes){ const n=map.nodes[id]; _beforePos[id]={x:n.x,y:n.y}; }
+  // Skipped for the live edit reflow (noRender): that pass moves existing elements and
+  // never animates, so allocating an entry per node would be pure waste.
+  let _beforePos=null;
+  if(!noRender){
+    _beforePos={};
+    for(const id in map.nodes){ const n=map.nodes[id]; _beforePos[id]={x:n.x,y:n.y}; }
+  }
   try{
   // Render-to-measure only if some visible node has no measured size yet (e.g.
   // it was just revealed by expanding). This avoids a full extra render on every
@@ -3818,10 +4010,14 @@ function autoLayout(noRender){
   if(_run.strategy !== 'treetable'){
     for(const id in map.nodes){
       const n = map.nodes[id];
-      if(n._nw > 0){ n.w = n._nw; if(n._nh > 0) n.h = n._nh; }
-      // The natural size is now on w/h, so the cache would only go stale after
-      // a resize in another layout. Drop it; the next treetable render refills.
-      delete n._nw; delete n._nh;
+      // Only nodes that carry a natural-size cache need touching. The old
+      // loop ran two deletes on every node in the map, cache or not.
+      if(n._nw > 0){
+        n.w = n._nw; if(n._nh > 0) n.h = n._nh;
+        // The natural size is now on w/h, so the cache would only go stale after
+        // a resize in another layout. Drop it; the next treetable render refills.
+        delete n._nw; delete n._nh;
+      }
     }
   }
   const _cells = ({ tree: layoutTree, chain: layoutChain, radial: layoutRadial, grid: layoutGrid,
@@ -3843,10 +4039,13 @@ function autoLayout(noRender){
 // caret/selection intact.
 function paintPositions(hidden){
   hidden = hidden || hiddenSet();
-  document.querySelectorAll('.node').forEach(el=>{
-    const n=map.nodes[el.dataset.id];
-    if(n){ el.style.left=n.x+'px'; el.style.top=n.y+'px'; }
-  });
+  // _nodeEls is render()'s own id -> element map, the same idiom the drag path
+  // uses: no DOM scan and no data-attribute read per node on every frame.
+  for(const [id, el] of _nodeEls){
+    const n=map.nodes[id];
+    if(!n) continue;
+    el.style.left=n.x+'px'; el.style.top=n.y+'px';
+  }
   drawEdges(hidden);
   repositionNodeBar();
 }
@@ -4746,7 +4945,9 @@ function addNode(parentId,asSibling){
   const id=uid();
   // Pick a random soft color from the palette (skip plain white at index 0).
   // Terminal style defaults cards to empty, so new nodes get no colour there.
-  const _termNew = resolvedMapStyle(map)==='terminal';
+  // Organic has no cards either, and a random tint on a new main branch would
+  // replace the next distinct palette colour it otherwise gets.
+  const _termNew = resolvedMapStyle(map)==='terminal' || resolvedMapStyle(map)==='organic';
   const palette=NODE_COLORS.slice(1);
   const color=_termNew ? null : palette[Math.floor(Math.random()*palette.length)];
   map.nodes[id]={id,text:'New topic',parent,
@@ -5323,6 +5524,8 @@ function showStyleConfigForm(){
         uniform card padding (0 = the style's own padding); glow adds a
         colored glow to nodes; dash adds a dash pattern to edges;
         tilt is the sketch style's per-card angle in degrees (0 = none).
+        In Organic, edgeWidth is the main branch thickness and an edgeColor
+        replaces the per-branch colours with one.
         Out-of-range values are clamped and
         unknown keys ignored, so what you get back may differ from what you
         type.</div>
@@ -11027,6 +11230,7 @@ async function exportPNG(){
   const _sc = (typeof STYLE_CONFIG_DEFAULTS!=='undefined' && STYLE_CONFIG_DEFAULTS[mapStyle])
     ? { ...STYLE_CONFIG_DEFAULTS[mapStyle], ...((map.styleConfig||{})[mapStyle]||{}) }
     : null;
+  const _org = mapStyle==='organic' ? organicBranchInfo(_sc.edgeColor) : null;
   ids.forEach(i=>{
     const n=map.nodes[i]; if(!n.parent||hidden.has(n.parent)) return;
     const p=map.nodes[n.parent]; if(!p) return;
@@ -11077,6 +11281,21 @@ async function exportPNG(){
         x1=leftSide ? p.x : p.x+(p.w||0); y1=p.y+(p.h||0)/2;
         x2=leftSide ? n.x+(n.w||0) : n.x;  y2=n.y+(n.h||0)/2;
       }
+    }
+    if(_org){
+      // Same shapes as drawEdges(): the shared path string goes straight into
+      // Path2D, so there is no second copy of the geometry to drift.
+      const wn=organicBranchWidth(_org.depth[i]||1, _sc.edgeWidth);
+      ctx.setLineDash([]);
+      ctx.fillStyle = ctx.strokeStyle = _org.color[i] || themeEdge;
+      if(d===null){
+        const wp=organicBranchWidth(_org.depth[n.parent]||0, _sc.edgeWidth);
+        const shape=new Path2D(organicEdgePath(p, n, {x1,y1,x2,y2, fromRoot:n.parent===map.rootId, leftSide, horizontal, wp, wn}));
+        ctx.lineWidth=0.6; ctx.fill(shape); ctx.stroke(shape);
+      } else {
+        ctx.lineWidth=wn; ctx.stroke(new Path2D(d));
+      }
+      return;
     }
     // Style: respect styleConfig, fallback to theme defaults like CSS does
     let col = (_sc && _sc.edgeColor) ? _sc.edgeColor : null;
@@ -11224,7 +11443,10 @@ async function exportPNG(){
     const n=map.nodes[i]; const isRoot=(i===map.rootId);
     const w=n.w||120, h=n.h||40;
     const baseR = _baseRadius;
-    let radius = isRoot ? (mapStyle==='classic' ? 6 : mapStyle==='minimal' ? 8 : baseR) : baseR;
+    let radius = isRoot ? (mapStyle==='classic' ? 6 : mapStyle==='minimal' ? 8 : baseR) : (_org ? 0 : baseR);
+    // Organic: the underline under this word, matching the CSS border-bottom.
+    const _ow = (_org && !isRoot) ? organicBranchWidth(_org.depth[i]||1, _sc.edgeWidth) : 0;
+    const _oc = _ow ? (_org.color[i] || themeEdge) : null;
     const r = Math.min(radius, h/2);
     // Detect formula early for border/badges/text
     let _isFormula=false, _formulaVal=null;
@@ -11248,6 +11470,8 @@ async function exportPNG(){
     if(mapStyle==='terminal'){
       const _mc=n.color;
       ctx.fillStyle=(_mc && _mc!=='#fff' && _mc!=='#ffffff') ? _mc : 'transparent';
+    } else if(_ow){
+      ctx.fillStyle='transparent';
     } else if(isRoot){
       const _hex = map.color || accent;
       if(mapStyle==='ink'){
@@ -11271,9 +11495,18 @@ async function exportPNG(){
       if(mapStyle==='bubble') return false;
       if(mapStyle==='sketch' && isRoot) return false;
       if((mapStyle==='modern' || mapStyle==='dashed') && isRoot) return false;
+      if(mapStyle==='organic') return false;
       return true;
     })();
-    if(mapStyle==='terminal'){
+    if(_ow){
+      ctx.save();
+      ctx.strokeStyle=_oc; ctx.lineWidth=_ow; ctx.lineCap='butt';
+      ctx.beginPath();
+      ctx.moveTo(n.x, n.y+h-_ow/2);
+      ctx.lineTo(n.x+w, n.y+h-_ow/2);
+      ctx.stroke();
+      ctx.restore();
+    } else if(mapStyle==='terminal'){
       // Terminal: no card box, just an accent underline (matches CSS border-bottom)
       const _uw = isRoot ? 2.5 : 2;
       ctx.save();
@@ -11325,8 +11558,9 @@ async function exportPNG(){
         ctx.restore();
       }
     }
-    // Reference node - distinct left border + italic, like live .node.ref-node
-    if(n.ref){
+    // Reference node - distinct left border + italic, like live .node.ref-node.
+    // Organic's border:none removes that border live, so none here either.
+    if(n.ref && !_ow){
       ctx.save();
       // clip to node shape then draw 4px left border in accent
       roundRect(ctx, n.x, n.y, w, h, r);
@@ -11349,13 +11583,18 @@ async function exportPNG(){
         bg='transparent';
         textFill=n.textColor || themeInk;
       }
+    } else if(_ow){
+      // Main-branch words take their branch's colour, as on screen.
+      bg='transparent';
+      textFill=n.textColor || (_org.depth[i]===1 ? mixHex(_oc, themeInk, 0.4) : themeInk);
     } else {
       bg = isRoot ? (map.color || accent) : (_hasColor2 ? n.color : _zebraBg);
       textFill = n.textColor || (isRoot ? pickContrast(bg) : (_hasColor2 ? pickContrast(n.color) : themeInk));
     }
     const sans = css('--sans') || '"Bricolage Grotesque",system-ui,sans-serif';
     const serif = css('--serif') || sans;
-    let fontPx = n.fontSize || (isRoot ? 19 : 15);
+    const _orgMain = !!_ow && _org.depth[i]===1;
+    let fontPx = n.fontSize || (isRoot ? 19 : _orgMain ? 16 : 15);
     // look font-size scaling (handwritten 1.2em) + lookConfig nodeSize
     const lookScale = (look==='handwritten' ? 1.2 : 1) * (parseFloat(css('--look-node-size')) || 1);
     if(!n.fontSize) fontPx = Math.round(fontPx * lookScale);
@@ -11376,6 +11615,11 @@ async function exportPNG(){
     const insetX = (() => {
       if(mapStyle==='terminal') return isRoot ? 20 : 16;   // leave room for the > / ▌ cursor prefix
       if(mapStyle==='paper') return Math.max(18, _cp || 15);   // clears the punch-hole strip and margin rule
+      // Card styles get 1.5px of side border inside w, which is the slack that
+      // keeps a max-content line from wrapping on canvas measuring a hair
+      // wider than layout. Organic words have no side borders and filled the
+      // box exactly, so every main branch wrapped in the PNG. Same slack here.
+      if(_ow) return (_cp > 0 ? _cp : 15) - 1.5;
       if(_cp > 0) return isRoot ? _cp + 12 : _cp;
       if(mapStyle==='bubble') return isRoot ? 26 : 22;
       return isRoot ? 22 : 15;
@@ -11412,7 +11656,7 @@ async function exportPNG(){
       ctx.fillText('YAML', n.x+8+_fw/2, n.y-9+6);
       ctx.restore();
     }
-    const textCenterY = n.y + imgDrawH + (h-imgDrawH)/2;
+    const textCenterY = n.y + imgDrawH + (h-imgDrawH-_ow)/2;
     // Highlight (background per text) - node-wide for the canvas export
     if(n.highlight){
       ctx.fillStyle = n.highlight;
@@ -11471,9 +11715,9 @@ async function exportPNG(){
       }
       ctx.fillStyle=_col;
       // Use same font handling as live formula (tabular nums, but canvas can't easily set that)
-      const _f = (_isTaskDone||!!n.strike ? 'line-through ' : '') + (n.underline?'underline ':'') + ((!!n.bold||isRoot)?'bold ':'500 ') + (n.italic||!!n.ref?'italic ':'') + fontPx+'px '+fontFamily;
+      const _f = (_isTaskDone||!!n.strike ? 'line-through ' : '') + (n.underline?'underline ':'') + ((!!n.bold||isRoot||_orgMain)?'bold ':'500 ') + (n.italic||!!n.ref?'italic ':'') + fontPx+'px '+fontFamily;
       // Simple center/align draw for formula result (single line)
-      ctx.font=((!!n.bold||isRoot)?'bold ':'500 ') + (n.italic||!!n.ref?'italic ':'') + fontPx+'px '+fontFamily;
+      ctx.font=((!!n.bold||isRoot||_orgMain)?'bold ':'500 ') + (n.italic||!!n.ref?'italic ':'') + fontPx+'px '+fontFamily;
       ctx.textAlign = mapStyle==='terminal' ? 'left' : (n.align==='left' ? 'left' : n.align==='right' ? 'right' : 'center');
       const _fx = (mapStyle==='terminal' || n.align==='left') ? textX : n.align==='right' ? textX+textMaxWidth : textX+textMaxWidth/2;
       // Draw with strike-through if needed
@@ -11499,7 +11743,7 @@ async function exportPNG(){
         drawNodeMath(ctx, htmlForExport, {
           x: textX, y: textCenterY, maxWidth: textMaxWidth,
           fontPx, color: textFill, family: fontFamily,
-          bold: !!n.bold || isRoot, align: n.align || (mapStyle==='terminal' ? 'left' : 'center'), listType: n.listType || null
+          bold: !!n.bold || isRoot || _orgMain, align: n.align || (mapStyle==='terminal' ? 'left' : 'center'), listType: n.listType || null
         });
       } else {
         drawFormattedText(ctx, htmlForExport, {
@@ -11510,7 +11754,7 @@ async function exportPNG(){
       fontPx,
       color: textFill,
       family: fontFamily,
-      baseBold: !!n.bold || isRoot,
+      baseBold: !!n.bold || isRoot || _orgMain,
       baseItalic: !!n.italic || !!n.ref,
       baseUnderline: !!n.underline,
       baseStrike: !!n.strike || _isTaskDone,
@@ -12612,7 +12856,8 @@ const MAP_STYLES = [
   {id:'clay', name:'Clay', desc:'Inflated clay, soft inset shadows'},
   {id:'ink', name:'Ink', desc:'Bold comic, heavy ink borders, hard shadow'},
   {id:'paper', name:'Paper', desc:'Legal pad, margin rule and punch holes'},
-  {id:'terminal', name:'Terminal', desc:'Prompt-style cards, accent underlines'}
+  {id:'terminal', name:'Terminal', desc:'Prompt-style cards, accent underlines'},
+  {id:'organic', name:'Organic', desc:'Tony Buzan style: words on tapering, colour-coded branches'}
 ];
 // Per-style tunables, keyed by style id on the map as map.styleConfig - the
 // same pattern as layoutConfig. Defaults mirror what the CSS and the export
@@ -12632,6 +12877,9 @@ const STYLE_CONFIG_DEFAULTS = {
   ink:     { edgeWidth:2.6, edgeColor:'', radius:8,   cardPad:0,  glow:0,  dash:0 },
   paper:   { edgeWidth:1.5, edgeColor:'', radius:6,   cardPad:4,  glow:0,  dash:0 },
   terminal:{ edgeWidth:1.6, edgeColor:'', radius:0,   cardPad:0,  glow:0,  dash:0 },
+  // edgeWidth is the main branch; deeper ones thin out from it
+  // (organicBranchWidth). edgeColor '' keeps one colour per main branch.
+  organic: { edgeWidth:6,   edgeColor:'', radius:28,  cardPad:0,  glow:0,  dash:0 },
 };
 const STYLE_CONFIG_BOUNDS = {
   edgeWidth:[1,8], edgeColor:[0,40], radius:[0,999], cardPad:[0,80], glow:[0,80], dash:[0,60], tilt:[0,5],
@@ -13853,8 +14101,16 @@ const UI_LAYOUTS = [
 // outline-open). Rows select + centre the node; the twist folds a branch in
 // the outline only - the map itself is never touched. Rebuilt by render()
 // alongside the breadcrumb, with a html-compare so steady state costs nothing.
+//
+// The html compare alone was not enough on a big map: any text edit changes
+// the html, and replacing all 1500 rows to update one label measured tens of
+// ms per render. The tree SHAPE is tracked separately, so a same-shape change
+// patches just the labels (and the selection) in place.
 const _olCollapsed=new Set();
 let _olPrev='';
+let _olShape='';
+let _olLabels=new Map();
+let _olSel=null;
 function ensureOutlinePane(){
   let pane=document.getElementById('outlinePane');
   if(pane) return pane;
@@ -13886,8 +14142,13 @@ function ensureOutlinePane(){
 function renderOutline(){
   const pane=document.getElementById('outlinePane');
   if(!pane || !document.body.classList.contains('ui-outline')) return;
+  // A folded dock is invisible. Rebuilding 1500 rows for it on every edit is
+  // wasted work; the toggle below renders it when it opens.
+  if(!document.body.classList.contains('outline-open')) return;
   const bodyEl=pane.querySelector('.ol-body'); if(!bodyEl) return;
   let html='';
+  const shapeBuf=[];
+  const labels=new Map();
   if(map){
     const hidden=hiddenSet();
     const buf=[];
@@ -13897,9 +14158,14 @@ function renderOutline(){
         if(hidden.has(id)) continue;
         const n=map.nodes[id];
         const kids=childrenOf(id).filter(k=>!hidden.has(k));
+        const label=nodeTextPlain(n.text||'')||'(untitled)';
+        labels.set(id, label);
+        // Shape is ids and child counts only. Labels and the outline's own
+        // twist folds are patched in place, so neither counts as a rebuild.
+        shapeBuf.push(id, kids.length);
         buf.push(`<li class="ol-node${id===sel?' sel':''}${_olCollapsed.has(id)?' collapsed':''}" data-id="${id}">`);
         buf.push(`<div class="ol-row"><span class="ol-twist${kids.length?'':' ol-leaf'}">▾</span>`);
-        buf.push(`<span class="ol-label">${escapeHtml(nodeTextPlain(n.text||'')||'(untitled)')}</span></div>`);
+        buf.push(`<span class="ol-label">${escapeHtml(label)}</span></div>`);
         if(kids.length) walk(kids, true);
         buf.push('</li>');
       }
@@ -13908,16 +14174,49 @@ function renderOutline(){
     walk([map.rootId], false);
     html=buf.join('');
   }
-  if(html!==_olPrev){
-    _olPrev=html;
+  // JSON, not a hand-rolled join: ids can contain any character an imported
+  // map brings, and a separator collision would hide a real tree change.
+  const shape=JSON.stringify(shapeBuf);
+  const empty=!bodyEl.firstElementChild;
+  // An empty pane with a stale cache must still render; the equality check
+  // alone is what left the outline blank after switching layouts away and back.
+  if(html===_olPrev && !empty) return;
+  if(shape!==_olShape || empty){
+    // Different tree, or an empty pane whose cache is stale: replace it all.
+    _olPrev=html; _olShape=shape; _olLabels=labels; _olSel=sel;
     const st=bodyEl.scrollTop;
     bodyEl.innerHTML=html;
     bodyEl.scrollTop=st;
+    return;
   }
+  // Same tree: patch the labels that changed, then the selection and any twist
+  // fold that is out of step. Everything else in the pane stays untouched.
+  const liById=new Map();
+  bodyEl.querySelectorAll('.ol-node').forEach(li=>liById.set(li.dataset.id, li));
+  for(const [id, label] of labels){
+    if(_olLabels.get(id)===label) continue;
+    const li=liById.get(id); if(!li) continue;
+    const span=li.querySelector('.ol-label');
+    if(span) span.textContent=label;
+  }
+  for(const id of labels.keys()){
+    const li=liById.get(id);
+    if(!li) continue;
+    const want=_olCollapsed.has(id);
+    if(li.classList.contains('collapsed')!==want) li.classList.toggle('collapsed', want);
+  }
+  if(sel!==_olSel){
+    bodyEl.querySelectorAll('.ol-node.sel').forEach(li=>li.classList.remove('sel'));
+    const cur=liById.get(sel); if(cur) cur.classList.add('sel');
+  }
+  _olPrev=html; _olLabels=labels; _olSel=sel;
 }
 $('#outlineBtn')?.addEventListener('click',()=>{
   if(!document.body.classList.contains('ui-outline')) return;
   document.body.classList.toggle('outline-open');
+  // It was skipped while folded, so render it now - inside a child index, or
+  // childrenOf() degrades to a full scan per node on a big map.
+  if(document.body.classList.contains('outline-open')) withChildIndex(renderOutline);
   refitStageAfterChrome();   // the dock takes 280px off the canvas - re-fit once it has slid
 });
 
@@ -14045,7 +14344,12 @@ function applyUiLayout(id){
   document.body.classList.toggle('ui-mirror', mirror);
   document.body.classList.toggle('ui-outline', outline);
   document.body.classList.remove('outline-open');   // the outline dock starts folded
-  if(!outline){ document.getElementById('outlinePane')?.remove(); _olPrev=''; }   // a fresh pane must render, never hit the html-compare cache
+  if(!outline){
+    document.getElementById('outlinePane')?.remove();
+    _olPrev='';
+    // A fresh pane must render, never hit the shape/label caches.
+    _olShape=''; _olLabels=new Map(); _olSel=null;
+  }
   document.body.classList.remove('zen-chrome');   // zen chrome is revealed on hover, never persisted
   // Pin toolbar button is zen-only: remove it immediately when leaving zen
   // (classic/rail branches bypass restoreShell, so they would otherwise leak
@@ -14197,8 +14501,8 @@ function applyUiLayout(id){
     restoreShell();
     rewireSide();
     ensureOutlinePane();
-    renderOutline();
-    document.body.classList.add('outline-open');
+    document.body.classList.add('outline-open');   // before rendering: a folded dock skips the pass
+    withChildIndex(renderOutline);
   }else if(minimal){
     // Minimal: the plain modern shell with the sidebar removed entirely - no
     // column, no slide-over. The compact ＋ stays in the brand row; the
@@ -14729,6 +15033,22 @@ function buildStyleThumb(id){
       <path d="M26,28 C38,28 47,11 56,11 M26,28 C38,28 47,47 56,47" fill="none" stroke="var(--line)" stroke-width="1.5" stroke-linecap="round"/>
     </svg>
   </span>`;
+  if(id==='organic'){
+    // Drawn with the live helper, so the picker shows the real taper.
+    const [c1,c2]=[ORGANIC_BRANCH_COLORS[0], ORGANIC_BRANCH_COLORS[3]];
+    const b1=taperedBezierPath([22,28, 40,28, 44,15, 54,15], 4.4, 1.8);
+    const b2=taperedBezierPath([22,28, 40,28, 44,51, 54,51], 4.4, 1.8);
+    return `<span class="style-thumb">
+    <svg viewBox="0 0 70 60" width="70" height="40">
+      <path d="${b1}" fill="${c1}"/><path d="${b2}" fill="${c2}"/>
+      <rect x="${ROOT.x}" y="${ROOT.y}" width="${ROOT.w}" height="${ROOT.h}" rx="6" fill="var(--accent)"/>
+      <line x1="54" y1="15" x2="69" y2="15" stroke="${c1}" stroke-width="1.8" stroke-linecap="round"/>
+      <line x1="54" y1="51" x2="69" y2="51" stroke="${c2}" stroke-width="1.8" stroke-linecap="round"/>
+      <rect x="56" y="10" width="11" height="2.4" rx="1" fill="var(--ink)" opacity="0.55"/>
+      <rect x="56" y="46" width="11" height="2.4" rx="1" fill="var(--ink)" opacity="0.55"/>
+    </svg>
+  </span>`;
+  }
   if(id==='terminal') return `<span class="style-thumb">
     <svg viewBox="0 0 70 60" width="70" height="40">
       <text x="${ROOT.x}" y="${ROOT.y+9}" font-family="monospace" font-size="8" font-weight="700" fill="var(--accent)">&#9646;</text>

@@ -1660,6 +1660,16 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   }
   #viewport[data-style="terminal"] .node.root::after{ content:none; }
   #viewport[data-style="terminal"] #edges path{stroke-linecap:round}
+  /* Organic: Tony Buzan's hand-drawn Mind Map. No cards - each word sits on
+     its own line, which is the node's bottom border in its branch colour and
+     weight (--branch / --branch-w, set per node by render()). The tapered
+     curves joining those lines are filled shapes from organicEdgePath().
+     data-depth is the real depth, so depth 1 marks the main branches, whose
+     words are bolder and take their branch's colour, as Buzan drew them. */
+  #viewport[data-style="organic"]  {--edge-color:var(--line-2);--edge-width:6}
+  #viewport[data-style="organic"]  .node{background:transparent; border:none; border-bottom:var(--branch-w, 2px) solid var(--branch, var(--line-2)); border-radius:0; box-shadow:none; padding:var(--node-pad-y, 3px) var(--node-pad-x, 15px) var(--node-pad-y, 2px)}
+  #viewport[data-style="organic"]  .node[data-depth="1"]{font-weight:700; font-size:calc(16px * var(--look-node-size, 1)); color:color-mix(in srgb, var(--branch, var(--ink)) 60%, var(--ink))}
+  #viewport[data-style="organic"]  .node.root{border:none; border-radius:var(--node-radius, 28px); padding:var(--node-pad-y, 12px) var(--node-pad-x, 22px); box-shadow:0 6px 18px color-mix(in srgb, var(--ink) 16%, transparent)}
 
   /* Cascades the pencil font to every part of the app that already
      references --sans/--serif (sidebar, modals, buttons, topbar, and
