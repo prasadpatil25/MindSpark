@@ -462,7 +462,7 @@
   // for shared-map views (#view=) - someone opening a link to read one map
   // has not asked to install anything scoped to the whole origin. Also
   // skipped on insecure origins, where registration is unavailable anyway.
-  if ('serviceWorker' in navigator && window.isSecureContext && !location.hash.startsWith('#view=')) {
+  if (!window.MINDSPARK_HOST && 'serviceWorker' in navigator && window.isSecureContext && !location.hash.startsWith('#view=')) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js').catch(e => {
         console.warn('service worker registration failed; the app still works, just not offline:', e.message);

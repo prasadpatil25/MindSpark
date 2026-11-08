@@ -108,6 +108,31 @@ reformatting.
   click do nothing. Those should `console.warn`, and `toast()` too if the user
   initiated the action.
 
+## Optional authenticated hosts
+
+A host may define `window.MINDSPARK_HOST` before loading `app.js`:
+
+```js
+window.MINDSPARK_HOST = {
+  store,                  // list/get/save/remove/history/version, like ServerStore
+  async ready() {},        // validate the session/storage before boot
+  onError(error) {},       // display a persistent boot error, without losing edits
+  shareBase: 'https://your-host.example/' // optional snapshot-link entry point
+};
+```
+
+The host is responsible for authentication, ownership checks, browser-storage
+isolation, error reporting on storage operations, and the safety of `shareBase`.
+The store should reject failed operations rather than return an empty library.
+The editor keeps server-mode editing and autosave behavior, but hosted boot/load
+errors propagate to `onError` and do not create a fallback map or switch to a
+forge. Hosts skip the offline service worker so cached pages do not bypass their
+session lifecycle. Without this object, standalone behavior is unchanged.
+
+This is not a built-in account system or a browser security sandbox. Keep host
+code separate from the editor and test both standalone and hosted behavior.
+`test/hosted-store.test.mjs` covers the opt-in contract.
+
 ## Reporting bugs
 
 Please include which storage mode you were in - local (`node server.js`) or
