@@ -4549,8 +4549,8 @@ body.no-banner.shared-view .stage{ top:0; }
    Forces light, ink-friendly colors regardless of the app's active theme. */
 #mdPrintRoot{display:none}
 @media print{
-  body.md-printing > *:not(#mdPrintRoot){display:none !important}
-  body.md-printing #mdPrintRoot{
+  html.md-printing body > *:not(#mdPrintRoot){display:none !important}
+  html.md-printing #mdPrintRoot{
     display:block !important;position:static !important;padding:0 32px;
     color:#1a1a1a;background:#fff;
     font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
