@@ -8162,6 +8162,7 @@ function exportMenu(){
     <button data-a="buildprompt"><span class="ex-ic">✨</span><span><b>Compile subtree → prompt</b><i>Assemble the selected branch into a prompt</i></span></button>
     <div class="ex-grp">Export</div>
     <button data-a="png"   ><span class="ex-ic">🖼</span><span><b>PNG image</b><i>Themed export, honors map style</i></span></button>
+    <button data-a="print" ><span class="ex-ic">🖨</span><span><b>Print map</b><i>No background - print or save as PDF</i></span></button>
     <button data-a="prompt"><span class="ex-ic">⚡</span><span><b>Export as prompt</b><i>Fill variables, then copy clean text</i></span></button>
     <button data-a="mdrich"><span class="ex-ic">📝</span><span><b>Markdown</b><i>Formatting, tasks, tables, code</i></span></button>
     <button data-a="copy"  ><span class="ex-ic">⎘</span><span><b>Copy as text (clipboard)</b><i>Plain outline, no download</i></span></button>
@@ -8198,6 +8199,7 @@ function exportMenu(){
     else if(a==='present') startPresentation();
     else if(a==='buildprompt') showBuildPrompt(sel || (map&&map.rootId));
     else if(a==='png') exportPNG();
+    else if(a==='print') exportPNG({ print:true });
     else if(a==='prompt') exportAsPrompt();
     else if(a==='mdrich') exportMarkdown(false, true);
     else if(a==='copy') exportMarkdown(true);
@@ -10807,7 +10809,12 @@ function pngExportScale(W, H, ios){
 function _isIOSLike(){
   try{ return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1); }catch(e){ return false; }
 }
-async function exportPNG(){
+// opts.print: skip the paper colour and the look's texture/scenery (cards,
+// edges and badges are kept) and hand the image to the browser's print dialog
+// instead of downloading it.
+async function exportPNG(opts){
+  opts=opts||{};
+  const noBg=!!opts.print;
   render();
   // Read live theme colors from CSS custom properties so the export matches
   // whatever theme/map style the user has selected.
@@ -10973,7 +10980,7 @@ async function exportPNG(){
   // Uses live CSS vars so theme/look changes are reflected without hardcoding.
   const look = document.documentElement.getAttribute('data-look') || 'office';
   const stageBg = css('--paper') || themeBg;
-  ctx.fillStyle=stageBg; ctx.fillRect(0,0,W,H);
+  if(!noBg){ ctx.fillStyle=stageBg; ctx.fillRect(0,0,W,H); }
   // stage background-image per look - replicate CSS gradients/patterns
   const lineColor = css('--line') || themeLine;
   const paperColor = stageBg;
@@ -11228,7 +11235,7 @@ async function exportPNG(){
       }
     }
   };
-  drawLookBg();
+  if(!noBg) drawLookBg();
   ctx.translate(-minx+pad,-miny+pad);
 
   // Edges - mirror drawEdges() exactly so every layout + style matches live
@@ -11819,6 +11826,7 @@ async function exportPNG(){
     cv.toBlob(b=>{
       // A canvas past the browser's limits encodes to nothing rather than throwing.
       if(!b){ toast('This map is too large to export as a PNG on this device'); return; }
+      if(opts.print){ printMapImage(b, W>H); return; }
       download(b,(map.title||'mindmap')+'.png'); toast('PNG exported');
     });
   }catch(e){
@@ -11826,6 +11834,43 @@ async function exportPNG(){
     console.warn('PNG export failed:', e.message);
     toast('Could not export the PNG');
   }
+}
+
+// "Print map": the live canvas cannot be printed directly (it is a pan/zoom
+// viewport clipped to the window, with the look's texture painted around it),
+// so print the background-free PNG render instead - same idea as
+// mdDownloadPdf(): a print-only container plus the browser's own dialog, which
+// also offers "Save as PDF". Wide maps ask for a landscape page.
+function printMapImage(blob, landscape){
+  let root=document.getElementById('mapPrintRoot');
+  if(!root){ root=document.createElement('div'); root.id='mapPrintRoot'; document.body.appendChild(root); }
+  let pageStyle=document.getElementById('mapPrintPage');
+  if(!pageStyle){ pageStyle=document.createElement('style'); pageStyle.id='mapPrintPage'; document.head.appendChild(pageStyle); }
+  pageStyle.textContent='@page{size:'+(landscape?'landscape':'portrait')+';margin:1cm}';
+  const url=URL.createObjectURL(blob);
+  const img=new Image();
+  img.alt=map.title||'Mind map';
+  const oldTitle=document.title;
+  let cleaned=false;
+  const cleanup=()=>{
+    if(cleaned) return; cleaned=true;
+    document.documentElement.classList.remove('map-printing');
+    document.title=oldTitle;
+    root.textContent='';
+    pageStyle.textContent='';
+    URL.revokeObjectURL(url);
+    window.removeEventListener('afterprint', cleanup);
+  };
+  img.onload=()=>{
+    document.title=(map.title||'mindmap').replace(/[\\/:*?"<>|]/g,'').trim()||'mindmap';   // suggested "Save as PDF" name
+    document.documentElement.classList.add('map-printing');
+    window.addEventListener('afterprint', cleanup);
+    setTimeout(()=>{ window.print(); setTimeout(cleanup, 1000); }, 30);
+  };
+  img.onerror=()=>{ cleanup(); toast('Could not prepare the map for printing'); };
+  root.textContent='';
+  root.appendChild(img);
+  img.src=url;
 }
 
 // Render text (possibly containing inline <b>/<i>/<u>/<s>/<a>/<br>/<ul>/<ol>/<li>)

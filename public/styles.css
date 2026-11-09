@@ -4532,6 +4532,18 @@ body.no-banner.shared-view .stage{ top:0; }
   html{scrollbar-color:var(--line-2,var(--line)) transparent;scrollbar-width:thin}
 }
 
+/* ===== Map print (Export -> Print map) =====
+   #mapPrintRoot holds the background-free PNG render that printMapImage()
+   builds on demand; it is the only thing on the page while printing. */
+#mapPrintRoot{display:none}
+@media print{
+  html.map-printing body > *:not(#mapPrintRoot){display:none !important}
+  html.map-printing, html.map-printing body, html.map-printing #mapPrintRoot{background:#fff !important}
+  html.map-printing #mapPrintRoot{display:flex !important;align-items:flex-start;justify-content:center;position:static !important}
+  html.map-printing #mapPrintRoot img{display:block;max-width:100%;max-height:calc(100vh - 2px);width:auto;height:auto;object-fit:contain;
+    -webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+
 /* ===== PDF export (markdown preview -> browser print -> Save as PDF) =====
    #mdPrintRoot is populated on demand by mdDownloadPdf() and is otherwise empty/hidden.
    Forces light, ink-friendly colors regardless of the app's active theme. */
