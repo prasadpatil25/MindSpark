@@ -4476,31 +4476,17 @@ function mdToggleWrap(){
   mdRefreshDecorations();
 }
 // "Download PDF": renders the full markdown into a dedicated print-only container and
-// hands off to the browser's native print dialog (Save as PDF works everywhere without
-// pulling in a PDF-generation library, keeping this a zero-dependency app). Print-specific
-// CSS (see styles.css) hides the rest of the app and forces light, ink-friendly colors
+// hands off to the browser's native print dialog via printOnly(). Print-specific CSS
+// (see styles.css) hides the rest of the app and forces light, ink-friendly colors
 // regardless of the active theme.
 function mdDownloadPdf(){
   if(!map) return;
-  let root=document.getElementById('mdPrintRoot');
-  if(!root){ root=document.createElement('div'); root.id='mdPrintRoot'; document.body.appendChild(root); }
   // No separate title heading here - the root/center node's own text is already the
   // document's first H1 (via buildMarkdown -> mdToHtml), so adding map.title on top of
   // that would just duplicate or mismatch it. The center node itself is never touched.
-  root.innerHTML=mdToHtml(_mdFullText);   // full text: PDF export isn't affected by folds
-  const oldTitle=document.title;
-  const suggestedName=(map.title||'mindmap').replace(/[\\/:*?"<>|]/g,'').trim()||'mindmap';
-  document.title=suggestedName;   // browsers use this as the suggested "Save as PDF" filename
-  document.body.classList.add('md-printing');
-  let cleaned=false;
-  const cleanup=()=>{
-    if(cleaned) return; cleaned=true;
-    document.body.classList.remove('md-printing');
-    document.title=oldTitle;
-    window.removeEventListener('afterprint', cleanup);
-  };
-  window.addEventListener('afterprint', cleanup);
-  setTimeout(()=>{ window.print(); setTimeout(cleanup, 1000); }, 30);   // tiny delay lets the print layout settle first
+  printOnly('mdPrintRoot', 'md-printing', root=>{
+    root.innerHTML=mdToHtml(_mdFullText);   // full text: PDF export isn't affected by folds
+  });
 }
 // ---- Folding: outline depth per line, independent of the full parser ----
 // Mirrors parseMarkdownOutline()'s nesting rules (heading level; bullet indent relative
@@ -8162,6 +8148,7 @@ function exportMenu(){
     <button data-a="buildprompt"><span class="ex-ic">✨</span><span><b>Compile subtree → prompt</b><i>Assemble the selected branch into a prompt</i></span></button>
     <div class="ex-grp">Export</div>
     <button data-a="png"   ><span class="ex-ic">🖼</span><span><b>PNG image</b><i>Themed export, honors map style</i></span></button>
+    <button data-a="print" ><span class="ex-ic">🖨</span><span><b>Print map</b><i>No background - print or save as PDF</i></span></button>
     <button data-a="prompt"><span class="ex-ic">⚡</span><span><b>Export as prompt</b><i>Fill variables, then copy clean text</i></span></button>
     <button data-a="mdrich"><span class="ex-ic">📝</span><span><b>Markdown</b><i>Formatting, tasks, tables, code</i></span></button>
     <button data-a="copy"  ><span class="ex-ic">⎘</span><span><b>Copy as text (clipboard)</b><i>Plain outline, no download</i></span></button>
@@ -8198,6 +8185,7 @@ function exportMenu(){
     else if(a==='present') startPresentation();
     else if(a==='buildprompt') showBuildPrompt(sel || (map&&map.rootId));
     else if(a==='png') exportPNG();
+    else if(a==='print') exportPNG({ print:true });
     else if(a==='prompt') exportAsPrompt();
     else if(a==='mdrich') exportMarkdown(false, true);
     else if(a==='copy') exportMarkdown(true);
@@ -10807,12 +10795,28 @@ function pngExportScale(W, H, ios){
 function _isIOSLike(){
   try{ return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1); }catch(e){ return false; }
 }
-async function exportPNG(){
+// The CSS variable reader the PNG export draws with. On screen it is the live
+// theme. For print it is the light theme's palette - dark ink, white cards,
+// light lines - whatever theme is active, so a dark theme does not print light
+// text on white paper or ink-heavy dark cards. Only palette colours are
+// pinned; fonts and sizes (--sans, --look-node-size) still come from the live
+// look. The palette is snapshotted up front: the export awaits images, and the
+// user could switch theme in the meantime.
+function exportCssReader(print){
+  const cs=getComputedStyle(document.documentElement);
+  const fixed=print ? themePalette('light', [...CUSTOM_THEME_INLINE, '--sticky', '--sticky-edge', '--sticky-ink']) : null;
+  return name => (fixed && name in fixed) ? fixed[name] : cs.getPropertyValue(name).trim();
+}
+// opts.print: use light-theme colours (exportCssReader), skip the paper colour
+// and the look's texture/scenery (cards, edges and badges are kept) and hand
+// the image to the browser's print dialog instead of downloading it.
+async function exportPNG(opts){
+  opts=opts||{};
+  const noBg=!!opts.print;
   render();
-  // Read live theme colors from CSS custom properties so the export matches
-  // whatever theme/map style the user has selected.
-  const cs = getComputedStyle(document.documentElement);
-  const css = name => cs.getPropertyValue(name).trim();
+  // Theme colors come from CSS custom properties so the export matches
+  // whatever theme/map style the user has selected (or the light theme, when printing).
+  const css = exportCssReader(noBg);
   const themeBg     = css('--paper')     || '#f4efe6';
   const themeEdge   = css('--line-2')    || '#c8bda8';
   const themeInk    = css('--ink')       || '#23201b';
@@ -10973,7 +10977,7 @@ async function exportPNG(){
   // Uses live CSS vars so theme/look changes are reflected without hardcoding.
   const look = document.documentElement.getAttribute('data-look') || 'office';
   const stageBg = css('--paper') || themeBg;
-  ctx.fillStyle=stageBg; ctx.fillRect(0,0,W,H);
+  if(!noBg){ ctx.fillStyle=stageBg; ctx.fillRect(0,0,W,H); }
   // stage background-image per look - replicate CSS gradients/patterns
   const lineColor = css('--line') || themeLine;
   const paperColor = stageBg;
@@ -11228,7 +11232,7 @@ async function exportPNG(){
       }
     }
   };
-  drawLookBg();
+  if(!noBg) drawLookBg();
   ctx.translate(-minx+pad,-miny+pad);
 
   // Edges - mirror drawEdges() exactly so every layout + style matches live
@@ -11765,7 +11769,8 @@ async function exportPNG(){
       baseUnderline: !!n.underline,
       baseStrike: !!n.strike || _isTaskDone,
       align: n.align || (mapStyle==='terminal' ? 'left' : 'center'),
-      listType: n.listType || null
+      listType: n.listType || null,
+      linkColor: css('--link')
     });
       }
       if(_isTaskDone) ctx.globalAlpha = _prevAlpha;
@@ -11819,6 +11824,7 @@ async function exportPNG(){
     cv.toBlob(b=>{
       // A canvas past the browser's limits encodes to nothing rather than throwing.
       if(!b){ toast('This map is too large to export as a PNG on this device'); return; }
+      if(opts.print){ printMapImage(b, W>H); return; }
       download(b,(map.title||'mindmap')+'.png'); toast('PNG exported');
     });
   }catch(e){
@@ -11826,6 +11832,57 @@ async function exportPNG(){
     console.warn('PNG export failed:', e.message);
     toast('Could not export the PNG');
   }
+}
+
+// "Print map": the live canvas cannot be printed directly (it is a pan/zoom
+// viewport clipped to the window, with the look's texture painted around it),
+// so print the background-free PNG render instead. Wide maps ask for a
+// landscape page.
+function printMapImage(blob, landscape){
+  const url=URL.createObjectURL(blob);
+  printOnly('mapPrintRoot', 'map-printing', root=>new Promise((resolve, reject)=>{
+    let pageStyle=document.getElementById('mapPrintPage');
+    if(!pageStyle){ pageStyle=document.createElement('style'); pageStyle.id='mapPrintPage'; document.head.appendChild(pageStyle); }
+    pageStyle.textContent='@page{size:'+(landscape?'landscape':'portrait')+';margin:1cm}';
+    const undo=()=>{ pageStyle.textContent=''; URL.revokeObjectURL(url); };
+    const img=new Image();
+    img.alt=map.title||'Mind map';
+    img.onload=()=>resolve(undo);
+    img.onerror=()=>{ undo(); reject(new Error('the map image did not load')); };
+    root.appendChild(img);
+    img.src=url;
+  })).catch(()=>toast('Could not prepare the map for printing'));
+}
+
+// Print one container on its own through the browser's dialog, which also
+// offers "Save as PDF" - no PDF library needed. While printing, `cls` is set on
+// <html>; the print CSS keys off it to hide the rest of the app. fill(root)
+// puts the content in. It may return a promise (an image still loading, say),
+// which may resolve to an undo function that runs once printing is over. If
+// fill fails, nothing is printed and the rejection is passed on.
+async function printOnly(id, cls, fill){
+  let root=document.getElementById(id);
+  if(!root){ root=document.createElement('div'); root.id=id; document.body.appendChild(root); }
+  root.textContent='';
+  const oldTitle=document.title;
+  let undo=null, cleaned=false;
+  const cleanup=()=>{
+    if(cleaned) return; cleaned=true;
+    window.removeEventListener('afterprint', cleanup);
+    document.documentElement.classList.remove(cls);
+    document.title=oldTitle;
+    root.textContent='';
+    if(typeof undo==='function') undo();
+  };
+  try{ undo=await fill(root); }
+  catch(e){ cleanup(); throw e; }
+  // Browsers use the page title as the suggested "Save as PDF" filename.
+  document.title=((map && map.title) || 'mindmap').replace(/[\\/:*?"<>|]/g,'').trim() || 'mindmap';
+  document.documentElement.classList.add(cls);
+  window.addEventListener('afterprint', cleanup);
+  // The short delay lets the print layout settle; the 1s fallback covers
+  // browsers that never fire afterprint.
+  setTimeout(()=>{ window.print(); setTimeout(cleanup, 1000); }, 30);
 }
 
 // Render text (possibly containing inline <b>/<i>/<u>/<s>/<a>/<br>/<ul>/<ol>/<li>)
@@ -11977,10 +12034,11 @@ function drawFormattedText(ctx, html, opts){
   const lineH = Math.round(fontPx * 1.35);
   const totalH = lines.length * lineH;
   let yy = y - totalH/2 + lineH/2;
-  // Hyperlink colour (resolved from CSS var so it matches the live theme)
-  const linkColor = (typeof getComputedStyle === 'function')
+  // Hyperlink colour: the caller's palette (exportPNG passes it, so a print
+  // uses the light theme's), else the live theme's CSS var.
+  const linkColor = opts.linkColor || ((typeof getComputedStyle === 'function')
     ? (getComputedStyle(document.documentElement).getPropertyValue('--link').trim() || '#3a6ea5')
-    : '#3a6ea5';
+    : '#3a6ea5');
   ctx.fillStyle = color;
   lines.forEach(line => {
     const lineW = line.reduce((s, r) => s + r.w, 0);
@@ -13631,6 +13689,34 @@ function showThemeImportForm(){
     importLibraryTheme(b.dataset.lib);
   });
 }
+// The values `keys` take under built-in theme `id`, whatever theme is active.
+// The palette must be read from the theme's own CSS block, but two things sit
+// on :root as INLINE styles and would win over the attribute selector: the six
+// config knobs applyThemeConfigVars() writes, and (when a custom theme is
+// active) its 20 inline variables. Clear them for the read, then restore
+// exactly what was there before. It all happens in one task, so nothing paints.
+function themePalette(id, keys){
+  const root=document.documentElement;
+  const saved={};
+  for(const key of CUSTOM_THEME_INLINE) saved[key]=root.style.getPropertyValue(key);
+  const prev=root.getAttribute('data-theme');
+  const vars={};
+  try{
+    if(id && id!=='light') root.setAttribute('data-theme', id);
+    else root.removeAttribute('data-theme');
+    for(const key of CUSTOM_THEME_INLINE) root.style.removeProperty(key);
+    const cs=getComputedStyle(root);
+    for(const key of keys) vars[key]=cs.getPropertyValue(key).trim();
+  }finally{
+    for(const key of CUSTOM_THEME_INLINE){
+      if(saved[key]) root.style.setProperty(key, saved[key]);
+      else root.style.removeProperty(key);
+    }
+    if(prev && prev!=='light') root.setAttribute('data-theme', prev);
+    else root.removeAttribute('data-theme');
+  }
+  return vars;
+}
 // Import one of the shipped library themes (the ones beyond the panel's
 // visible 20) straight from the Add-a-theme dialog. The theme's palette is
 // read from its own live CSS block, so the imported result is exactly what
@@ -13639,26 +13725,7 @@ function importLibraryTheme(id){
   closeColorPicker();
   const t=THEMES.find(x=>x.id===id);
   if(!t) return;
-  const root=document.documentElement;
-  // The palette must be read from the theme's own CSS block, but two things
-  // sit on :root as INLINE styles and would win over the attribute selector:
-  // the six config knobs applyThemeConfigVars() writes, and (when a custom
-  // theme is active) the previous custom theme's 20 inline variables. Clear
-  // them for the read, then restore exactly what was there before.
-  const saved={};
-  for(const key of CUSTOM_THEME_INLINE) saved[key]=root.style.getPropertyValue(key);
-  const prev=root.getAttribute('data-theme');
-  root.setAttribute('data-theme', id);
-  const cs=getComputedStyle(root);
-  const vars={};
-  for(const key of CUSTOM_THEME_INLINE) root.style.removeProperty(key);
-  for(const key of CUSTOM_THEME_VARS) vars[key]=cs.getPropertyValue(key).trim();
-  for(const key of CUSTOM_THEME_INLINE){
-    if(saved[key]) root.style.setProperty(key, saved[key]);
-    else root.style.removeProperty(key);
-  }
-  if(prev && prev!=='light') root.setAttribute('data-theme', prev);
-  else root.removeAttribute('data-theme');
+  const vars=themePalette(id, CUSTOM_THEME_VARS);
   const theme=validateCustomTheme({ v:1, id, name:t.name.replace(/<br\s*\/?>/gi,' ').trim(), vars });
   if(!theme){ toast('Could not import that theme'); return; }
   if(!saveCustomTheme(theme)){ toast('Could not save - this browser\u2019s storage may be full.'); return; }

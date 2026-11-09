@@ -124,14 +124,52 @@ describe('the Add-a-theme editor', () => {
     assert.match(form, /\(k==='--node-bg' && cur\) \? cur\.vars\[k\] : live\.getPropertyValue\(k\)\.trim\(\)/);
   });
 
-  test('importing a library theme clears and restores the same set of inline variables', () => {
-    assert.match(lib, /for\(const key of CUSTOM_THEME_INLINE\) saved\[key\]/);
-    assert.match(lib, /for\(const key of CUSTOM_THEME_INLINE\) root\.style\.removeProperty\(key\);/);
-    assert.match(lib, /for\(const key of CUSTOM_THEME_VARS\) vars\[key\]=cs\.getPropertyValue\(key\)\.trim\(\);/, 'the palette read still covers exactly the 20 theme variables');
+  test('importing a library theme reads exactly the 20 theme variables through themePalette', () => {
+    assert.match(lib, /themePalette\(id, CUSTOM_THEME_VARS\)/);
   });
 
   test('CUSTOM_THEME_INLINE is the palette plus --card-bg, and the stored theme format is unchanged', () => {
     assert.match(APP, /const CUSTOM_THEME_INLINE = \[\.\.\.CUSTOM_THEME_VARS, '--card-bg'\];/);
     assert.equal(CUSTOM_THEME_VARS.includes('--card-bg'), false, 'themes/*.json keep their 20 keys; --card-bg is derived, never stored');
+  });
+});
+
+describe('themePalette reads a built-in theme whatever is on screen', () => {
+  // A tiny cascade: inline vars beat the [data-theme] block, which beats :root.
+  const BLOCKS = { light: { '--ink': '#23201b', '--card-bg': '#ffffff' }, dark: { '--ink': '#d4d4d4', '--card-bg': '#2d2d2d' } };
+  function env() {
+    const root = fakeRoot();
+    const getComputedStyle = el => ({ getPropertyValue: k =>
+      el.style.getPropertyValue(k) || (BLOCKS[el.getAttribute('data-theme')] || {})[k] || BLOCKS.light[k] || '' });
+    const { themePalette } = loadFns(['themePalette'], { CUSTOM_THEME_INLINE, document: { documentElement: root }, getComputedStyle });
+    return { root, themePalette };
+  }
+
+  test('a dark theme with a custom card colour still reads the light palette', () => {
+    const { root, themePalette } = env();
+    root.setAttribute('data-theme', 'dark');
+    root.style.setProperty('--card-bg', '#00000080');
+    assert.deepEqual(themePalette('light', ['--ink', '--card-bg']), { '--ink': '#23201b', '--card-bg': '#ffffff' });
+  });
+
+  test('any built-in theme can be read from any other', () => {
+    const { themePalette } = env();
+    assert.deepEqual(themePalette('dark', ['--ink']), { '--ink': '#d4d4d4' });
+  });
+
+  test('the active theme attribute and inline variables are put back exactly', () => {
+    const { root, themePalette } = env();
+    root.setAttribute('data-theme', 'dark');
+    root.style.setProperty('--card-bg', '#00000080');
+    root.style.setProperty('--paper', '#101010');
+    themePalette('light', ['--ink']);
+    assert.equal(root.getAttribute('data-theme'), 'dark');
+    assert.deepEqual(Object.fromEntries(root.vars), { '--card-bg': '#00000080', '--paper': '#101010' });
+  });
+
+  test('on the light theme no data-theme attribute is left behind', () => {
+    const { root, themePalette } = env();
+    themePalette('dark', ['--ink']);
+    assert.equal(root.getAttribute('data-theme'), null);
   });
 });

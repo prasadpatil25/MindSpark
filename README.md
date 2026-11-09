@@ -42,6 +42,7 @@ Everything below the "Collaboration" heading needs the optional cloud worker; ev
 - **Multiple maps** with a clickable sidebar; create, rename, duplicate, delete
 - **Import** JSON, OPML, Markdown, GitMind (`.gmind`) and MindMeister (`.mind`) files
 - **Export** to PNG, PDF, JSON, Markdown/text, Word (`.doc`), Mermaid, a references list, or a prompt
+- **Print without the background** - *Export → Print map* prints the map (or saves it as PDF) on a plain white page with no theme texture
 - **Read-only share links** - *Copy share link* gzip-encodes the **entire map into a `#view=` URL**; anyone can open it without an account or server, then save an editable copy into their own MindSpark
 - **Persistence** - SQLite when self-hosted, or your own private GitHub repo in cloud mode
 
