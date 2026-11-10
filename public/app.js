@@ -3295,7 +3295,7 @@ const LAYOUT_CONFIG_BOUNDS = {
   timeline: { gap:[8,400], stem:[0,300], indent:[0,300] },
   stair:    { gap:[8,400], stem:[0,300], indent:[0,300] },
   matrix:   { colGap:[8,300], rowGap:[8,300], cellGap:[0,120], headGap:[8,300] },
-  treetable:{ colGap:[8,300], rowGap:[4,120] },
+  treetable:{ colGap:[0,300], rowGap:[0,120] },
   fishbone: { gap:[8,400], stem:[0,300], indent:[0,300], angle:[10,170] },
 };
 
@@ -13338,7 +13338,7 @@ const LAYOUT_PARAMS = {
   },
   radial: { ring:[60,600], startAngle:[-360,360], sweep:[30,360], pad:[0,30], padV:[0,40] },
   matrix: { colGap:[8,300], rowGap:[8,300], cellGap:[0,120], headGap:[8,300] },
-  treetable: { colGap:[8,300], rowGap:[4,120], rootSide:['left','right','top','bottom'] },
+  treetable: { colGap:[0,300], rowGap:[0,120], rootSide:['left','right','top','bottom'] },
   grid:   { columns:[1,8], gapX:[8,300], gapY:[8,300], rowGap:[0,120], indent:[0,120] },
 };
 // The built-in layouts, now expressed as strategy + parameters. These are the
