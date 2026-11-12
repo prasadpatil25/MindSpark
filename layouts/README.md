@@ -23,7 +23,7 @@ would run on the machine of whoever opened a shared map.
 | `radial` | Root at the centre, depth as distance | `ring`, `startAngle`, `sweep` |
 | `grid`   | Top-level topics as cards, sub-trees as outlines | `columns`, `indent` |
 | `matrix` | Columns with rows aligned across them, like a table | `colGap`, `rowGap`, `cellGap` |
-| `treetable` | Depth as columns, each block spanning its subtree | `colGap`, `rowGap`, `rootSide` |
+| `treetable` | Depth as columns, each block spanning its subtree | `colGap`, `rowGap`, `rootSide`, `stretchLeaves` |
 
 `chain` also takes an `angle`: 90 is square to the spine (a timeline), and
 anything less slants the ribs (a fishbone). Existing timelines are unaffected,
@@ -32,6 +32,13 @@ since 90 is the default.
 `treetable` also takes a `rootSide`: `left` (the default), `right`, `top` or
 `bottom`. The gap between depth levels is always `colGap` and the gap between
 sibling blocks is always `rowGap`, whichever edge the root sits on.
+
+`stretchLeaves` makes a cell that has no visible children span every remaining
+depth column, the way a table's last cell fills to the right edge. Parents keep
+their own column so their children stay inside the block. Off by default,
+because it changes the inset-card look; set `true` together with `colGap: 0`
+and `rowGap: 0` for one enclosed grid. `layouts/treetable-enclosed.json` is that
+combination ready to import.
 
 Values outside the allowed range are clamped and unrecognised keys are ignored,
 so a layout written against a newer version still loads - it just ignores what

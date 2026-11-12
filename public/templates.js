@@ -863,6 +863,134 @@ const TEMPLATES = {
     ]
   },
 
+  /* ===== Thinking tools ===== */
+  six_hats: {
+    name:'Six Thinking Hats', desc:'Run one question through six modes of thinking', color:'#8c5da7', group:'thinking', icon:'🎩', layout:'radial',
+    nodes:[
+      { k:'root', text:'Six Thinking Hats', notes:'<p>Run the same question through six modes of thinking, one at a time. What decision are you examining?</p>' },
+      { k:'white', parent:'root', text:'White hat: facts' },
+      { k:'w1', parent:'white', text:'Known facts and figures' },
+      { k:'w2', parent:'white', text:'Gaps in the data' },
+      { k:'w3', parent:'white', text:'Assumptions to verify' },
+      { k:'red', parent:'root', text:'Red hat: feelings' },
+      { k:'r1', parent:'red', text:'Gut reactions' },
+      { k:'r2', parent:'red', text:'Emotions and hunches' },
+      { k:'black', parent:'root', text:'Black hat: risks' },
+      { k:'k1', parent:'black', text:'What could go wrong?' },
+      { k:'k2', parent:'black', text:'Weak points in the plan' },
+      { k:'yellow', parent:'root', text:'Yellow hat: benefits' },
+      { k:'y1', parent:'yellow', text:'Best-case outcomes' },
+      { k:'y2', parent:'yellow', text:'Value and feasibility' },
+      { k:'green', parent:'root', text:'Green hat: ideas' },
+      { k:'g1', parent:'green', text:'Alternatives and possibilities' },
+      { k:'g2', parent:'green', text:'Provocations and fresh angles' },
+      { k:'blue', parent:'root', text:'Blue hat: process' },
+      { k:'bl1', parent:'blue', text:'Set the question and sequence' },
+      { k:'bl2', parent:'blue', text:'Summarize and choose next steps' }
+    ]
+  },
+  scamper: {
+    name:'SCAMPER', desc:'Seven prompts for turning an existing idea into a better one', color:'#c2783c', group:'thinking', icon:'💡', layout:'right',
+    nodes:[
+      { k:'root', text:'SCAMPER: [product or process]', notes:'<p>Pick one product, service or process. Which of these seven prompts opens the most useful line of thinking?</p>' },
+      { k:'s', parent:'root', text:'Substitute' },
+      { k:'s1', parent:'s', text:'What part, material or person could be swapped?' },
+      { k:'c', parent:'root', text:'Combine' },
+      { k:'c1', parent:'c', text:'What could be merged with another product or step?' },
+      { k:'a', parent:'root', text:'Adapt' },
+      { k:'a1', parent:'a', text:'What idea from elsewhere could be borrowed?' },
+      { k:'m', parent:'root', text:'Modify' },
+      { k:'m1', parent:'m', text:'What could change size, shape, tone or frequency?' },
+      { k:'p', parent:'root', text:'Put to another use' },
+      { k:'p1', parent:'p', text:'Who else could use it, and for what?' },
+      { k:'e', parent:'root', text:'Eliminate' },
+      { k:'e1', parent:'e', text:'Which step, feature or cost could go?' },
+      { k:'r', parent:'root', text:'Reverse' },
+      { k:'r1', parent:'r', text:'What could be reordered, flipped or done the opposite way?' }
+    ]
+  },
+  pre_mortem: {
+    name:'Pre-mortem', desc:'Imagine the failure first, then prevent it', color:'#b8451f', group:'thinking', icon:'⚠', layout:'down',
+    nodes:[
+      { k:'root', text:'Pre-mortem: [project]', notes:'<p>Imagine the project has already failed. What happened, and what would you have noticed earlier?</p>' },
+      { k:'imagine', parent:'root', text:'Imagine the failure' },
+      { k:'i1', parent:'imagine', text:'It is 12 months from now and the project failed' },
+      { k:'i2', parent:'imagine', text:'Write the failure story in plain language' },
+      { k:'reasons', parent:'root', text:'Why it failed' },
+      { k:'r1', parent:'reasons', text:'People and skills' },
+      { k:'r2', parent:'reasons', text:'Process and coordination' },
+      { k:'r3', parent:'reasons', text:'Technical and product' },
+      { k:'r4', parent:'reasons', text:'External and market' },
+      { k:'signs', parent:'root', text:'Early warning signs' },
+      { k:'s1', parent:'signs', text:'Leading indicators to watch' },
+      { k:'s2', parent:'signs', text:'Who raises the alarm?' },
+      { k:'prevent', parent:'root', text:'Preventive actions' },
+      { k:'p1', parent:'prevent', text:'Reduce the likelihood of each cause' },
+      { k:'p2', parent:'prevent', text:'Assign an owner and a date' },
+      { k:'contingency', parent:'root', text:'Contingency plan' },
+      { k:'c1', parent:'contingency', text:'Reduce the impact if it happens' },
+      { k:'c2', parent:'contingency', text:'Decide what to stop, pivot or escalate' }
+    ]
+  },
+  five_whys: {
+    name:'Five Whys', desc:'Ask why until the root cause is concrete', color:'#3a6ea5', group:'thinking', icon:'❓', layout:'down',
+    nodes:[
+      { k:'root', text:'Five Whys: [problem]', notes:'<p>Start with a specific problem, then ask why until you reach something you can fix. What is the problem in one sentence?</p>' },
+      { k:'why1', parent:'root', text:'Why is this happening? (1)' },
+      { k:'why2', parent:'why1', text:'Why is that happening? (2)' },
+      { k:'why3', parent:'why2', text:'Why is that happening? (3)' },
+      { k:'why4', parent:'why3', text:'Why is that happening? (4)' },
+      { k:'why5', parent:'why4', text:'Why is that happening? (5)' },
+      { k:'rootcause', parent:'why5', text:'Root cause' },
+      { k:'fix', parent:'rootcause', text:'Countermeasure' },
+      { k:'verify', parent:'root', text:'How will you verify the fix?' },
+      { k:'v1', parent:'verify', text:'Measure the result' },
+      { k:'v2', parent:'verify', text:'Check that the problem does not return' }
+    ]
+  },
+  toulmin: {
+    name:'Toulmin argument', desc:'Claim, grounds, warrant, backing, qualifier, rebuttal', color:'#2f6f6a', group:'thinking', icon:'⚖', layout:'right',
+    nodes:[
+      { k:'root', text:'Toulmin argument', notes:'<p>Build an argument that can survive scrutiny. What claim are you defending, and what would change your mind?</p>' },
+      { k:'claim', parent:'root', text:'Claim' },
+      { k:'claim1', parent:'claim', text:'State the claim precisely' },
+      { k:'grounds', parent:'root', text:'Grounds' },
+      { k:'grounds1', parent:'grounds', text:'Data and evidence' },
+      { k:'grounds2', parent:'grounds', text:'Source and reliability' },
+      { k:'warrant', parent:'root', text:'Warrant' },
+      { k:'warrant1', parent:'warrant', text:'Why the grounds support the claim' },
+      { k:'backing', parent:'root', text:'Backing' },
+      { k:'backing1', parent:'backing', text:'Support for the warrant' },
+      { k:'qualifier', parent:'root', text:'Qualifier' },
+      { k:'qualifier1', parent:'qualifier', text:'How certain are you?' },
+      { k:'rebuttal', parent:'root', text:'Rebuttal' },
+      { k:'rebuttal1', parent:'rebuttal', text:'Exceptions and counterarguments' },
+      { k:'rebuttal2', parent:'rebuttal', text:'What would change your mind?' }
+    ]
+  },
+  belief_audit: {
+    name:'Belief audit', desc:'Test a belief against evidence and alternatives', color:'#8c5da7', group:'thinking', icon:'🧭', layout:'balanced',
+    nodes:[
+      { k:'root', text:'Belief audit: [belief]', notes:'<p>Treat the belief as a hypothesis. What evidence would raise or lower your confidence?</p>' },
+      { k:'belief', parent:'root', text:'Belief statement' },
+      { k:'b1', parent:'belief', text:'Write it as a testable claim' },
+      { k:'for', parent:'root', text:'Evidence for' },
+      { k:'f1', parent:'for', text:'Strongest supporting evidence' },
+      { k:'f2', parent:'for', text:'How reliable is it?' },
+      { k:'against', parent:'root', text:'Evidence against' },
+      { k:'a1', parent:'against', text:'Strongest opposing evidence' },
+      { k:'a2', parent:'against', text:'What have you discounted too quickly?' },
+      { k:'alt', parent:'root', text:'Alternative explanations' },
+      { k:'al1', parent:'alt', text:'Other ways to explain the same facts' },
+      { k:'confidence', parent:'root', text:'Confidence' },
+      { k:'c1', parent:'confidence', text:'Rate it from 0 to 100' },
+      { k:'change', parent:'root', text:'What would change your mind?' },
+      { k:'ch1', parent:'change', text:'Name the evidence in advance' },
+      { k:'check', parent:'root', text:'Next check' },
+      { k:'n1', parent:'check', text:'What will you test or ask?' }
+    ]
+  },
+
   /* ===== Feature showcase - demonstrates colours, formatting, notes, tasks,
      markers, an image and cross-links. A friendly first map to explore. ===== */
   showcase: {
@@ -891,6 +1019,7 @@ const TEMPLATE_CATEGORIES = [
   { id:'prompt',   label:'Prompt engineering',  icon:'✦', color:'#5b8db2' },
   { id:'ai',       label:'AI & agents',          icon:'🤖', color:'#8c5da7' },
   { id:'research', label:'Research & writing',   icon:'🔬', color:'#3a6ea5' },
+  { id:'thinking', label:'Thinking tools',       icon:'💭', color:'#8c5da7' },
   { id:'study',    label:'Students & educators', icon:'🎓', color:'#6a8c3f' },
   { id:'software', label:'Software & technical', icon:'💻', color:'#8c5da7' },
   { id:'product',  label:'Product & founders',   icon:'🚀', color:'#c2783c' },

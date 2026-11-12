@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "id": "treetable-enclosed",
+  "name": "Tree table (enclosed)",
+  "desc": "Zero-gap cells that stretch into one enclosed table",
+  "strategy": "treetable",
+  "params": {
+    "colGap": 0,
+    "rowGap": 0,
+    "rootSide": "left",
+    "stretchLeaves": true
+  },
+  "options": {
+    "treetable": {
+      "colGap": 0,
+      "rowGap": 0,
+      "rootSide": "left",
+      "stretchLeaves": true
+    }
+  }
+}
