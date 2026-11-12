@@ -3272,7 +3272,10 @@ const LAYOUT_CONFIG_DEFAULTS = {
     start: 'above',     // which side the first step's sub-topics take
   },
   matrix: { colGap:40, rowGap:24, cellGap:10, headGap:60 },
-  treetable: { colGap:16, rowGap:6, rootSide:'left' },
+  // stretchLeaves makes a childless cell span every remaining depth column, the
+  // way a table row's last cell fills to the edge. Off by default so existing
+  // charts keep their inset cards; the enclosed preset turns it on.
+  treetable: { colGap:16, rowGap:6, rootSide:'left', stretchLeaves:false },
   fishbone: {
     gap: 70,            // gap between consecutive spine items
     stem: 30,           // clearance between the spine and a rib's sub-topic block
@@ -3320,8 +3323,9 @@ function validateLayoutConfig(raw){
       if(typeof sec.alternate === 'boolean') out[engine].alternate = sec.alternate;
       if(sec.start === 'above' || sec.start === 'below') out[engine].start = sec.start;
     }
-    if(engine === 'treetable' && ['left','right','top','bottom'].includes(sec.rootSide)){
-      out[engine].rootSide = sec.rootSide;
+    if(engine === 'treetable'){
+      if(['left','right','top','bottom'].includes(sec.rootSide)) out[engine].rootSide = sec.rootSide;
+      if(typeof sec.stretchLeaves === 'boolean') out[engine].stretchLeaves = sec.stretchLeaves;
     }
   }
   return out;
@@ -3660,12 +3664,21 @@ function layoutMatrix(nodes, rootId, kidsOf, opts){
    own block, so a parent points at the middle of its children without any extra
    connector pass.
 
+   A childless cell is the end of a branch, so with stretchLeaves it also spans
+   every depth column still to its right (or below, when the table is turned on
+   its side). That is the tree-table equivalent of a colspan: a table is a
+   rectangle, and a row that stops at its own column leaves a ragged edge. The
+   columns themselves are sized only by the cells that have to live in one, so a
+   long leaf does not widen its own column just because it reaches the edge.
+   Collapsed nodes count as leaves, because that is what they are on screen.
+
    Mutates x/y/side on the given nodes.
    ------------------------------------------------------------ */
 function layoutTreeTable(nodes, rootId, kidsOf, opts){
   if(!nodes[rootId]) return;
   const colGap = opts.colGap != null ? opts.colGap : 16;
   const rowGap = opts.rowGap != null ? opts.rowGap : 6;
+  const stretchLeaves = opts.stretchLeaves === true;
   // Where the root band sits. The table is depth along one axis and sibling
   // blocks along the other, so 'top'/'bottom' turn it on its side rather than
   // mirroring a finished grid. An unknown value falls through to the left form.
@@ -3706,13 +3719,40 @@ function layoutTreeTable(nodes, rootId, kidsOf, opts){
   // One thickness per depth: the widest card at a level when depth runs
   // sideways, the tallest when it runs down. Every row starts on the same line,
   // which is what makes this a table rather than a tree.
-  const thickness = [];
+  //
+  // A stretched leaf does not need a column of its own, so it is measured
+  // separately. Only cells that stop in their column can force that column
+  // wider; leaf widths constrain the table's total width instead.
+  const thickness = [];   // cells that must fit inside one depth column
+  const leafMain = [];    // childless cells that may span to the far edge
   const measureDepths = (id, depth) => {
     const n = nodes[id];
-    thickness[depth] = Math.max(thickness[depth] || 0, vertical ? naturalH(n) : naturalW(n));
-    visibleKids(id).forEach(c => measureDepths(c, depth + 1));
+    const main = vertical ? naturalH(n) : naturalW(n);
+    const cs = visibleKids(id);
+    if(stretchLeaves && !cs.length){
+      leafMain[depth] = Math.max(leafMain[depth] || 0, main);
+    } else {
+      thickness[depth] = Math.max(thickness[depth] || 0, main);
+    }
+    cs.forEach(c => measureDepths(c, depth + 1));
   };
   measureDepths(rootId, 0);
+  if(stretchLeaves){
+    // Thickness entries can be missing where every node at a depth is a leaf.
+    // Fill them so the cumulative positions below stay numeric.
+    const last = Math.max(thickness.length, leafMain.length) - 1;
+    for(let d = 0; d <= last; d++) thickness[d] = thickness[d] || 0;
+    // The deepest column holds the leaves that cannot span any further, so it
+    // must fit the widest of them. Then a shallower leaf may still be wider
+    // than every column left of the edge combined; widen the far column by the
+    // deficit, which keeps all right edges aligned while making room for it.
+    thickness[last] = Math.max(thickness[last], leafMain[last] || 0);
+    for(let d = last - 1; d >= 0; d--){
+      let span = 0;
+      for(let k = d; k <= last; k++) span += thickness[k] + (k > d ? colGap : 0);
+      if((leafMain[d] || 0) > span) thickness[last] += (leafMain[d] || 0) - span;
+    }
+  }
   const depthPos = [];
   let main = 0;
   for(let d = 0; d < thickness.length; d++){ depthPos[d] = main; main += thickness[d] + colGap; }
@@ -3721,18 +3761,22 @@ function layoutTreeTable(nodes, rootId, kidsOf, opts){
   const place = (id, depth, cross) => {
     const n = nodes[id];
     const span = blockSpan(id);
+    const cs = visibleKids(id);
+    // A leaf takes everything left to the far edge; a parent stops at its own
+    // column so its children have somewhere to start. tableMain is already the
+    // final edge, so this needs no second pass after the mirror below.
+    const mainSize = (stretchLeaves && !cs.length) ? tableMain - depthPos[depth] : thickness[depth];
     n.side = depth === 0 ? 'root' : childSide;
     if(vertical){
       n.x = cross;
       n.y = depthPos[depth];
-      cells.set(id, { x: cross, y: depthPos[depth], w: span, h: thickness[depth] });
+      cells.set(id, { x: cross, y: depthPos[depth], w: span, h: mainSize });
     } else {
       n.x = depthPos[depth];
       n.y = cross;
-      cells.set(id, { x: depthPos[depth], y: cross, w: thickness[depth], h: span });
+      cells.set(id, { x: depthPos[depth], y: cross, w: mainSize, h: span });
     }
 
-    const cs = visibleKids(id);
     if(!cs.length) return;
     let childSpan = 0;
     cs.forEach((c, i) => { childSpan += blockSpan(c) + (i ? rowGap : 0); });
@@ -13338,7 +13382,7 @@ const LAYOUT_PARAMS = {
   },
   radial: { ring:[60,600], startAngle:[-360,360], sweep:[30,360], pad:[0,30], padV:[0,40] },
   matrix: { colGap:[8,300], rowGap:[8,300], cellGap:[0,120], headGap:[8,300] },
-  treetable: { colGap:[0,300], rowGap:[0,120], rootSide:['left','right','top','bottom'] },
+  treetable: { colGap:[0,300], rowGap:[0,120], rootSide:['left','right','top','bottom'], stretchLeaves:'boolean' },
   grid:   { columns:[1,8], gapX:[8,300], gapY:[8,300], rowGap:[0,120], indent:[0,120] },
 };
 // The built-in layouts, now expressed as strategy + parameters. These are the
@@ -13355,7 +13399,7 @@ const ENGINE_PARAMS = {
   stair:   { strategy:'chain', params:{ axis:'y', dir:1, gap:45, stem:24, indent:42, alternate:true,  start:'above', sideName:'down', gapMain:70, gapCross:40 } },
   grid:    { strategy:'grid',  params:{ columns:3, gapX:60, gapY:60, rowGap:14, indent:24 } },
   matrix:  { strategy:'matrix',params:{ colGap:40, rowGap:24, cellGap:10, headGap:60 } },
-  treetable:{ strategy:'treetable', params:{ colGap:16, rowGap:6, rootSide:'left' } },
+  treetable:{ strategy:'treetable', params:{ colGap:16, rowGap:6, rootSide:'left', stretchLeaves:false } },
   fishbone:{ strategy:'chain', params:{ axis:'x', dir:1, gap:70, stem:30, indent:26,
                                         alternate:true, start:'above', angle:35,
                                         gapMain:70, gapCross:22 } },
@@ -13419,7 +13463,8 @@ function layoutRunForMap(layout, layoutParams, layoutConfig){
       else { params.gapMain = cfg.hGap; params.gapCross = cfg.vGap; }
     }
     for(const k of ['gap','stem','indent','alternate','start','ring','startAngle','sweep',
-                    'columns','gapX','gapY','rowGap','angle','colGap','cellGap','headGap','rootSide']){
+                    'columns','gapX','gapY','rowGap','angle','colGap','cellGap','headGap','rootSide',
+                    'stretchLeaves']){
       if(cfg[k] !== undefined) params[k] = cfg[k];
     }
   }

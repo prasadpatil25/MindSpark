@@ -12,7 +12,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { loadFns, extractConst, extractFunction } from './helpers/load-app-fns.mjs';
 
-const SRC = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+// Normalize line endings: this file slices source around newlines, and a
+// Windows checkout hands us CRLF even though the committed file is LF.
+const SRC = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const fn = name => extractFunction(name);
 let n = 0;
 const { normalizeLoadedMap } = loadFns(['normalizeLoadedMap', 'sanitizeMapData', 'sanitizeNodeFields', 'repairTree', 'safeColor', 'safeImageUrl'], {

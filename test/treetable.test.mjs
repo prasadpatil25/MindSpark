@@ -342,6 +342,112 @@ describe('layoutTreeTable - rootSide moves the root band', () => {
   });
 });
 
+describe('layoutTreeTable - leaves stretch to the far edge', () => {
+  // One shallow leaf (b at depth 1) beside a branch that goes one level deeper
+  // (a -> a1), so the two leaves start at different columns and must still end
+  // on the same edge.
+  const BRANCHED = { root:['a','b'], a:['a1'], b:[], a1:[] };
+  const opts = extra => ({ colGap:0, rowGap:0, stretchLeaves:true, ...extra });
+  const tableEdge = cells => Math.max(...[...cells.values()].map(c => c.x + c.w));
+  const tableBottom = cells => Math.max(...[...cells.values()].map(c => c.y + c.h));
+
+  test('a shallow leaf spans every remaining column', () => {
+    const { nodes, kidsOf } = build(BRANCHED);
+    const cells = layoutTreeTable(nodes, 'root', kidsOf, opts());
+    const edge = tableEdge(cells);
+    assert.equal(round(nodes.b.x), round(nodes.a.x), 'both depth-1 cells start in the same column');
+    assert.ok(cells.get('b').w > cells.get('a').w, 'only the leaf spans the remaining columns');
+    assert.equal(round(nodes.b.x + cells.get('b').w), round(edge));
+    assert.equal(round(cells.get('a1').x + cells.get('a1').w), round(edge));
+  });
+
+  test('a parent still stops at its own column, leaving the next depth inside', () => {
+    const { nodes, kidsOf } = build(BRANCHED);
+    const cells = layoutTreeTable(nodes, 'root', kidsOf, opts());
+    assert.equal(round(cells.get('a').w), 120, 'the parent cell is its depth column');
+    assert.equal(round(nodes.a.x + cells.get('a').w), round(nodes.a1.x));
+    assert.ok(nodes.a1.x > nodes.a.x);
+  });
+
+  test('a wide leaf does not widen its own column', () => {
+    // b is 300px but spans two columns, so depth 1 stays 120 wide. The extra
+    // width is added to the far column, which a1 then fills.
+    const { nodes, kidsOf } = build(BRANCHED, { b:{ w:300 } });
+    const cells = layoutTreeTable(nodes, 'root', kidsOf, opts());
+    assert.equal(round(cells.get('a').w), 120);
+    assert.equal(round(cells.get('b').x), 120);
+    assert.equal(round(cells.get('b').w), 300);
+    assert.equal(round(cells.get('a1').x + cells.get('a1').w), round(tableEdge(cells)));
+    assert.ok(cells.get('a1').w > 120, 'the far column grew to meet the leaf width');
+  });
+
+  test('collapsed nodes stretch like the leaves they are on screen', () => {
+    const TREE3 = { root:['a','b','c'], a:['a1'], b:[], c:['c1'], a1:[], c1:[] };
+    const { nodes, kidsOf } = build(TREE3);
+    nodes.a.collapsed = true;
+    const cells = layoutTreeTable(nodes, 'root', kidsOf, opts());
+    assert.equal(nodes.a1.x, 0, 'the hidden child is not placed');
+    assert.ok(cells.get('a').w > cells.get('c').w, 'a collapsed cell reaches across the hidden depth');
+    assert.equal(round(nodes.a.x + cells.get('a').w), round(tableEdge(cells)));
+  });
+
+  test('turning it off keeps every cell in its own column', () => {
+    const { nodes, kidsOf } = build(BRANCHED);
+    const cells = layoutTreeTable(nodes, 'root', kidsOf, { colGap:0, rowGap:0 });
+    assert.equal(round(cells.get('b').w), 120);
+    assert.notEqual(
+      round(nodes.b.x + cells.get('b').w),
+      round(cells.get('a1').x + cells.get('a1').w)
+    );
+  });
+
+  test('right-rooted tables stretch towards the left edge', () => {
+    const { nodes, kidsOf } = build(BRANCHED);
+    const cells = layoutTreeTable(nodes, 'root', kidsOf, opts({ rootSide:'right' }));
+    assert.equal(round(nodes.b.x), 0);
+    assert.equal(round(nodes.a1.x), 0);
+    assert.equal(round(nodes.a.x + cells.get('a').w), round(nodes.root.x), 'a parent stops before the root');
+    assert.equal(round(cells.get('b').w), round(cells.get('a').w + cells.get('a1').w), 'the leaf covers both remaining columns');
+  });
+
+  test('top-rooted tables stretch towards the bottom edge', () => {
+    const { nodes, kidsOf } = build(BRANCHED);
+    const cells = layoutTreeTable(nodes, 'root', kidsOf, opts({ rootSide:'top' }));
+    assert.equal(round(cells.get('b').y + cells.get('b').h), round(tableBottom(cells)));
+    assert.equal(round(cells.get('a1').y + cells.get('a1').h), round(tableBottom(cells)));
+    assert.ok(cells.get('b').h > cells.get('a').h, 'only the leaf spans the remaining depth rows');
+  });
+});
+
+describe('stretchLeaves - config and preset plumbing', () => {
+  test('validateLayoutConfig accepts a boolean and defaults to off', () => {
+    assert.equal(fns.validateLayoutConfig(null).treetable.stretchLeaves, false);
+    assert.equal(fns.validateLayoutConfig({ treetable: { stretchLeaves:true } }).treetable.stretchLeaves, true);
+    assert.equal(fns.validateLayoutConfig({ treetable: { stretchLeaves:'yes' } }).treetable.stretchLeaves, false);
+  });
+
+  test('validateLayoutParams accepts only a boolean', () => {
+    assert.deepEqual(fns.validateLayoutParams('treetable', { stretchLeaves:true }), { stretchLeaves:true });
+    assert.deepEqual(fns.validateLayoutParams('treetable', { stretchLeaves:1 }), {});
+  });
+
+  test('a preset can turn it on and a saved map config can turn it off', () => {
+    assert.equal(fns.layoutRunForMap('treetable', null, null).params.stretchLeaves, false);
+    assert.equal(fns.layoutRunForMap('treetable', { stretchLeaves:true }, null).params.stretchLeaves, true);
+    assert.equal(fns.layoutRunForMap(
+      'treetable', { stretchLeaves:true }, { treetable: { stretchLeaves:false } }
+    ).params.stretchLeaves, false);
+  });
+
+  test('the flag travels with the map', () => {
+    const p = fns._shareePayload({
+      title: 'T', rootId: 'r', nodes: {}, layout: 'treetable',
+      layoutParams: { colGap:0, rowGap:0, stretchLeaves:true },
+    });
+    assert.equal(p.layoutParams.stretchLeaves, true);
+  });
+});
+
 describe('rootSide - config and preset plumbing', () => {
   test('validateLayoutConfig keeps a known side and defaults to left', () => {
     assert.equal(fns.validateLayoutConfig({ treetable: { rootSide: 'right' } }).treetable.rootSide, 'right');
