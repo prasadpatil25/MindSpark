@@ -4221,19 +4221,23 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
 
   /* ===== Sidebar duplicate button ===== */
 
-  /* ===== Breadcrumb (floating pill, anchored under the topbar's left edge) =====
-     Hidden by default; expands (fades in) while the mouse is over the overview
-     in the status bar - the .shown class is toggled from JS. */
+  /* ===== Breadcrumb (floating pill, centred over the canvas) =====
+     Hidden until the selection has a path; syncBreadcrumb() toggles .shown.
+     Modern bars reveals it as soon as a path exists, while the docked shells
+     keep the overview-hover reveal. It is anchored to the stage, not the
+     viewport: the modern shell begins the canvas to the right of the sidebar,
+     so a fixed left:14px pill sat over the sidebar instead of the scene. The
+     floating shells (classic/rail/zen) reposition it below their topbar. */
   .breadcrumb{
-    position:fixed; top:56px; left:14px; transform:none;
+    position:absolute; top:14px; left:50%; transform:translateX(-50%) translateY(-4px);
     display:flex; align-items:center; gap:1px; z-index:90;
     background:var(--chrome); border:1px solid var(--chrome-edge);
     border-radius:10px; box-shadow:var(--shadow); padding:3px 6px;
     max-width:min(70vw, 720px); overflow:hidden; font-family:var(--sans);
-    opacity:0; pointer-events:none; transform:translateY(-4px);
+    opacity:0; pointer-events:none;
     transition:opacity .16s ease, transform .16s ease;
   }
-  .breadcrumb.shown{opacity:1; pointer-events:auto; transform:translateY(0)}
+  .breadcrumb.shown{opacity:1; pointer-events:auto; transform:translateX(-50%) translateY(0)}
   .breadcrumb .bc-crumb{
     border:none; background:transparent; cursor:pointer;
     font-family:inherit; font-size:12px; color:var(--ink-soft);
@@ -4315,7 +4319,9 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   body.shared-view .topbar{ grid-column:1; grid-row:1; }
   body.shared-view .stage{ grid-column:1; grid-row:3; }
   body.shared-view .statusbar{ grid-column:1; grid-row:4; }
-  body.shared-view .breadcrumb{ top:97px; left:14px; }
+  /* The shared banner is outside the grid, so this one stays viewport-fixed. */
+  body.shared-view .breadcrumb{ position:fixed; top:97px; left:50%; transform:translateX(-50%) translateY(-4px); }
+  body.shared-view .breadcrumb.shown{ transform:translateX(-50%) translateY(0); }
   body.shared-view #mapTitle{ pointer-events:none; max-width:none; }
   body.shared-view .node{ cursor:default; }
   /* Read-only: no node editing affordances (collapse toggle + notes stay). */

@@ -1552,6 +1552,16 @@ function applyTreeTableCells(cells){
   }
 }
 
+// A reused node element already has a measured size, so render can skip the
+// measure pass - but only while the node object still carries that size.
+// applyMdToMap(), undo/redo and a collab merge replace map.nodes wholesale;
+// the replacement starts without w/h, and without this the layout fell back
+// to 120x40 for every visible node, drifting columns and letting wide cards
+// overlap their children.
+function needsMeasureOnReuse(strategy, n){
+  return strategy==='treetable' || !(n.w>0) || !(n.h>0);
+}
+
 function render(){
   // The Build Prompt panel is bound to one map. Switching maps (or closing the
   // map) leaves it showing the previous map's branch, and select() cannot catch
@@ -1682,7 +1692,10 @@ function render(){
       // A tree table always re-measures: its cell width/height is derived from
       // the natural text size, and an element kept across renders still has the
       // stretched size from the last one. One batched read pass below.
-      if(_run.strategy==='treetable') toMeasure.push({el:_old, n});
+      //
+      // Also re-measure when the node object itself has no size - see
+      // needsMeasureOnReuse() above.
+      if(needsMeasureOnReuse(_run.strategy, n)) toMeasure.push({el:_old, n});
       continue;
     }
     if(_old) _old.remove();
@@ -1745,13 +1758,22 @@ function render(){
       // Guarded even though sanitizeMapData() already vets n.image: a javascript:
       // URL here would run in a window that inherits this origin.
       img.addEventListener('dblclick',ev=>{ ev.stopPropagation(); if(safeImageUrl(n.image)) window.open(n.image,'_blank','noopener'); });
-      // If the image can't load, fall back to its alt text so the node isn't a broken icon
+      // If the image can't load, fall back to its alt text so the node isn't a broken icon.
+      // The fallback also changes the node's size: removing .has-image drops the card
+      // back to the normal 240px cap, so the pre-load measurement (taken while the img
+      // had no intrinsic size) is now too short for the text and the next sibling would
+      // overlap it. Re-measure and re-tidy after the DOM settles.
       img.addEventListener('error',()=>{
         img.remove(); el.classList.remove('has-image'); el.classList.add('img-missing');
         const cap=document.createElement('span'); cap.className='img-alt';
         cap.textContent = n.imageAlt || 'image not found';
         el.insertBefore(cap, el.firstChild);
+        remeasureNodeAndReflow(id);
+        updateMinimap();
       });
+      // Same for a successful load: an <img> has no intrinsic size until it arrives,
+      // so the node was measured at its pre-load size.
+      img.addEventListener('load',()=>{ remeasureNodeAndReflow(id); updateMinimap(); });
       el.appendChild(img);
     }
     // Marker badge - click to change, same interaction shape as the task
@@ -4099,9 +4121,11 @@ function paintPositions(hidden){
   drawEdges(hidden);
   repositionNodeBar();
 }
-// Re-measure the node being edited, recompute the tidy layout, and paint it.
-// Keeps the map neat as the node grows while typing (the way GitMind reflows).
-function relayoutDuringEdit(id){
+// Re-measure one node straight from the DOM and repaint the layout without
+// rebuilding it, so a node that changes size in place (typing inside it, an
+// attached image arriving or failing) never leaves neighbours placed for its
+// old size.
+function remeasureNodeAndReflow(id){
   if(!map) return;
   const el=document.querySelector(`.node[data-id="${id}"]`);
   if(!el) return;
@@ -4118,7 +4142,11 @@ function relayoutDuringEdit(id){
     el.style.removeProperty('--tt-h');
   }
   const r=el.getBoundingClientRect();
-  n.w=r.width/sz; n.h=r.height/sz;
+  const w=r.width/sz, h=r.height/sz;
+  // Nothing moved. Skipping the layout pass matters for an image whose load
+  // event arrives after render already measured the same final size.
+  if(!wasCell && Math.abs(w-(n.w||0))<0.5 && Math.abs(h-(n.h||0))<0.5) return;
+  n.w=w; n.h=h;
   if(_run.strategy==='treetable') rememberNaturalSize(n, n.w, n.h);
   autoLayout(true);   // positions only - no DOM rebuild
   if(_run.strategy==='treetable' && _treeTableCellSizes && _treeTableCellSizes.mapId===map.id){
@@ -4733,6 +4761,23 @@ function mdRefreshDecorations(){
   // trigger another full refresh. Re-measure once more next frame to catch that.
   requestAnimationFrame(()=>{ if(document.getElementById('mdEditor')) mdSyncGutterRowHeights(hl, gut); });
 }
+// The textarea can grow a classic scrollbar, which narrows its content box by the
+// scrollbar's width; the overlay has no scrollbar of its own, so it would keep the full
+// width and, with word wrap on, wrap every line later than the textarea does. The
+// difference accumulates down the document (about 16 lines by the end of a long README),
+// so the caret and the active row drift apart and the row background paints across the
+// scrollbar strip. Match the overlay to the textarea's client width, which already
+// excludes the scrollbar and includes the padding both layers share, before any row
+// height is measured from it.
+function mdSyncOverlayWidth(){
+  const ed=document.getElementById('mdEditor'), hl=document.querySelector('#mdPane .md-hl');
+  if(!ed || !hl) return;
+  const w=ed.clientWidth;
+  if(w<=0) return;                    // pane hidden or mid-transition: keep the last usable width
+  if(hl.style.width===w+'px') return;
+  hl.style.width=w+'px';
+  hl.style.right='auto';              // inset:0's right would otherwise over-constrain the width
+}
 // Each .gl gutter row is normally a fixed 20px (one Markdown line = one visual row). Once
 // word wrap is on, a line can span several visual rows, so its .gl row needs to grow to
 // match - otherwise every row below it drifts further out of alignment with the text it
@@ -4740,6 +4785,7 @@ function mdRefreshDecorations(){
 // .gl heights (rather than interleaving read/write per row), so this doesn't force a
 // separate synchronous layout reflow for every single line.
 function mdSyncGutterRowHeights(hl, gut){
+  mdSyncOverlayWidth();   // width first: a scrollbar appearing changes where every row wraps
   if(!mdWrap) return;
   hl = hl || document.querySelector('#mdPane .md-hl-inner');
   gut = gut || document.querySelector('#mdPane .md-gutter-inner');
@@ -6219,7 +6265,7 @@ function _insertFormulaSuggestion(){
   _setCaretTextOffset(textEl, replaceStart+insertion.length);
   closeFormulaAutocomplete();
   textEl.focus();
-  relayoutDuringEdit(nodeId);
+  remeasureNodeAndReflow(nodeId);
 }
 function updateFormulaAutocomplete(textEl, nodeId){
   const text=textEl.textContent||'';
@@ -6344,7 +6390,7 @@ function startEdit(id, seed){
     // Keep the map tidy as the node grows (GitMind-style live reflow), throttled
     // to one re-layout per animation frame so typing stays smooth.
     if(_editRAF) cancelAnimationFrame(_editRAF);
-    _editRAF=requestAnimationFrame(()=>{ _editRAF=0; relayoutDuringEdit(id); });
+    _editRAF=requestAnimationFrame(()=>{ _editRAF=0; remeasureNodeAndReflow(id); });
   };
   // The composed text lands as one chunk here, and no `input` event follows it
   // in every browser - so this is where the skipped work is made up.
@@ -7509,8 +7555,8 @@ function minimapJump(clientX, clientY){
 
 /* ============================================================
    BREADCRUMB - clickable path from root to the selected node.
-   Hidden by default; expands while hovering the overview chip
-   in the status bar (visibility handled by syncBreadcrumb).
+   Visible whenever the selection has a path; focus mode hides
+   it (visibility handled by syncBreadcrumb).
    ============================================================ */
 function updateBreadcrumb(){
   const bc=_breadcrumbEl; if(!bc) return;
@@ -7536,15 +7582,20 @@ function updateBreadcrumb(){
 }
 function syncBreadcrumb(){
   const bc=_breadcrumbEl; if(!bc) return;
-  // Classic shell (as upstream): the breadcrumb is always visible once the
-  // selection has a path; the modern shell expands it only while hovering
-  // the overview chip in the status bar, and focus mode hides the overview
-  // so it stays tucked away there too.
-  const classic = document.body.classList.contains('ui-classic') || document.body.classList.contains('ui-rail') || document.body.classList.contains('ui-zen');
-  const show = !!bc._has && (classic ? !document.body.classList.contains('focus-mode') : !!bc._ov);
+  // The path is a readout, not a hover affordance: it says where the selection
+  // sits even when the pointer is nowhere near the chrome. Modern bars used to
+  // reveal it only while the overview chip was hovered, but that chip is at the
+  // far end of the bottom bar while the pill floats at the top of the canvas,
+  // so the breadcrumb stayed invisible during normal work. Show it whenever a
+  // path exists there. The docked shells keep their hover reveal, and focus
+  // mode hides it because the chrome it belongs to is gone.
+  const b=document.body.classList;
+  const hoverReveal=b.contains('ui-dock') || b.contains('ui-split') || b.contains('ui-minimal') || b.contains('ui-outline');
+  const show=!!bc._has && !b.contains('focus-mode') && (!hoverReveal || !!bc._ov);
   bc.classList.toggle('shown', show);
 }
-// Overview chip: hovering it (or tabbing into its controls) expands the breadcrumb.
+// Overview chip: hovering it (or tabbing into its controls) expands the
+// breadcrumb in the docked shells, whose compact chrome still hides it by default.
 (function(){
   const ov=$('#overview'); if(!ov) return;
   const set=v=>{ const bc=_breadcrumbEl; if(bc) bc._ov=v; syncBreadcrumb(); };
@@ -15687,6 +15738,10 @@ function toggleFocusMode(){
   } else {
     exit?.remove();
   }
+  // Focus mode hides the chrome the breadcrumb floats over, and this toggle
+  // does not re-render the map - sync it here so the shown state does not
+  // linger until the next render.
+  syncBreadcrumb();
   // The viewport size changes when chrome is shown/hidden - wait for the layout
   // to settle, then smoothly animate the map back to centred (keeping zoom) so it
   // doesn't just jump sideways.
