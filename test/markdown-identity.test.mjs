@@ -87,3 +87,34 @@ describe('carryMarkdownIds keeps node identity', () => {
     assert.match(body, /sanitizeNodeFields/);
   });
 });
+
+// applyMdToMap() re-keys the parsed nodes, but it replaces map.nodes wholesale:
+// the new node objects have no measured w/h. render() keeps the old DOM element
+// when the node's signature is unchanged, and that reuse path used to skip the
+// measure pass, on the assumption that the node object still carried the size.
+// So every Markdown edit left all visible nodes sized 120x40 as far as the
+// layout was concerned. Columns drifted and a card wider than 120px had its
+// children placed inside its own right edge - visible as a map that no longer
+// lines up after cutting and pasting a section.
+describe('Markdown sync keeps measured node sizes', () => {
+  const { needsMeasureOnReuse } = loadFns(['needsMeasureOnReuse']);
+
+  test('a replacement node with no size is re-measured', () => {
+    assert.equal(needsMeasureOnReuse('tree', {}), true);
+    assert.equal(needsMeasureOnReuse('tree', { w: 0, h: 40 }), true);
+    assert.equal(needsMeasureOnReuse('tree', { w: 120, h: 0 }), true);
+  });
+
+  test('a node that already carries its measured size is left alone', () => {
+    assert.equal(needsMeasureOnReuse('tree', { w: 183, h: 36 }), false);
+  });
+
+  test('a tree table always re-measures, size or not', () => {
+    assert.equal(needsMeasureOnReuse('treetable', { w: 183, h: 36 }), true);
+  });
+
+  test('render applies the check on its element-reuse path', () => {
+    const body = SRC.slice(SRC.indexOf('function render('), SRC.indexOf('function scheduleTokenTotal('));
+    assert.match(body, /needsMeasureOnReuse\(_run\.strategy, n\)/);
+  });
+});

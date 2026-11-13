@@ -99,3 +99,27 @@ describe('app shell grid placement', () => {
     }
   }
 });
+
+describe('breadcrumb placement', () => {
+  // The modern shell puts the canvas in the grid's second column, to the right
+  // of the sidebar. A viewport-fixed pill at left:14px therefore sat over the
+  // sidebar, not the scene. Anchoring it to .stage also keeps it centred when
+  // the sidebar is resized or collapsed.
+  test('the modern shell anchors the breadcrumb to the stage and centres it', () => {
+    const state = new Set();
+    assert.equal(winning('.breadcrumb', state, 'position').value, 'absolute');
+    assert.equal(winning('.breadcrumb', state, 'top').value, '14px');
+    assert.equal(winning('.breadcrumb', state, 'left').value, '50%');
+    assert.match(winning('.breadcrumb', state, 'transform').value, /translateX\(-50%\)/);
+    assert.match(winning('.breadcrumb.shown', state, 'transform').value, /translateX\(-50%\) translateY\(0\)/);
+  });
+
+  test('the shared view keeps the breadcrumb fixed below the banner', () => {
+    const state = new Set(['shared-view']);
+    assert.equal(winning('.breadcrumb', state, 'position').value, 'fixed');
+    assert.equal(winning('.breadcrumb', state, 'top').value, '97px');
+    assert.equal(winning('.breadcrumb', state, 'left').value, '50%');
+    assert.match(winning('.breadcrumb', state, 'transform').value, /translateX\(-50%\)/);
+    assert.match(winning('.breadcrumb.shown', state, 'transform').value, /translateX\(-50%\) translateY\(0\)/);
+  });
+});
