@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { loadFns, extractConst } from './helpers/load-app-fns.mjs';
 
 let n = 0;
-const fns = loadFns(['parseMarkdownOutline', 'mdInlineToHtml', 'escapeHtml', 'metaFingerprint'], {
+const fns = loadFns(['parseMarkdownOutline', 'parseMapOptionsFrontmatter', 'mdInlineToHtml', 'escapeHtml', 'metaFingerprint'], {
   uid: () => 'p' + (++n),
   INLINE_HTML_RE: extractConst('INLINE_HTML_RE'),
   sanitizeInlineHTML: s => s,

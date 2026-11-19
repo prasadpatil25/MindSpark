@@ -48,7 +48,7 @@ function build(map, opts) {
   return fns.buildMarkdown(map.rootId, opts);
 }
 function parse(md) {
-  const fns = loadFns(['parseMarkdownOutline', 'mdInlineToHtml', 'escapeHtml', 'metaFingerprint'],
+  const fns = loadFns(['parseMarkdownOutline', 'parseMapOptionsFrontmatter', 'mdInlineToHtml', 'escapeHtml', 'metaFingerprint'],
     { uid: (() => { let n = 0; return () => 'p' + (++n); })(), ...RE });
   return fns.parseMarkdownOutline(md, 'Round trip');
 }

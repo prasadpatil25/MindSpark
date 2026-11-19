@@ -1221,6 +1221,16 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
      margin-left would shove the cluster off its centre - hence the reset. */
   .topbar > .tb-group:last-child{margin-left:auto}
   body.ui-rail .topbar > .tb-group:last-child{margin-left:0}
+  /* More-actions overflow. The right-hand cluster is nine buttons; on narrow
+     windows the floating shells (classic/zen) are single-row and clip their
+     own right end, and the modern bar wraps to a second row. Below 1100px the
+     least-used actions collapse into a dropdown so the bar keeps search, theme
+     and the token/save pills on screen - see #moreBtn in app.js. */
+  .tb-more{display:none}
+  @media (max-width:1100px){
+    .topbar .tb-sec{display:none}
+    .topbar .tb-more{display:grid}
+  }
   .search-wrap{display:flex;align-items:center;background:none;border:none;border-radius:0;box-shadow:none;overflow:hidden;width:0;transition:width .22s,background-color .3s ease,border-color .3s ease,color .3s ease}
   .search-wrap.open{width:230px;background:var(--paper-2);border-radius:9px}
   .search-wrap.open.replace-mode{width:420px}
@@ -1329,14 +1339,16 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   .node[data-depth="8"]{background:var(--zebra-2)}
   /* Hover-only "created/last edited" watermark - sits just above the node (not inside it,
      which used to collide with the node's own vertically-centered text on shorter nodes)
-     so it never overlaps the actual content. */
+     so it never overlaps the actual content. It is sized to its text and centred on the
+     node: a narrow node must not clip the date, which is often wider than the node. */
   .node .node-watermark{
-    position:absolute; left:0; right:0; bottom:100%; margin-bottom:3px;
-    pointer-events:none; overflow:hidden;
+    position:absolute; left:50%; right:auto; bottom:100%; margin-bottom:3px;
+    transform:translateX(-50%); width:max-content;
+    pointer-events:none;
     font-family:var(--sans); font-size:9px; font-weight:600; letter-spacing:.02em;
     color:var(--ink-soft); opacity:0;
     transition:opacity .18s ease;
-    white-space:nowrap; text-overflow:ellipsis;
+    white-space:nowrap;
     text-align:center;
   }
   .node:hover .node-watermark{opacity:.85}
@@ -2955,10 +2967,10 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
      seam mid-fade - test/stage-theme-fade.test.mjs checks exactly that. */
   :root[data-look="iitian"] .stage{
     background-image:
-      linear-gradient(90deg, transparent 0 64px, color-mix(in srgb, var(--accent) 55%, transparent) 64px 65px,
-        transparent 65px 68px, color-mix(in srgb, var(--accent) 30%, transparent) 68px 69px, transparent 69px),
-      repeating-linear-gradient(180deg, transparent 0 129px, color-mix(in srgb, var(--accent) 32%, transparent) 129px 130px),
-      repeating-linear-gradient(180deg, transparent 0 25px, color-mix(in srgb, var(--line) 75%, transparent) 25px 26px);
+      linear-gradient(90deg, transparent 0 64px, color-mix(in srgb, var(--accent) 35%, transparent) 64px 65px,
+        transparent 65px 68px, color-mix(in srgb, var(--accent) 18%, transparent) 68px 69px, transparent 69px),
+      repeating-linear-gradient(180deg, transparent 0 129px, color-mix(in srgb, var(--accent) 8%, transparent) 129px 130px),
+      repeating-linear-gradient(180deg, transparent 0 25px, color-mix(in srgb, var(--line) 38%, transparent) 25px 26px);
     background-size:100% 100%,100% 130px,100% 26px;
     background-color:var(--paper);
   }
@@ -3855,6 +3867,9 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
     font-size:12px; font-weight:500; white-space:nowrap;
   }
   .side-links a:hover{color:var(--accent-text)}
+  /* A long label ellipsizes instead of spilling past the edge: the sidebar
+     drags down to 180px, which leaves about 148px for the row. */
+  .side-links .li-lbl{min-width:0; overflow:hidden; text-overflow:ellipsis}
   /* Uniform 16px icon gutter so emoji and the GitHub SVG line up in a column. */
   .side-links a svg,
   .side-links a .li-ic{
@@ -4643,7 +4658,7 @@ body.ui-classic .app{grid-template-columns:auto 1fr}
 body.ui-classic .stage{grid-column:2;grid-row:1}
 body.ui-classic .topbar{
   position:absolute;top:14px;left:14px;right:14px;z-index:30;pointer-events:none;
-  background:none;border-bottom:none;padding:0;flex-wrap:nowrap;gap:8px;
+  background:none;border-bottom:none;padding:0;flex-wrap:wrap;gap:8px;
 }
 body.ui-classic .topbar > *{pointer-events:auto}
 body.ui-classic .tb-group{background:var(--chrome);border:1px solid var(--chrome-edge);border-radius:12px;padding:4px;box-shadow:var(--shadow)}

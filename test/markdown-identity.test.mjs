@@ -24,7 +24,7 @@ function build(map) {
 }
 function parse(md) {
   let k = 0;
-  const fns = loadFns(['parseMarkdownOutline', 'mdInlineToHtml', 'escapeHtml', 'metaFingerprint', 'scrubRawHtmlBlock'], { uid: () => 'p' + (++k), ...RE });
+  const fns = loadFns(['parseMarkdownOutline', 'parseMapOptionsFrontmatter', 'mdInlineToHtml', 'escapeHtml', 'metaFingerprint', 'scrubRawHtmlBlock'], { uid: () => 'p' + (++k), ...RE });
   return fns.parseMarkdownOutline(md, 'T');
 }
 const byText = (nodes, t) => Object.values(nodes).find(n => n.text === t);
