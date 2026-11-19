@@ -17,7 +17,7 @@ import { loadFns, extractConst } from './helpers/load-app-fns.mjs';
 
 const { mdToHtml } = loadFns(
   ['mdToHtml', 'scrubRawHtmlBlock', 'mdInlineToHtmlWithMath', 'renderMdList', 'mdInlineToHtml', 'escapeHtml',
-   'parseFrontmatterFields', 'frontmatterFieldsToHtml'],
+   'parseMapOptionsFrontmatter', 'parseFrontmatterFields', 'frontmatterFieldsToHtml'],
   { INLINE_HTML_RE: extractConst('INLINE_HTML_RE'), ENTITY_RE: extractConst('ENTITY_RE') });
 
 const F = '```';
@@ -105,5 +105,20 @@ describe('markdown preview - tables', () => {
     assert.equal(count(html, /<pre/g), 1, 'the code block went missing');
     assert.equal(count(html, /<table/g), 1, 'the table went missing');
     assert.equal(codeOf(html), 'a\nb');
+  });
+});
+
+describe('markdown preview - frontmatter control blocks', () => {
+  test('a mindspark block stays out of the Field | Value table', () => {
+    const html = mdToHtml('---\ntitle: Doc\nmindspark:\n  layout: radial\n  style: neon\n---\n# Heading\n');
+    assert.match(html, /<td>title<\/td><td>Doc<\/td>/);
+    assert.doesNotMatch(html, /mindspark|radial|neon/);
+    assert.match(html, /<h1>Heading<\/h1>/);
+  });
+
+  test('a frontmatter block holding only controls renders no empty table', () => {
+    const html = mdToHtml('---\nmarkmap:\n  tree: org-chart\n---\n# Heading\n');
+    assert.doesNotMatch(html, /<table/);
+    assert.match(html, /<h1>Heading<\/h1>/);
   });
 });

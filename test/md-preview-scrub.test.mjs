@@ -12,7 +12,7 @@ import { loadFns, extractConst } from './helpers/load-app-fns.mjs';
 
 const { mdToHtml, scrubRawHtmlBlock } = loadFns(
   ['mdToHtml', 'scrubRawHtmlBlock', 'mdInlineToHtmlWithMath', 'renderMdList', 'mdInlineToHtml', 'escapeHtml',
-   'parseFrontmatterFields', 'frontmatterFieldsToHtml'],
+   'parseMapOptionsFrontmatter', 'parseFrontmatterFields', 'frontmatterFieldsToHtml'],
   { INLINE_HTML_RE: extractConst('INLINE_HTML_RE'), ENTITY_RE: extractConst('ENTITY_RE') });
 const { safeImageUrl } = loadFns(['safeImageUrl'], { SAFE_IMAGE_RE: extractConst('SAFE_IMAGE_RE') });
 

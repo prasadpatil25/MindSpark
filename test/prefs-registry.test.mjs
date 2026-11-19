@@ -162,7 +162,7 @@ describe('export / import / reset derive from the registry', () => {
 
 describe('the card is reachable', () => {
   test('a preferences button sits beside the palette button and is wired', () => {
-    assert.match(HTML, /id="themeBtn"[^\n]*\n\s*<button class="tb" id="prefsBtn"/);
+    assert.match(HTML, /id="themeBtn"[^\n]*\n\s*<button class="tb[^"]*" id="prefsBtn"/);
     assert.match(APP, /\$\('#prefsBtn'\)\?\.addEventListener\('click', showPreferences\)/);
   });
 

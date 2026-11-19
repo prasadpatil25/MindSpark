@@ -4383,7 +4383,14 @@ function mdToHtml(md){
     const mm = md.match(/^\uFEFF?\s*<!--\s*mindspark[\s\S]*?-->\s*\n?/i);
     if(mm){ md=md.slice(mm[0].length); continue; }
     const fm = md.match(/^\s*---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/);
-    if(fm){ frontHtml = frontmatterFieldsToHtml(parseFrontmatterFields(fm[0])); md=md.slice(fm[0].length); continue; }
+    if(fm){
+      // The preview is the same document the importer reads, so the control
+      // blocks stay out of it here too: a nested `mindspark:` block would
+      // otherwise flatten into one unreadable Field | Value row.
+      const fields = parseFrontmatterFields(parseMapOptionsFrontmatter(fm[0]).stripped);
+      if(fields.length) frontHtml = frontmatterFieldsToHtml(fields);
+      md=md.slice(fm[0].length); continue;
+    }
     break;
   }
   const L=md.split('\n'); const out=frontHtml?[frontHtml]:[]; let i=0;
@@ -7368,6 +7375,45 @@ $('#searchBtn').onclick=()=>{
   const w=$('#searchWrap');
   if(w.classList.contains('open')) closeSearch(); else openSearch(false);
 };
+// More-actions overflow. Below 1100px the right-hand cluster no longer fits the
+// bar (the floating shells are single-row and clip; the modern bar wraps), so
+// the least-used actions collapse into a dropdown. The items are the ORIGINAL
+// buttons - the menu just re-clicks them, so every handler stays in one place.
+// Search and Theme stay visible: the search overlay anchors to #searchBtn and
+// the theme panel repositions against #themeBtn.
+const TOPBAR_MORE_ITEMS = [
+  ['varsBtn', '{ }', 'Map variables'],
+  ['prefsBtn', '\u2699', 'Preferences'],
+  ['menuExport', '\u2913', 'Export'],
+  ['focusBtn', '\u26F6', 'Focus mode'],
+  ['outlineBtn', '\u25A4', 'Outline'],
+  ['tabsBtn', '\u25AD', 'Tabbed workspace'],
+  ['donateBtn', '\u2665', 'Support MindSpark'],
+];
+$('#moreBtn')?.addEventListener('click', (e)=>{
+  e.stopPropagation();
+  const trigger=$('#moreBtn');
+  if(_rowPop && _rowPop._for==='topbar-more'){ closeRowMenu(); return; }   // toggle off
+  if(typeof closeAllMenus==='function') closeAllMenus();
+  closeRowMenu();
+  const pop=document.createElement('div'); pop.className='row-pop'; pop._for='topbar-more';
+  pop.style.visibility='hidden'; document.body.appendChild(pop);
+  TOPBAR_MORE_ITEMS.forEach(([id, icon, label])=>{
+    const item=document.createElement('button'); item.type='button';
+    const ic=document.createElement('span'); ic.className='rp-ic'; ic.textContent=icon;
+    item.appendChild(ic); item.appendChild(document.createTextNode(label));
+    item.addEventListener('click', ()=>{ closeRowMenu(); const b=document.getElementById(id); if(b) b.click(); });
+    pop.appendChild(item);
+  });
+  positionRowPop(pop, trigger);
+  _rowPop=pop;
+  _rowPopOut=(ev)=>{ if(_rowPop && (!ev || ev.type!=='mousedown' || !_rowPop.contains(ev.target))) closeRowMenu(); };
+  setTimeout(()=>{
+    document.addEventListener('mousedown', _rowPopOut, true);
+    window.addEventListener('scroll', closeRowMenu, true);
+    window.addEventListener('blur', closeRowMenu);
+  },0);
+});
 $('#replaceToggle').onclick=()=>{ $('#searchWrap').classList.toggle('replace-mode'); $('#replace').focus(); };
 $('#search').addEventListener('input',e=>{ if(globalSearchMode) runGlobalSearch(e.target.value); else doSearch(e.target.value); });
 $('#search').addEventListener('keydown',e=>{
@@ -8243,6 +8289,7 @@ function exportMenu(){
     <button data-a="buildprompt"><span class="ex-ic">✨</span><span><b>Compile subtree → prompt</b><i>Assemble the selected branch into a prompt</i></span></button>
     <div class="ex-grp">Export</div>
     <button data-a="png"   ><span class="ex-ic">🖼</span><span><b>PNG image</b><i>Themed export, honors map style</i></span></button>
+    <button data-a="html"  ><span class="ex-ic">🌐</span><span><b>Interactive HTML</b><i>Standalone file, pan and zoom, no app needed</i></span></button>
     <button data-a="print" ><span class="ex-ic">🖨</span><span><b>Print map</b><i>No background - print or save as PDF</i></span></button>
     <button data-a="prompt"><span class="ex-ic">⚡</span><span><b>Export as prompt</b><i>Fill variables, then copy clean text</i></span></button>
     <button data-a="mdrich"><span class="ex-ic">📝</span><span><b>Markdown</b><i>Formatting, tasks, tables, code</i></span></button>
@@ -8280,6 +8327,7 @@ function exportMenu(){
     else if(a==='present') startPresentation();
     else if(a==='buildprompt') showBuildPrompt(sel || (map&&map.rootId));
     else if(a==='png') exportPNG();
+    else if(a==='html') exportStandaloneHTML();
     else if(a==='print') exportPNG({ print:true });
     else if(a==='prompt') exportAsPrompt();
     else if(a==='mdrich') exportMarkdown(false, true);
@@ -9369,7 +9417,7 @@ function importFile(){
     const f=inp.files[0]; if(!f) return;
     const name=(f.name||'').toLowerCase();
     try{
-      let m, preserveState=false;
+      let m, preserveState=false, mdAppearance=null;
       if(name.endsWith('.gmind')){
         // Binary ZIP - read as bytes, not text. GitMind carries its own
         // expanded/collapsed state, so don't force-collapse afterwards.
@@ -9389,11 +9437,17 @@ function importFile(){
         else if(name.endsWith('.opml')||name.endsWith('.xml')) { m=parseOPML(t, f.name); }
         else { m=parseMarkdownOutline(t, f.name); }   // .md, .markdown, .txt
       }
+      // Read the parser's transient hints before stripRuntimeFields drops every
+      // underscore field. A source that declared its own folds (markmap markers,
+      // a foldLevel, or per-node collapsed meta) keeps that state instead of the
+      // collapse-to-overview default below.
+      const foldDeclared = !!(m && m._foldDeclared);
+      mdAppearance = (m && m._mdAppearance) || null;
       m=sanitizeMapData(stripRuntimeFields(m));   // a file is content only - never a share binding or a cloud session
       if(!m || !m.nodes || !m.rootId) throw new Error('No recognizable outline');
       // Start collapsed so the user sees a clean top-level overview (unless the
       // format already carries its own expand state, e.g. .gmind).
-      if(!preserveState){
+      if(!preserveState && !foldDeclared){
         Object.keys(m.nodes).forEach(id=>{
           if(id !== m.rootId) m.nodes[id].collapsed = true;
         });
@@ -9401,11 +9455,17 @@ function importFile(){
       m.id=uid();
       await Store.save(m);
       await loadMap(m.id);
+      // Frontmatter appearance hints are import-only, so they change the live
+      // look/theme but are never written onto the map itself.
+      if(mdAppearance){
+        if(mdAppearance.theme) applyTheme(mdAppearance.theme);
+        if(mdAppearance.look) applyLook(mdAppearance.look);
+      }
       // Imported nodes have no positions (all at 0,0) - lay them out into a
       // proper tree, then frame the result.
       autoLayout(); fit();
       refreshList();
-      toast('Imported '+f.name + (preserveState?'':' (collapsed - click ＋ to expand)'));
+      toast('Imported '+f.name + ((preserveState||foldDeclared)?'':' (collapsed - click ＋ to expand)'));
     }catch(e){ console.error(e); alert('Could not import this file:\n'+e.message); }
   };
   inp.click();
@@ -9538,8 +9598,118 @@ function frontmatterNodeToYaml(n){
   lines.push('---');
   return lines.join('\n');
 }
+// Frontmatter can drive the map itself, the way markmap reads its own YAML
+// header. Only a NESTED `mindspark:` / `markmap:` block counts: a top-level
+// `layout:` or `theme:` belongs to the document (a static-site page, a Claude
+// Skill) and must never be mistaken for a map setting.
+//
+// Returns the parsed blocks plus the frontmatter with those blocks removed, so
+// the visible Field | Value table built from the rest cannot flatten a nested
+// block into `mindspark: layout: radial style: neon` and then re-export that.
+function parseMapOptionsFrontmatter(raw){
+  const inner = String(raw||'').replace(/^---\r?\n/, '').replace(/\r?\n---\s*$/, '');
+  const out = { mindspark:{}, markmap:{}, stripped: raw };
+  const kept = [];
+  let block = null;
+  for(const line of inner.split(/\r?\n/)){
+    const start = line.match(/^(mindspark|markmap):\s*$/i);
+    if(start){ block = start[1].toLowerCase(); continue; }
+    if(block){
+      if(!line.trim()) continue;
+      const kv = line.match(/^\s+([A-Za-z0-9_-]+):\s*(.*)$/);
+      if(kv){
+        let value = kv[2].trim();
+        if(value.length>1 && ((value[0]==="'" && value[value.length-1]==="'") || (value[0]==='"' && value[value.length-1]==='"'))){
+          value = value.slice(1,-1);
+        }
+        out[block][kv[1].toLowerCase()] = value;
+        continue;
+      }
+      // A non-indented line ends the block. Indented continuations belong to
+      // the last option (a wrapped value), matching parseFrontmatterFields.
+      if(/^\s/.test(line)){
+        const keys = Object.keys(out[block]);
+        if(keys.length) out[block][keys[keys.length-1]] += ' '+line.trim();
+        continue;
+      }
+      block = null;
+    }
+    kept.push(line);
+  }
+  // Keep the fences even when the block only held controls: callers can still
+  // tell there WAS frontmatter, and an empty field list skips the table.
+  out.stripped = '---\n' + kept.join('\n').replace(/\s+$/, '') + '\n---';
+  return out;
+}
+// Turn the two control blocks into map fields. markmap spellings are aliases,
+// not a second vocabulary: its `tree: org-chart` is this app's down layout, its
+// `theme` values are map styles (its colour scheme is the app's colour theme),
+// and its `initialExpandLevel` is a fold depth. Values are validated against the
+// real registries so a typo cannot leave a map in an unrenderable state.
+function mapOptionsForMap(raw){
+  const layoutAliases = { tree:'balanced', 'two-sided':'balanced', 'org-chart':'down', orgchart:'down' };
+  const styleAliases = { cards:'modern', classic:'classic', minimal:'minimal' };
+  const md = (raw && raw.markmap) || {}, ms = (raw && raw.mindspark) || {};
+  const pick = (...vals) => { for(const v of vals){ if(v!=null && String(v).trim()!=='') return String(v).trim(); } return ''; };
+  const out = {};
+  const layoutRaw = pick(ms.layout, md.tree, md.layout);
+  if(layoutRaw){
+    const l = layoutRaw.toLowerCase();
+    const alias = layoutAliases[l] || l;
+    if(typeof LAYOUT_ENGINES !== 'undefined' && LAYOUT_ENGINES.includes(alias)) out.layout = alias;
+    else if(typeof findLayout === 'function'){
+      const preset = findLayout(layoutRaw);
+      if(preset){ out.layoutPreset = preset.id; out.layout = preset.engine || preset.strategy || alias; }
+    }
+  }
+  const presetRaw = pick(ms.layoutpreset, ms.preset);
+  if(presetRaw && !out.layoutPreset){
+    const preset = typeof findLayout==='function' ? findLayout(presetRaw) : null;
+    if(preset){
+      if(preset.id!==preset.engine) out.layoutPreset=preset.id;
+      if(!out.layout) out.layout=preset.engine||preset.strategy;
+    } else {
+      out.layoutPreset=presetRaw;
+    }
+  }
+  const styleRaw = pick(ms.style, md.theme);
+  if(styleRaw){
+    const s = styleAliases[styleRaw.toLowerCase()] || styleRaw.toLowerCase();
+    if(typeof MAP_STYLES !== 'undefined' && MAP_STYLES.some(x=>x.id===s)) out.style = s;
+  }
+  const themeRaw = pick(ms.theme, md.colorscheme).toLowerCase();
+  if(themeRaw && typeof THEMES !== 'undefined' && THEMES.some(x=>x.id===themeRaw)) out.theme = themeRaw;
+  const lookRaw = pick(ms.look).toLowerCase();
+  if(lookRaw && typeof LOOKS !== 'undefined' && LOOKS.some(x=>x.id===lookRaw)) out.look = lookRaw;
+  const foldRaw = pick(ms.foldlevel, md.initialexpandlevel);
+  if(foldRaw!=='' && /^-?\d+$/.test(foldRaw)) out.foldLevel = Math.max(-1, Math.min(99, parseInt(foldRaw,10)));
+  const colorRaw = pick(ms.color, md.color);
+  if(/^#[0-9a-f]{6}$/i.test(colorRaw)) out.color = colorRaw.toLowerCase();
+  return out;
+}
+// Collapse every node with children at or below `level`, root counted as depth
+// 0. A negative level means "expand all" (markmap's initialExpandLevel: -1).
+// One O(n) child index rather than a scan per node: the parser runs on every
+// keystroke in the split editor, and a big outline made the naive version O(n²).
+function foldMapForLevel(nodes, rootId, level){
+  if(!(level >= 0) || !nodes || !nodes[rootId]) return;
+  const kids = Object.create(null);
+  for(const id in nodes){
+    const p = nodes[id].parent;
+    if(p!=null) (kids[p] || (kids[p]=[])).push(id);
+  }
+  const stack = [[rootId, 0]];
+  while(stack.length){
+    const [id, depth] = stack.pop();
+    const cs = kids[id];
+    if(!cs || !cs.length) continue;
+    if(depth >= level) nodes[id].collapsed = true;
+    for(const c of cs) stack.push([c, depth+1]);
+  }
+}
 function parseMarkdownOutline(text, filename){
-  let _meta=null, _frontmatter=null;
+  let _meta=null, _frontmatter=null, _mapOptions=null;
+  let _foldDeclared=false, _foldAll=false, _lastAddedId=null;
   // Strip a leading <!-- mindspark ... --> comment and a leading YAML --- ... --- block,
   // in whichever order they appear. Looping instead of checking each once matters: if
   // buildMarkdown ever emits them in a different order than expected, a single anchored
@@ -9565,9 +9735,16 @@ function parseMarkdownOutline(text, filename){
   // child once the sole-top-level-heading gets promoted to root, below.
   let frontmatterId = null;
   if(_frontmatter){
-    frontmatterId = uid();
+    const controls = parseMapOptionsFrontmatter(_frontmatter);
+    _frontmatter = controls.stripped;
+    if(Object.keys(controls.mindspark).length || Object.keys(controls.markmap).length) _mapOptions = controls;
     const fields = parseFrontmatterFields(_frontmatter);
-    nodes[frontmatterId] = { id:frontmatterId, parent:rootId, x:0, y:0, frontmatter:true, html: frontmatterFieldsToHtml(fields) };
+    if(fields.length){
+      frontmatterId = uid();
+      nodes[frontmatterId] = { id:frontmatterId, parent:rootId, x:0, y:0, frontmatter:true, html: frontmatterFieldsToHtml(fields) };
+    } else {
+      _frontmatter = null;   // control block only - no empty Field | Value node
+    }
   }
   const stack = [{ id:rootId, depth:0 }];
   let sideCounter = 0, lastHeadingDepth = 0, subDepth = null;
@@ -9579,6 +9756,24 @@ function parseMarkdownOutline(text, filename){
     let side = 'right';
     if(parentId===rootId) side = (sideCounter++ % 2) ? 'left' : 'right';
     else side = nodes[parentId].side || 'right';
+    // markmap's documented placement puts the directive inside the label itself:
+    // `- Node <!-- markmap: fold -->`. Strip it before inline markdown ever sees
+    // it, or the raw comment ends up in the node text. A standalone comment line
+    // is handled in the main loop instead (markmap itself drops those).
+    let _foldSelf=false;
+    if(txt.includes('markmap')){
+      const before = txt;
+      txt = txt.replace(/<!--\s*markmap:\s*([\s\S]*?)\s*-->/gi, (all, words)=>{
+        const ws = words.trim().toLowerCase().split(/\s+/);
+        if(ws.includes('foldall')){ _foldSelf=true; _foldAll=true; }
+        else if(ws.includes('fold')) _foldSelf=true;
+        return '';
+      });
+      if(txt !== before){
+        txt = txt.trimEnd();
+        if(_foldSelf) _foldDeclared = true;
+      }
+    }
     // A formula ("=SUM(children)", "=2*3*4", ...) is verbatim, code-like content - never run
     // it through inline-markdown scanning, which would happily mangle e.g. the asterisks in
     // "=2*3*4" into a spurious *italic* span.
@@ -9632,6 +9827,8 @@ function parseMarkdownOutline(text, filename){
     Object.assign(nodes[id], styleProps);
     if(task) nodes[id].task = task;
     if(extra) Object.assign(nodes[id], extra);
+    if(_foldSelf) nodes[id].collapsed = true;
+    _lastAddedId = id;
     stack.push({ id, depth });
   };
   const IMG_LINE = /^!\[([^\]]*)\]\(([^)]+)\)$/;   // [1]=alt [2]=src
@@ -9674,6 +9871,15 @@ function parseMarkdownOutline(text, filename){
       add('table', base() + 1 + Math.floor(ind/2), null, { html:tableToHtml(rows) }); i=j-1; continue;
     }
     if(!line.trim()) continue;
+    // markmap's explicit fold marker. It is a directive, not content: collapse
+    // the node it sits under (the last one added), or every branch for foldAll.
+    const foldMark = line.match(/^\s*<!--\s*markmap:\s*(fold|foldall)\s*-->\s*$/i);
+    if(foldMark){
+      _foldDeclared = true;
+      if(foldMark[1].toLowerCase()==='foldall') _foldAll = true;
+      else if(_lastAddedId && nodes[_lastAddedId]) nodes[_lastAddedId].collapsed = true;
+      continue;
+    }
     // Multi-line raw HTML block (<table>, <div style=...>, <details>, ...) -> one raw block node
     const htmlOpen = line.match(/^\s*<(table|div|details|figure|blockquote|dl|section)\b/i);
     if(htmlOpen && !new RegExp('</'+htmlOpen[1]+'\\s*>','i').test(line)){
@@ -9786,7 +9992,7 @@ function parseMarkdownOutline(text, filename){
       if(mm && n){
         if(mm.color) n.color=mm.color; if(mm.textColor) n.textColor=mm.textColor;
         if(mm.w){ n.width=mm.w; n.w=mm.w; } if(mm.h){ n.height=mm.h; n.h=mm.h; }
-        if(mm.collapsed) n.collapsed=true;
+        if(mm.collapsed){ n.collapsed=true; _foldDeclared=true; }
         if(mm.underline) n.underline=true;   // bold/italic/strike round-trip via visible **/*/~~ syntax instead (see buildMarkdown)
         if(mm.fontSize) n.fontSize=mm.fontSize; if(mm.listType) n.listType=mm.listType;
         if(mm.highlight) n.highlight=mm.highlight; if(mm.align) n.align=mm.align;
@@ -9803,10 +10009,20 @@ function parseMarkdownOutline(text, filename){
     };
     applyMeta(finalRoot, '0');
   }
-  const out = { id:uid(), title, titleAuto:false, color:(_meta&&_meta.color)||'#e0613a', rootId:finalRoot, nodes };
+  const _opts = _mapOptions ? mapOptionsForMap(_mapOptions) : {};
+  if(_opts.foldLevel !== undefined){ _foldDeclared=true; foldMapForLevel(nodes, finalRoot, _opts.foldLevel); }
+  if(_foldAll) foldMapForLevel(nodes, finalRoot, 0);
+  const out = { id:uid(), title, titleAuto:false, color:(_meta&&_meta.color)||_opts.color||'#e0613a', rootId:finalRoot, nodes };
   if(_frontmatter) out.frontmatter=_frontmatter;
-  if(_meta&&_meta.layout) out.layout=_meta.layout;
+  if(_meta&&_meta.layout) out.layout=_meta.layout; else if(_opts.layout) out.layout=_opts.layout;
+  if(_meta&&_meta.layoutPreset) out.layoutPreset=_meta.layoutPreset; else if(_opts.layoutPreset) out.layoutPreset=_opts.layoutPreset;
+  if(_meta&&_meta.style) out.style=_meta.style; else if(_opts.style) out.style=_opts.style;
   if(_meta&&_meta.vars) out.vars=_meta.vars;
+  // Transient import hints: how the source says it should LOOK (mindspark
+  // frontmatter), not part of the saved map. importFile applies and drops them;
+  // stripRuntimeFields keeps underscore fields out of storage and CloudStore.
+  if(_opts.look || _opts.theme) out._mdAppearance = { look:_opts.look, theme:_opts.theme };
+  if(_foldDeclared) out._foldDeclared = true;
   return out;
 }
 
@@ -10390,6 +10606,8 @@ function buildMarkdown(startId, opts){
   if(withMeta){
     const meta={ v:1 };
     if(map.layout) meta.layout=map.layout;
+    if(map.layoutPreset) meta.layoutPreset=map.layoutPreset;
+    if(map.style) meta.style=map.style;
     if(map.color) meta.color=map.color;
     if(map.vars && Object.keys(map.vars).length) meta.vars=map.vars;
     if(Object.keys(nmeta).length) meta.nodes=nmeta;
@@ -10658,6 +10876,258 @@ function exportMarkdown(toClipboard, rich){
     toast('Markdown exported'+scope);
   }
 }
+/* ============================================================
+   STANDALONE HTML EXPORT
+   A single self-contained file: the real stylesheet, a snapshot of the
+   rendered stage, and a tiny read-only viewer. No app.js, no network, no
+   build step. The map is expanded for the snapshot so the viewer never has
+   to implement folding; the app's own fold state is restored afterwards.
+   ============================================================ */
+// Script and style are inline, images may be data: or remote (a pasted image
+// and a linked one both live on nodes), and fonts are the same Google set the
+// app itself loads. No connect-src: the viewer never makes a fetch.
+const STANDALONE_CSP = "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com data:; img-src data: blob: http: https:; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";
+const STANDALONE_FONT_LINKS = '<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,700&family=Caveat:wght@500;700&family=Nunito:ital,wght@0,400;0,700;1,400;1,700&family=JetBrains+Mono:wght@400;700&family=Fredoka:wght@400;600&family=Oswald:wght@400;600&family=Roboto+Condensed:wght@400;600&family=Space+Mono:wght@400;700&family=Space+Grotesk:wght@400;500;700&family=Quicksand:wght@400;600;700&family=Anek+Latin:wght@400..800&display=swap" rel="stylesheet">';
+const STANDALONE_VIEWER_CSS = `
+html,body{margin:0;height:100%;overflow:hidden}
+body.standalone-viewer{background:var(--paper);color:var(--ink);font-family:var(--sans)}
+body.standalone-viewer .stage{position:fixed;inset:0;width:100vw;height:100dvh;cursor:grab;touch-action:none}
+body.standalone-viewer .stage.ms-panning{cursor:grabbing}
+body.standalone-viewer #viewport{transform-origin:0 0}
+.sv-top{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:5;max-width:min(72vw,760px);pointer-events:none}
+.sv-title{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:6px 14px;border-radius:999px;background:color-mix(in srgb,var(--chrome) 86%,transparent);border:1px solid var(--line);box-shadow:var(--shadow);font-size:13px;font-weight:600;color:var(--ink)}
+.sv-bar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:5;display:flex;align-items:center;gap:10px;padding:7px 12px;border-radius:999px;background:color-mix(in srgb,var(--chrome) 88%,transparent);border:1px solid var(--line);box-shadow:var(--shadow-lg);font-size:12px;color:var(--ink-soft);backdrop-filter:blur(8px)}
+.sv-bar button{border:1px solid var(--line-2);background:var(--paper);color:var(--ink);border-radius:999px;padding:5px 12px;font:inherit;font-weight:600;cursor:pointer}
+.sv-bar button:hover{background:var(--paper-2)}
+@media print{.sv-top,.sv-bar{display:none}}
+`;
+// Deliberately no keydown handler: the viewer has no editor, no text entry and
+// no folding, so there is no keyboard state to own or composition to yield to.
+const STANDALONE_VIEWER_JS = `(function(){
+  var stage=document.querySelector('.stage');
+  var vp=document.getElementById('viewport');
+  if(!stage||!vp) return;
+  var view={x:0,y:0,k:1};
+  function apply(){ vp.style.transform='translate('+view.x+'px,'+view.y+'px) scale('+view.k+')'; }
+  function fit(){
+    var els=vp.querySelectorAll('.node');
+    if(!els.length){ view={x:0,y:0,k:1}; apply(); return; }
+    var minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+    for(var i=0;i<els.length;i++){
+      var el=els[i], x=el.offsetLeft, y=el.offsetTop, w=el.offsetWidth, h=el.offsetHeight;
+      if(x<minX) minX=x; if(y<minY) minY=y;
+      if(x+w>maxX) maxX=x+w; if(y+h>maxY) maxY=y+h;
+    }
+    var W=stage.clientWidth, H=stage.clientHeight;
+    var pad=Math.min(80, Math.max(24, Math.min(W,H)*0.08));
+    var k=Math.min((W-pad*2)/Math.max(1,maxX-minX), (H-pad*2)/Math.max(1,maxY-minY), 1.5);
+    k=Math.max(0.08, Math.min(4, k));
+    view.k=k;
+    view.x=(W-(minX+maxX)*k)/2;
+    view.y=(H-(minY+maxY)*k)/2;
+    apply();
+  }
+  function zoomAt(cx,cy,f){
+    var k=Math.max(0.08, Math.min(4, view.k*f));
+    var r=k/view.k;
+    view.x=cx-(cx-view.x)*r;
+    view.y=cy-(cy-view.y)*r;
+    view.k=k; apply();
+  }
+  stage.addEventListener('wheel', function(e){
+    e.preventDefault();
+    var b=stage.getBoundingClientRect();
+    zoomAt(e.clientX-b.left, e.clientY-b.top, e.deltaY<0?1.12:1/1.12);
+  }, {passive:false});
+  var pts=Object.create(null), npts=0, drag=null, pinch=null;
+  function ptList(){ var a=[]; for(var id in pts) a.push(pts[id]); return a; }
+  stage.addEventListener('pointerdown', function(e){
+    if(e.pointerType==='mouse' && e.button!==0) return;
+    try{ stage.setPointerCapture(e.pointerId); }catch(err){}
+    pts[e.pointerId]={x:e.clientX,y:e.clientY};
+    npts++;
+    if(npts===1){ drag={x:e.clientX,y:e.clientY,vx:view.x,vy:view.y}; stage.classList.add('ms-panning'); pinch=null; }
+    else if(npts===2){
+      var a=ptList(), dx=a[0].x-a[1].x, dy=a[0].y-a[1].y;
+      pinch={d:Math.max(1,Math.sqrt(dx*dx+dy*dy)),k:view.k};
+      drag=null;
+    }
+  });
+  stage.addEventListener('pointermove', function(e){
+    if(!pts[e.pointerId]) return;
+    pts[e.pointerId]={x:e.clientX,y:e.clientY};
+    if(npts===2 && pinch){
+      var a=ptList(), dx=a[0].x-a[1].x, dy=a[0].y-a[1].y;
+      var d=Math.max(1,Math.sqrt(dx*dx+dy*dy));
+      var b=stage.getBoundingClientRect();
+      var mx=(a[0].x+a[1].x)/2-b.left, my=(a[0].y+a[1].y)/2-b.top;
+      var k=Math.max(0.08, Math.min(4, pinch.k*(d/pinch.d)));
+      var r=k/view.k;
+      view.x=mx-(mx-view.x)*r;
+      view.y=my-(my-view.y)*r;
+      view.k=k; apply();
+    } else if(drag){
+      view.x=drag.vx+(e.clientX-drag.x);
+      view.y=drag.vy+(e.clientY-drag.y);
+      apply();
+    }
+  });
+  function up(e){
+    if(!pts[e.pointerId]) return;
+    delete pts[e.pointerId]; npts--;
+    if(npts<2) pinch=null;
+    if(npts===1){ var a=ptList(); drag={x:a[0].x,y:a[0].y,vx:view.x,vy:view.y}; }
+    if(npts===0){ drag=null; stage.classList.remove('ms-panning'); }
+  }
+  stage.addEventListener('pointerup', up);
+  stage.addEventListener('pointercancel', up);
+  var fitBtn=document.getElementById('svFit');
+  if(fitBtn) fitBtn.addEventListener('click', fit);
+  window.addEventListener('resize', fit);
+  fit();
+})();`;
+function buildStandaloneDocument(o){
+  const opts=o||{}, root=opts.root||{};
+  const attr=(k,v)=>(v!=null && String(v)!=='') ? ' '+k+'="'+escapeHtml(String(v))+'"' : '';
+  const rootAttrs=attr('lang',root.lang||'en')+attr('dir',root.dir)
+    +attr('data-theme',root.theme)+attr('data-look',root.look)+attr('style',root.style);
+  // A stylesheet or viewer script containing its own closing tag would end the
+  // block early. Neither can today; escaping the sequence keeps a future edit
+  // from turning that into a parse break.
+  const guard=(s,close)=>String(s||'').replace(new RegExp('</'+close,'gi'),'<\\/'+close);
+  const title=opts.title||'Mind map';
+  return '<!doctype html>\n<html'+rootAttrs+'>\n<head>\n'
+    +'<meta charset="utf-8">\n'
+    +'<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+    +'<meta http-equiv="Content-Security-Policy" content="'+STANDALONE_CSP+'">\n'
+    +'<title>'+escapeHtml(title)+'</title>\n'
+    +(opts.fontLinks||'')+'\n'
+    +'<style>'+guard(opts.styles,'style')+'</style>\n'
+    +'<style>'+guard(opts.viewerCss,'style')+'</style>\n'
+    +'</head>\n<body class="standalone-viewer">\n'
+    +'<div class="sv-top"><span class="sv-title">'+escapeHtml(title)+'</span></div>\n'
+    +(opts.stageHtml||'')+'\n'
+    +'<div class="sv-bar"><button type="button" id="svFit">Fit</button><span>Drag to pan · Scroll or pinch to zoom</span></div>\n'
+    +'<script>'+guard(opts.viewerJs,'script')+'</script>\n'
+    +'</body>\n</html>';
+}
+// The document root carries the theme/look attributes and, for a custom theme
+// or configured look, inline palette variables. The app also stores the UI
+// scale there; copying that zooms the whole viewer to the author's toolbar
+// size, so it is the one thing this filter drops.
+function standaloneRootAttrs(rootEl){
+  const root=rootEl||document.documentElement, out={};
+  const lang=root.getAttribute('lang'); if(lang) out.lang=lang;
+  const dir=root.getAttribute('dir'); if(dir) out.dir=dir;
+  const theme=root.getAttribute('data-theme'); if(theme) out.theme=theme;
+  const look=root.getAttribute('data-look'); if(look) out.look=look;
+  const vars=[];
+  for(let i=0;i<root.style.length;i++){
+    const prop=root.style[i];
+    if(prop==='zoom' || prop==='--ui-zoom' || prop==='--shared-banner-h') continue;
+    vars.push(prop+':'+root.style.getPropertyValue(prop));
+  }
+  if(vars.length) out.style=vars.join(';');
+  return out;
+}
+async function standaloneStylesheetText(){
+  const links=[...document.querySelectorAll('link[rel="stylesheet"]')];
+  const link=links.find(l=>/(^|\/)styles\.css(?:[?#]|$)/.test(l.getAttribute('href')||''));
+  try{
+    const href=link ? link.href : new URL('styles.css', location.href).href;
+    const res=await fetch(href,{cache:'force-cache'});
+    if(res.ok) return await res.text();
+  }catch(e){}
+  // CSSOM fallback for a setup where fetch is blocked: the sheet is already
+  // parsed, so serialize what the browser actually applied.
+  try{
+    const sheet=link && link.sheet;
+    if(sheet) return [...sheet.cssRules].map(r=>r.cssText).join('\n');
+  }catch(e){}
+  return '';
+}
+function standaloneStageMarkup(rootEl){
+  const src=rootEl||stage;
+  if(!src) return '';
+  const clone=src.cloneNode(true);
+  clone.removeAttribute('id');
+  // The stage also hosts look-effect layers, overview/zoom chrome, the toast
+  // and the empty-state card. Only the viewport (edges + cards) is the map.
+  [...clone.children].forEach(ch=>{ if(ch.id!=='viewport') ch.remove(); });
+  const vp=clone.querySelector('#viewport');
+  if(vp){
+    vp.style.transform=''; vp.style.transition='';
+    [...vp.children].forEach(ch=>{
+      if(!(ch.id==='edges' || ch.classList.contains('node'))) ch.remove();
+    });
+  }
+  clone.querySelectorAll('.node').forEach(el=>{
+    el.classList.remove('sel','editing','collapsed');
+    el.removeAttribute('contenteditable');
+    el.removeAttribute('spellcheck');
+    el.removeAttribute('tabindex');
+    // FLIP leaves translate()/transition behind until its next frame; a clone
+    // taken in that window would freeze every card at its sliding-from spot.
+    el.style.transform='';
+    el.style.transition='';
+    el.querySelectorAll('[contenteditable]').forEach(x=>x.removeAttribute('contenteditable'));
+  });
+  return clone.outerHTML;
+}
+async function waitForExportImages(rootEl){
+  const imgs=rootEl ? [...rootEl.querySelectorAll('img')] : [];
+  const waits=imgs.map(img=>img.complete ? Promise.resolve() : new Promise(resolve=>{
+    let done=false; const end=()=>{ if(done) return; done=true; resolve(); };
+    img.addEventListener('load',end,{once:true});
+    img.addEventListener('error',end,{once:true});
+    setTimeout(end,4000);   // a stuck image must not block the export forever
+  }));
+  const fonts=(document.fonts && document.fonts.ready) ? document.fonts.ready.catch(()=>{}) : Promise.resolve();
+  await Promise.all([fonts, ...waits]);
+}
+async function exportStandaloneHTML(){
+  if(!map){ toast('Open a map first'); return; }
+  const target=map;
+  const wasEphemeral=!!target._ephemeral;
+  // The export expands every branch, which is a real layout pass. `_ephemeral`
+  // makes scheduleSave a no-op for the duration, so a slow image/font wait cannot
+  // save the temporary expanded state (or add a version) before it is restored.
+  target._ephemeral=true;
+  const before={}; let changed=false;
+  for(const id in target.nodes){ before[id]=!!target.nodes[id].collapsed; if(before[id]) changed=true; }
+  try{
+    if(changed){
+      for(const id in target.nodes) target.nodes[id].collapsed=false;
+      autoLayout();
+    }
+    await waitForExportImages(stage);
+    // The user can switch maps while the images settle. The snapshot would then
+    // be someone else's stage under this map's title, so stop instead.
+    if(map!==target) return;
+    const doc=buildStandaloneDocument({
+      title: target.title||'Mind map',
+      root: standaloneRootAttrs(document.documentElement),
+      stageHtml: standaloneStageMarkup(stage),
+      styles: await standaloneStylesheetText(),
+      fontLinks: STANDALONE_FONT_LINKS,
+      viewerCss: STANDALONE_VIEWER_CSS,
+      viewerJs: STANDALONE_VIEWER_JS
+    });
+    download(new Blob([doc],{type:'text/html'}), (target.title||'mindmap')+'.html');
+    toast('Interactive HTML exported');
+  }catch(e){ console.error(e); toast('Could not export this map as HTML'); }
+  finally{
+    if(changed){
+      for(const id in target.nodes) if(before[id]) target.nodes[id].collapsed=true;
+      if(map===target) autoLayout();
+    }
+    if(!wasEphemeral) delete target._ephemeral;
+    // A save queued before the export may have fired while the map was
+    // temporarily expanded. Persist the restored state last so it wins.
+    if(changed && map===target) scheduleSave();
+  }
+}
+
 // Build a Word-compatible HTML document (saved with .doc extension -
 // Word, Google Docs, and LibreOffice all open this as a Word document).
 // Renders one LaTeX expression to a small PNG data-URL <img> tag, for exports that
@@ -11281,16 +11751,18 @@ async function exportPNG(opts){
       ctx.globalAlpha=1; ctx.textAlign='start'; ctx.textBaseline='alphabetic'; ctx.shadowBlur=0;
     } else if(look==='iitian'){
       // Answer booklet, the same three layers .stage paints: rules every 26px
-      // at 75% line, an accent rule over every fifth one, and the double
+      // at 38% line, an accent rule over every fifth one, and the double
       // margin down the left. Line positions match the CSS stops exactly (25,
       // 129, 64/68) or the PNG export drifts a pixel off the screen per tile.
-      ctx.strokeStyle=lineColor; ctx.lineWidth=1; ctx.globalAlpha=0.75;
+      // The alphas are kept in lockstep with the CSS mix percentages so the
+      // PNG does not come out with heavier rules than the screen shows.
+      ctx.strokeStyle=lineColor; ctx.lineWidth=1; ctx.globalAlpha=0.38;
       for(let y=25; y<H; y+=26){ ctx.beginPath(); ctx.moveTo(0,y+0.5); ctx.lineTo(W,y+0.5); ctx.stroke(); }
-      ctx.strokeStyle=accentColor; ctx.globalAlpha=0.32;
+      ctx.strokeStyle=accentColor; ctx.globalAlpha=0.08;
       for(let y=129; y<H; y+=130){ ctx.beginPath(); ctx.moveTo(0,y+0.5); ctx.lineTo(W,y+0.5); ctx.stroke(); }
-      ctx.globalAlpha=0.55;
+      ctx.globalAlpha=0.35;
       ctx.beginPath(); ctx.moveTo(64.5,0); ctx.lineTo(64.5,H); ctx.stroke();
-      ctx.globalAlpha=0.30;
+      ctx.globalAlpha=0.18;
       ctx.beginPath(); ctx.moveTo(68.5,0); ctx.lineTo(68.5,H); ctx.stroke();
       ctx.globalAlpha=1;
     } else {
@@ -14567,7 +15039,12 @@ function applyUiLayout(id){
     document.getElementById('zenPin')?.remove();   // pin toggle is zen-only
     [$('#savePill'),$('#tokenTotal'),$('#userPill')].forEach(p=>{ if(p) sbRight.appendChild(p); });
     document.querySelector('.rail-float')?.remove();   // rail's top-right group, now empty: its pills were just moved back
-    side.classList.remove('collapsed','side-open'); side.style.width='';
+    side.classList.remove('side-open');
+    // Phones boot with the sidebar collapsed (a collapsed overlay, see the
+    // phone-only boot rule below). This used to drop .collapsed unconditionally
+    // and the reopened panel covered the whole top bar.
+    if(window.matchMedia('(max-width: 720px)').matches){ side.classList.add('collapsed'); } else { side.classList.remove('collapsed'); }
+    side.style.width='';
   };
   rewireSide();   // every layout starts with the plain tab/toggle wiring; dock overrides below
   if(classic){
@@ -14737,6 +15214,7 @@ function ensureMinimalMenu(){
   menu.id='minimalMenu'; menu.className='minimal-menu'; menu.hidden=true;
   const GH_SVG='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12c0 4.42 2.87 8.17 6.84 9.5.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.57 9.57 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85V21c0 .27.18.58.69.48A10 10 0 0 0 22 12c0-5.52-4.48-10-10-10z"/></svg>';
   const BRAIN_SVG='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 2a8 8 0 1 1-8 8 8 8 0 0 1 8-8zm-3.5 9.5l3-3 3 3-1.5 1.5-1.5-1.5-1.5 1.5z"/></svg>';
+  const SPARK_SVG='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 2a8 8 0 1 1-8 8 8 8 0 0 1 8-8zm0 3l1.5 3.5L17 12l-3.5 1.5L12 17l-1.5-3.5L7 12l3.5-1.5z"/></svg>';
   const BUG_SVG='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 2a8 8 0 1 1-8 8 8 8 0 0 1 8-8zm-1 4h2v6h-2zm0 8h2v2h-2z"/></svg>';
   menu.innerHTML=
     '<button type="button" class="mm-item mm-has-sub" data-sub="minimalMapsSub"><span class="mm-ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 3L3 5.5V21l6-2.5 6 2.5 6-2.5V3l-6 2.5L9 3zm0 2.2l6 2.4v11.2l-6-2.4V5.2z"/></svg></span><span class="mm-lbl">Maps</span><span class="mm-caret">▸</span></button>'+
@@ -14912,6 +15390,7 @@ function minimalSubPlacement(rect, subW, subH, vw, vh, menuLeft, menuRight){
   const ghSub=makeSub('minimalGhSub',
     '<a class="mm-item" data-ref="ghRepoLink"><span class="mm-ic">'+GH_SVG+'</span><span class="mm-lbl">GitHub</span></a>'+
     '<a class="mm-item" data-ref="gptLink"><span class="mm-ic">'+BRAIN_SVG+'</span><span class="mm-lbl">MindSpark GPT</span></a>'+
+    '<a class="mm-item" data-ref="memoryStudioLink"><span class="mm-ic">'+SPARK_SVG+'</span><span class="mm-lbl">Mapped it? Now memorize it</span></a>'+
     '<a class="mm-item" data-ref="ghIssueLink"><span class="mm-ic">'+BUG_SVG+'</span><span class="mm-lbl">Report bug</span></a>');
   ghSub.addEventListener('click',e=>{
     const it=e.target.closest('.mm-item'); if(!it) return;
