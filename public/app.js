@@ -7375,9 +7375,9 @@ $('#searchBtn').onclick=()=>{
   const w=$('#searchWrap');
   if(w.classList.contains('open')) closeSearch(); else openSearch(false);
 };
-// More-actions overflow. Below 1100px the right-hand cluster no longer fits the
-// bar (the floating shells are single-row and clip; the modern bar wraps), so
-// the least-used actions collapse into a dropdown. The items are the ORIGINAL
+// More-actions overflow. When the full right-hand cluster does not fit the bar
+// (the floating shells are single-row and clip; the modern bar wraps), the
+// least-used actions collapse into a dropdown. The items are the ORIGINAL
 // buttons - the menu just re-clicks them, so every handler stays in one place.
 // Search and Theme stay visible: the search overlay anchors to #searchBtn and
 // the theme panel repositions against #themeBtn.
@@ -7390,6 +7390,60 @@ const TOPBAR_MORE_ITEMS = [
   ['tabsBtn', '\u25AD', 'Tabbed workspace'],
   ['donateBtn', '\u2665', 'Support MindSpark'],
 ];
+// Whether the bar's contents overflow it. This is measured rather than read off
+// a viewport breakpoint: a fixed max-width:1100px rule used to decide it, which
+// hid seven buttons on a landscape phone whose bar had room to spare, while a
+// 13 inch laptop just above 1100px still overflowed. The bar's free width
+// depends on the sidebar, the layout and the UI zoom, so only the bar knows.
+// A row bar overflows when content runs past its edge (the nowrap floating
+// shells) or when a child drops below the first line (the wrapping modern
+// bar). The rail is a column and overflows downwards.
+function topbarOverflows(bar, column){
+  if(column) return bar.scrollHeight > bar.clientHeight + 1;
+  if(bar.scrollWidth > bar.clientWidth + 1) return true;
+  // Hidden children and the zero-height spacer say nothing about wrapping.
+  const kids=[...bar.children].filter(k=>k.offsetWidth>0 && k.offsetHeight>0);
+  if(!kids.length) return false;
+  const firstBottom=Math.min(...kids.map(k=>k.offsetTop+k.offsetHeight));
+  return kids.some(k=>k.offsetTop>=firstBottom);
+}
+// Always measures from the full bar, so the outcome depends only on the space
+// available and the ResizeObserver below cannot oscillate between states.
+function fitTopbar(){
+  const bar=document.querySelector('.topbar');
+  if(!bar || !bar.clientWidth) return;   // not laid out (minimal shell, focus mode): keep the last state
+  const column=getComputedStyle(bar).flexDirection==='column';
+  bar.classList.remove('tb-compact','tb-wrap');
+  if(!topbarOverflows(bar, column)){
+    // The window grew past the need for the menu: its trigger just hid, so an
+    // open menu would be left floating with nothing to close it from.
+    if(_rowPop && _rowPop._for==='topbar-more') closeRowMenu();
+    return;
+  }
+  bar.classList.add('tb-compact');
+  // Still too wide with the overflow menu (a portrait phone): the classic
+  // floating bar may then wrap, so its pills land on a second row in view
+  // instead of past the right edge. Wrapping any earlier is what pushed the
+  // save pill off the first row on a laptop that had room once squeezed.
+  if(topbarOverflows(bar, column)) bar.classList.add('tb-wrap');
+}
+// Watches the bar (window, sidebar and layout changes) and its direct children
+// (the save and token pills change text, search slides open). applyUiLayout
+// moves pills in and out of the bar, so it calls this again to re-observe.
+let _tbFitObs=null, _tbFitRaf=0;
+function observeTopbar(){
+  const bar=document.querySelector('.topbar');
+  if(!bar) return;
+  if(window.ResizeObserver){
+    if(!_tbFitObs) _tbFitObs=new ResizeObserver(()=>{
+      if(!_tbFitRaf) _tbFitRaf=requestAnimationFrame(()=>{ _tbFitRaf=0; fitTopbar(); });
+    });
+    _tbFitObs.disconnect();
+    _tbFitObs.observe(bar);
+    [...bar.children].forEach(k=>_tbFitObs.observe(k));
+  }
+  fitTopbar();
+}
 $('#moreBtn')?.addEventListener('click', (e)=>{
   e.stopPropagation();
   const trigger=$('#moreBtn');
@@ -7398,7 +7452,15 @@ $('#moreBtn')?.addEventListener('click', (e)=>{
   closeRowMenu();
   const pop=document.createElement('div'); pop.className='row-pop'; pop._for='topbar-more';
   pop.style.visibility='hidden'; document.body.appendChild(pop);
-  TOPBAR_MORE_ITEMS.forEach(([id, icon, label])=>{
+  // Offer only what the full bar would show. Some of these buttons are hidden
+  // on purpose outside .tb-compact (#outlineBtn outside the outline layout,
+  // #tabsBtn on phones), and listing them anyway reopened features the layout
+  // had switched off. Lifting .tb-compact for one synchronous read never paints.
+  const bar=trigger.closest('.topbar');
+  bar.classList.remove('tb-compact');
+  const shown=TOPBAR_MORE_ITEMS.filter(([id])=>document.getElementById(id)?.offsetWidth>0);
+  bar.classList.add('tb-compact');
+  shown.forEach(([id, icon, label])=>{
     const item=document.createElement('button'); item.type='button';
     const ic=document.createElement('span'); ic.className='rp-ic'; ic.textContent=icon;
     item.appendChild(ic); item.appendChild(document.createTextNode(label));
@@ -7406,13 +7468,7 @@ $('#moreBtn')?.addEventListener('click', (e)=>{
     pop.appendChild(item);
   });
   positionRowPop(pop, trigger);
-  _rowPop=pop;
-  _rowPopOut=(ev)=>{ if(_rowPop && (!ev || ev.type!=='mousedown' || !_rowPop.contains(ev.target))) closeRowMenu(); };
-  setTimeout(()=>{
-    document.addEventListener('mousedown', _rowPopOut, true);
-    window.addEventListener('scroll', closeRowMenu, true);
-    window.addEventListener('blur', closeRowMenu);
-  },0);
+  armRowPop(pop, trigger);
 });
 $('#replaceToggle').onclick=()=>{ $('#searchWrap').classList.toggle('replace-mode'); $('#replace').focus(); };
 $('#search').addEventListener('input',e=>{ if(globalSearchMode) runGlobalSearch(e.target.value); else doSearch(e.target.value); });
@@ -7666,6 +7722,22 @@ function closeRowMenu(){
     _rowPopOut=null;
   }
 }
+// Shared: make `pop` the open row menu and close it on an outside mousedown,
+// scroll or blur. A mousedown on the trigger is not "outside": treating it as
+// outside closed the menu first, so the trigger's own click found nothing open
+// and reopened it, and every menu's toggle-off branch was dead code. Listeners
+// attach on the next tick so the click that opened the menu cannot close it.
+function armRowPop(pop, trigger){
+  _rowPop=pop;
+  _rowPopOut=(e)=>{
+    if(_rowPop && (!e || e.type!=='mousedown' || !(_rowPop.contains(e.target) || trigger.contains(e.target)))) closeRowMenu();
+  };
+  setTimeout(()=>{
+    document.addEventListener('mousedown', _rowPopOut, true);
+    window.addEventListener('scroll', closeRowMenu, true);
+    window.addEventListener('blur', closeRowMenu);
+  },0);
+}
 // Shared: position a fixed .row-pop portal below its trigger button,
 // right-aligned to the owning row, flipped above when out of room, clamped
 // to the viewport with an 8px margin (all divided by UI zoom). Used by
@@ -7713,13 +7785,7 @@ function openRowMenu(btn, m){
     if(map && map.id===m.id){ map=null; render(); }
     refreshList(); toast('Map deleted');
   };
-  _rowPop=pop;
-  _rowPopOut=(e)=>{ if(_rowPop && (!e || e.type!=='mousedown' || !_rowPop.contains(e.target))) closeRowMenu(); };
-  setTimeout(()=>{
-    document.addEventListener('mousedown', _rowPopOut, true);
-    window.addEventListener('scroll', closeRowMenu, true);
-    window.addEventListener('blur', closeRowMenu);
-  },0);
+  armRowPop(pop, btn);
 }
 async function refreshList(){
   let idx=[];
@@ -15184,6 +15250,7 @@ function applyUiLayout(id){
   }
   // The stage just changed size, so re-measure and re-render the canvas.
   renderTabs();   // tab strip visibility depends on the layout (hidden in floating shells)
+  observeTopbar();   // the bar's shape and contents just changed: re-decide the overflow menu
   if(map){
     render();
     // The switch moved the stage's edges - re-fit the map to the new canvas
@@ -15214,7 +15281,8 @@ function ensureMinimalMenu(){
   menu.id='minimalMenu'; menu.className='minimal-menu'; menu.hidden=true;
   const GH_SVG='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12c0 4.42 2.87 8.17 6.84 9.5.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.57 9.57 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85V21c0 .27.18.58.69.48A10 10 0 0 0 22 12c0-5.52-4.48-10-10-10z"/></svg>';
   const BRAIN_SVG='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 2a8 8 0 1 1-8 8 8 8 0 0 1 8-8zm-3.5 9.5l3-3 3 3-1.5 1.5-1.5-1.5-1.5 1.5z"/></svg>';
-  const SPARK_SVG='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 2a8 8 0 1 1-8 8 8 8 0 0 1 8-8zm0 3l1.5 3.5L17 12l-3.5 1.5L12 17l-1.5-3.5L7 12l3.5-1.5z"/></svg>';
+  // The launcher mirrors the sidebar's icons: the robot is MindSpark GPT, the brain is Memory Studio.
+  const BOT_SVG='<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><path d="M11 2h2v3h4a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h4zM7 7a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1zm2 3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm6 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM1 10h2v4H1zm20 0h2v4h-2z"/></svg>';
   const BUG_SVG='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 2a8 8 0 1 1-8 8 8 8 0 0 1 8-8zm-1 4h2v6h-2zm0 8h2v2h-2z"/></svg>';
   menu.innerHTML=
     '<button type="button" class="mm-item mm-has-sub" data-sub="minimalMapsSub"><span class="mm-ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 3L3 5.5V21l6-2.5 6 2.5 6-2.5V3l-6 2.5L9 3zm0 2.2l6 2.4v11.2l-6-2.4V5.2z"/></svg></span><span class="mm-lbl">Maps</span><span class="mm-caret">▸</span></button>'+
@@ -15389,8 +15457,8 @@ function minimalSubPlacement(rect, subW, subH, vw, vh, menuLeft, menuRight){
   // Open-source cascade.
   const ghSub=makeSub('minimalGhSub',
     '<a class="mm-item" data-ref="ghRepoLink"><span class="mm-ic">'+GH_SVG+'</span><span class="mm-lbl">GitHub</span></a>'+
-    '<a class="mm-item" data-ref="gptLink"><span class="mm-ic">'+BRAIN_SVG+'</span><span class="mm-lbl">MindSpark GPT</span></a>'+
-    '<a class="mm-item" data-ref="memoryStudioLink"><span class="mm-ic">'+SPARK_SVG+'</span><span class="mm-lbl">Mapped it? Now memorize it</span></a>'+
+    '<a class="mm-item" data-ref="gptLink"><span class="mm-ic">'+BOT_SVG+'</span><span class="mm-lbl">MindSpark GPT</span></a>'+
+    '<a class="mm-item" data-ref="memoryStudioLink"><span class="mm-ic">'+BRAIN_SVG+'</span><span class="mm-lbl">Mapped it? Now memorize it</span></a>'+
     '<a class="mm-item" data-ref="ghIssueLink"><span class="mm-ic">'+BUG_SVG+'</span><span class="mm-lbl">Report bug</span></a>');
   ghSub.addEventListener('click',e=>{
     const it=e.target.closest('.mm-item'); if(!it) return;
@@ -17975,9 +18043,7 @@ function openSharedByMeRowMenu(btn, sm){
   const sbmAc=pop.querySelector('[data-a="access"]');
   if(sbmAc) sbmAc.onclick=ev=>{ ev.stopPropagation(); closeRowMenu(); openAccessPanel(sm.room); };
   pop.querySelector('[data-a="forget"]').onclick=ev=>{ ev.stopPropagation(); closeRowMenu(); forgetSharedByMe(sm.room); };
-  _rowPop=pop;
-  _rowPopOut=(e)=>{ if(_rowPop && (!e || e.type!=='mousedown' || !_rowPop.contains(e.target))) closeRowMenu(); };
-  setTimeout(()=>{ document.addEventListener('mousedown', _rowPopOut, true); window.addEventListener('scroll', closeRowMenu, true); window.addEventListener('blur', closeRowMenu); },0);
+  armRowPop(pop, btn);
 }
 function openSharedRowMenu(btn, sm){
   const key='sh:'+(sm.room||sm.id);
@@ -18000,9 +18066,7 @@ function openSharedRowMenu(btn, sm){
   pop.querySelector('[data-a="copyview"]').onclick=async ev=>{ ev.stopPropagation(); closeRowMenu(); try{ await navigator.clipboard.writeText(base); toast('View link copied'); }catch(e){} };
   const ac=pop.querySelector('[data-a="access"]'); if(ac) ac.onclick=ev=>{ ev.stopPropagation(); closeRowMenu(); openAccessPanel(room); };
   pop.querySelector('[data-a="forget"]').onclick=ev=>{ ev.stopPropagation(); closeRowMenu(); if(sm.mine) forgetSharedByMe(room); else forgetSharedMap(room); };
-  _rowPop=pop;
-  _rowPopOut=(e)=>{ if(_rowPop && (!e || e.type!=='mousedown' || !_rowPop.contains(e.target))) closeRowMenu(); };
-  setTimeout(()=>{ document.addEventListener('mousedown', _rowPopOut, true); window.addEventListener('scroll', closeRowMenu, true); window.addEventListener('blur', closeRowMenu); },0);
+  armRowPop(pop, btn);
 }
 // Publish the current map to the cloud store; returns a short #shared=<id> link.
 async function publishSharedMap(){

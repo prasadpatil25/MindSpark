@@ -1223,14 +1223,14 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   body.ui-rail .topbar > .tb-group:last-child{margin-left:0}
   /* More-actions overflow. The right-hand cluster is nine buttons; on narrow
      windows the floating shells (classic/zen) are single-row and clip their
-     own right end, and the modern bar wraps to a second row. Below 1100px the
-     least-used actions collapse into a dropdown so the bar keeps search, theme
-     and the token/save pills on screen - see #moreBtn in app.js. */
+     own right end, and the modern bar wraps to a second row. When the bar
+     overflows, fitTopbar() in app.js sets .tb-compact and the least-used
+     actions collapse into a dropdown so the bar keeps search, theme and the
+     token/save pills on screen. It is measured, not a media query: the free
+     width depends on the sidebar and layout, not on the viewport alone. */
   .tb-more{display:none}
-  @media (max-width:1100px){
-    .topbar .tb-sec{display:none}
-    .topbar .tb-more{display:grid}
-  }
+  .topbar.tb-compact .tb-sec{display:none}
+  .topbar.tb-compact .tb-more{display:grid}
   .search-wrap{display:flex;align-items:center;background:none;border:none;border-radius:0;box-shadow:none;overflow:hidden;width:0;transition:width .22s,background-color .3s ease,border-color .3s ease,color .3s ease}
   .search-wrap.open{width:230px;background:var(--paper-2);border-radius:9px}
   .search-wrap.open.replace-mode{width:420px}
@@ -4658,8 +4658,12 @@ body.ui-classic .app{grid-template-columns:auto 1fr}
 body.ui-classic .stage{grid-column:2;grid-row:1}
 body.ui-classic .topbar{
   position:absolute;top:14px;left:14px;right:14px;z-index:30;pointer-events:none;
-  background:none;border-bottom:none;padding:0;flex-wrap:wrap;gap:8px;
+  background:none;border-bottom:none;padding:0;flex-wrap:nowrap;gap:8px;
 }
+/* Single row, as upstream: nowrap lets the title shrink so the save pill stays
+   on the first row. Wrapping is only the last resort fitTopbar() picks when
+   even the overflow menu leaves the bar too wide (a portrait phone). */
+body.ui-classic .topbar.tb-wrap{flex-wrap:wrap}
 body.ui-classic .topbar > *{pointer-events:auto}
 body.ui-classic .tb-group{background:var(--chrome);border:1px solid var(--chrome-edge);border-radius:12px;padding:4px;box-shadow:var(--shadow)}
 body.ui-classic .tb-sep{display:none}
