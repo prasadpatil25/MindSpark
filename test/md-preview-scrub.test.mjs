@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { loadFns, extractConst } from './helpers/load-app-fns.mjs';
 
 const { mdToHtml, scrubRawHtmlBlock } = loadFns(
-  ['mdToHtml', 'scrubRawHtmlBlock', 'mdInlineToHtmlWithMath', 'renderMdList', 'mdInlineToHtml', 'escapeHtml',
+  ['mdToHtml', 'stripIndent', 'scrubRawHtmlBlock', 'mdInlineToHtmlWithMath', 'renderMdList', 'mdInlineToHtml', 'escapeHtml',
    'parseMapOptionsFrontmatter', 'parseFrontmatterFields', 'frontmatterFieldsToHtml'],
   { INLINE_HTML_RE: extractConst('INLINE_HTML_RE'), ENTITY_RE: extractConst('ENTITY_RE') });
 const { safeImageUrl } = loadFns(['safeImageUrl'], { SAFE_IMAGE_RE: extractConst('SAFE_IMAGE_RE') });

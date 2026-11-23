@@ -37,7 +37,7 @@ function harness() {
     document: undefined,
   };
   const { addResponseAsNodes } = loadFns(
-    ['addResponseAsNodes', 'parseMarkdownOutline', 'parseMapOptionsFrontmatter', 'mdInlineToHtml', 'escapeHtml'], deps);
+    ['addResponseAsNodes', 'parseMarkdownOutline', 'stripIndent', 'parseMapOptionsFrontmatter', 'mdInlineToHtml', 'escapeHtml'], deps);
   const kidsOf = id => Object.values(map.nodes).filter(x => x.parent === id);
   return { map, calls, add: (pid, text) => addResponseAsNodes(pid, text), kidsOf };
 }

@@ -23,7 +23,7 @@ const REGISTRIES = {
 function lift(extra = {}) {
   let n = 0;
   return loadFns(
-    ['parseMarkdownOutline', 'parseMapOptionsFrontmatter', 'mapOptionsForMap', 'foldMapForLevel',
+    ['parseMarkdownOutline', 'stripIndent', 'parseMapOptionsFrontmatter', 'mapOptionsForMap', 'foldMapForLevel',
      'mdInlineToHtml', 'escapeHtml', 'metaFingerprint', 'parseFrontmatterFields', 'frontmatterFieldsToHtml'],
     { uid: () => 'p' + (++n), ...RE, ...REGISTRIES, ...extra });
 }

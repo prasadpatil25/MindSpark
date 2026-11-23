@@ -159,6 +159,15 @@ describe('topbarOverflows', () => {
     assert.equal(topbarOverflows(b, false), false);
   });
 
+  test('a bar packed to the end overflows past its start edge', () => {
+    // Mirror's bar is justify-content:flex-end. On a phone its first group (the
+    // sidebar toggle) and the title ran off the LEFT edge, where scrollWidth
+    // does not count, so the overflow menu never engaged.
+    const k = (left) => ({ offsetTop: 0, offsetHeight: 34, offsetWidth: 36, offsetLeft: left });
+    assert.equal(topbarOverflows(bar({ children: [k(-120), k(-80), k(200)] }), false), true);
+    assert.equal(topbarOverflows(bar({ children: [k(0), k(40)] }), false), false, 'a bar that starts at its edge fits');
+  });
+
   test('the rail column overflows downwards only', () => {
     assert.equal(topbarOverflows(bar({ scrollHeight: 700, clientHeight: 600 }), true), true);
     assert.equal(topbarOverflows(bar({ scrollWidth: 900 }), true), false);

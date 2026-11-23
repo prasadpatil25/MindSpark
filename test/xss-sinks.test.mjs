@@ -12,7 +12,7 @@ import { loadFns, extractConst } from './helpers/load-app-fns.mjs';
 
 const SRC = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const { mdToHtml, safeLinkHref } = loadFns(
-  ['mdToHtml', 'safeLinkHref', 'scrubRawHtmlBlock', 'mdInlineToHtmlWithMath', 'renderMdList', 'mdInlineToHtml',
+  ['mdToHtml', 'stripIndent', 'safeLinkHref', 'scrubRawHtmlBlock', 'mdInlineToHtmlWithMath', 'renderMdList', 'mdInlineToHtml',
    'escapeHtml', 'parseFrontmatterFields', 'frontmatterFieldsToHtml'],
   { INLINE_HTML_RE: extractConst('INLINE_HTML_RE'), ENTITY_RE: extractConst('ENTITY_RE') });
 

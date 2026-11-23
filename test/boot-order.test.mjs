@@ -35,3 +35,29 @@ describe('boot-time look application', () => {
     assert.ok(last < boot, 'the boot applyLook() is the one place the layer is synced at load');
   });
 });
+
+// Same shape of bug, in the interface layout. Restoring the split layout at
+// load opens the markdown pane, and toggleMdMode() reads READONLY, which was
+// declared ~1400 lines further down. `typeof READONLY` does not guard a `let`
+// in its dead zone, so it threw, the empty catch swallowed it, and the rest of
+// the switch (overflow menu, render, the phone sidebar toggle) never ran.
+describe('boot-time interface layout', () => {
+  const boot = at("applyUiLayout(localStorage.getItem('mindspark:uiLayout')");
+
+  test('READONLY is declared before the boot call', () => {
+    assert.ok(at('let READONLY') < boot, 'toggleMdMode() reads it while split is restored');
+    assert.equal(APP.indexOf('let READONLY'), APP.lastIndexOf('let READONLY'), 'declared once');
+  });
+
+  test('the bindings the layout switch calls through are declared before it', () => {
+    for (const decl of ['function applyUiLayout(', 'function placeSideToggle(', 'function sideToggleGroup(', 'function toggleMdMode(']) {
+      assert.ok(at(decl) < boot, decl + ' must come before the boot-time applyUiLayout()');
+    }
+  });
+
+  test('the boot call does not hide a failure', () => {
+    const line = APP.slice(boot, APP.indexOf('\n', boot));
+    assert.doesNotMatch(line, /catch\(e\)\{\s*\}/, 'an empty catch here hid a ReferenceError on every split load');
+    assert.match(line, /console\.warn/);
+  });
+});
