@@ -48,7 +48,7 @@ function build(map, opts) {
   return fns.buildMarkdown(map.rootId, opts);
 }
 function parse(md) {
-  const fns = loadFns(['parseMarkdownOutline', 'parseMapOptionsFrontmatter', 'mdInlineToHtml', 'escapeHtml', 'metaFingerprint'],
+  const fns = loadFns(['parseMarkdownOutline', 'stripIndent', 'parseMapOptionsFrontmatter', 'mdInlineToHtml', 'escapeHtml', 'metaFingerprint'],
     { uid: (() => { let n = 0; return () => 'p' + (++n); })(), ...RE });
   return fns.parseMarkdownOutline(md, 'Round trip');
 }
@@ -149,4 +149,141 @@ describe('markdown round trip', () => {
     assert.deepEqual(outline(plain).map(r => [r.depth, r.text]),
       [[0, 'Fruit'], [1, 'Citrus'], [2, 'Lemon'], [2, 'Orange'], [3, 'Navel'], [1, 'Berries']]);
   });
+});
+
+// A table, code, divider or raw HTML node is a block node, and it can have
+// children like any other. buildMarkdown used to return from a block without
+// walking them, so they were missing from the Markdown and the next edit in the
+// Markdown pane (which rebuilds the map from that text) deleted them: the
+// ToDo's map lost a YouTube link hung off a code block that way. The importer
+// also placed a divider or raw HTML block at the section level whatever its
+// indent, moving it out from under its bullet, and kept the indent inside the
+// raw HTML so every round trip pushed it two spaces further right.
+describe('block nodes keep their place and their children', () => {
+  // notesToMdBlocks parses through a <template>, which node has no DOM for. A
+  // stand-in that answers for the two blocks used here keeps the test on what
+  // it is about: where buildMarkdown puts blocks and their children.
+  const ROWS = ['| A | B |', '| --- | --- |', '| 1 | 2 |'];
+  const notesToMdBlocks = h => (/<table/i.test(h) ? [{ table: ROWS }] : /<pre/i.test(h) ? [{ code: 'tree\n  leaf' }] : []);
+  const RAW = '<details>\n<summary>More</summary>\n<p>Body</p>\n</details>';
+  function buildB(map) {
+    const childrenOf = id => Object.values(map.nodes).filter(n => n.parent === id).map(n => n.id);
+    const fns = loadFns(
+      ['buildMarkdown', '_nodeMeta', 'metaFingerprint', 'escapeHtml', 'nodeTextPlain', 'htmlToInlineMd', 'frontmatterNodeToYaml'],
+      { map, childrenOf, notesToMdBlocks, hasInlineMarkup: t => RE.INLINE_HTML_RE.test(t || '') || RE.ENTITY_RE.test(t || ''), ...RE });
+    return fns.buildMarkdown(map.rootId, { rich: true });
+  }
+  const src = { rootId: 'r', nodes: {
+    r:   { id: 'r',   text: 'Root',         parent: null },
+    p:   { id: 'p',   text: 'Polymathy',    parent: 'r' },
+    cd:  { id: 'cd',  text: 'code',         parent: 'p', html: '<pre><code>tree\n  leaf</code></pre>' },
+    yt:  { id: 'yt',  text: 'Video link',   parent: 'cd' },
+    tb:  { id: 'tb',  text: 'table',        parent: 'p', html: '<table><tr><td>1</td></tr></table>' },
+    tk:  { id: 'tk',  text: 'Table kid',    parent: 'tb' },
+    hr:  { id: 'hr',  text: '',             parent: 'p', hr: true },
+    hk:  { id: 'hk',  text: 'Under rule',   parent: 'hr' },
+    rw:  { id: 'rw',  text: 'details block', parent: 'p', html: RAW, raw: true },
+    rk:  { id: 'rk',  text: 'Under raw',    parent: 'rw' },
+    nx:  { id: 'nx',  text: 'Next',         parent: 'r' },
+  } };
+  const md = buildB(src);
+  const back = parse(md);
+
+  test('the children of every block node are written out', () => {
+    for (const t of ['Video link', 'Table kid', 'Under rule', 'Under raw']) {
+      assert.ok(md.split('\n').some(l => /^\s+- /.test(l) && l.trim() === '- ' + t), `"${t}" is missing from the Markdown:\n${md}`);
+    }
+  });
+
+  test('blocks and their children come back in the same place', () => {
+    assert.deepEqual(outline(back).map(r => [r.depth, r.text]), [
+      [0, 'Root'], [1, 'Polymathy'],
+      [2, 'code'], [3, 'Video link'],
+      [2, 'table'], [3, 'Table kid'],
+      [2, ''], [3, 'Under rule'],
+      [2, 'details block'], [3, 'Under raw'],
+      [1, 'Next'],
+    ]);
+  });
+
+  test('a raw HTML block comes back without the indent it was written at', () => {
+    const raw = Object.values(back.nodes).find(n => n.raw);
+    assert.equal(raw.html, RAW);
+  });
+
+  test('a second round trip writes the same Markdown', () => {
+    assert.equal(buildB(back), md, 'the text drifts on every round trip');
+  });
+});
+
+describe('paragraph nodes and notes blocks stay under their node', () => {
+  // Two shapes that used to leave their node on the first edit in the Markdown
+  // pane (which rebuilds the map from the text). A paragraph node under a bullet
+  // is written indented with no marker, and the importer read every plain line
+  // at the section level. Code and tables in a node's notes were written flush
+  // left, which ends the list, so they came back hung off the section.
+  const notesToMdBlocks = h => (/<table/i.test(h) ? [{ table: ['| A | B |', '| --- | --- |', '| 1 | 2 |'] }]
+    : /<pre/i.test(h) ? [{ code: 'x\n  y' }] : []);
+  function buildN(map) {
+    const childrenOf = id => Object.values(map.nodes).filter(n => n.parent === id).map(n => n.id);
+    const fns = loadFns(
+      ['buildMarkdown', '_nodeMeta', 'metaFingerprint', 'escapeHtml', 'nodeTextPlain', 'htmlToInlineMd', 'frontmatterNodeToYaml'],
+      { map, childrenOf, notesToMdBlocks, hasInlineMarkup: t => RE.INLINE_HTML_RE.test(t || '') || RE.ENTITY_RE.test(t || ''), ...RE });
+    return fns.buildMarkdown(map.rootId, { rich: true });
+  }
+  const src = { rootId: 'r', nodes: {
+    r:   { id: 'r',   text: 'Root',                    parent: null },
+    a:   { id: 'a',   text: 'Item',                    parent: 'r' },
+    pa:  { id: 'pa',  text: 'A plain paragraph.',      parent: 'a', para: true },
+    sb:  { id: 'sb',  text: 'Sibling after it',        parent: 'a' },
+    pp:  { id: 'pp',  text: 'Paragraph with a kid',    parent: 'a', para: true },
+    pk:  { id: 'pk',  text: 'Paragraph kid',           parent: 'pp' },
+    nc:  { id: 'nc',  text: 'Code in notes',           parent: 'r', notes: '<pre><code>x\n  y</code></pre>' },
+    nk:  { id: 'nk',  text: 'Its kid',                 parent: 'nc' },
+    nt:  { id: 'nt',  text: 'Table in notes',          parent: 'r', notes: '<table><tr><td>1</td></tr></table>' },
+    z:   { id: 'z',   text: 'Last',                    parent: 'r' },
+  } };
+  const md = buildN(src);
+  const back = parse(md);
+  const rows = outline(back).map(r => [r.depth, r.text]);
+
+  test('a paragraph node under a bullet comes back under that bullet', () => {
+    assert.ok(md.split('\n').includes('  A plain paragraph.'), `written indented, with no marker:\n${md}`);
+    assert.deepEqual(rows.slice(0, 6), [
+      [0, 'Root'], [1, 'Item'],
+      [2, 'A plain paragraph.'], [2, 'Sibling after it'],
+      [2, 'Paragraph with a kid'], [3, 'Paragraph kid'],
+    ], `outline:\n${JSON.stringify(rows)}\nfrom:\n${md}`);
+    const p = Object.values(back.nodes).find(n => n.text === 'A plain paragraph.');
+    assert.equal(p.para, true, 'it must stay a paragraph, not turn into a bullet');
+  });
+
+  test('an indented paragraph followed by a bullet is not taken as a lead-in', () => {
+    const sib = Object.values(back.nodes).find(n => n.text === 'Sibling after it');
+    assert.equal(back.nodes[sib.parent].text, 'Item', 'the next bullet was re-parented under the paragraph');
+  });
+
+  test('code and tables in notes are written at the note indent', () => {
+    const L = md.split('\n');
+    assert.ok(L.includes('  ```') && L.includes('  x') && L.includes('    y'), `the fence is not indented under its item:\n${md}`);
+    assert.ok(L.includes('  | A | B |'), `the table is not indented under its item:\n${md}`);
+    assert.ok(!L.some(l => /^(```|\|)/.test(l)), `a notes block was written flush left, which ends the list:\n${md}`);
+  });
+
+  test('code and tables in notes come back under their node, not the section', () => {
+    assert.deepEqual(rows.slice(6), [
+      [1, 'Code in notes'], [2, 'code'], [2, 'Its kid'],
+      [1, 'Table in notes'], [2, 'table'],
+      [1, 'Last'],
+    ], `outline:\n${JSON.stringify(rows)}\nfrom:\n${md}`);
+    const code = Object.values(back.nodes).find(n => n.text === 'code');
+    assert.equal(code.html, '<pre><code>x\n  y</code></pre>', 'only the note indent comes off the code');
+  });
+});
+
+test('a flush-left lead-in line above a list still becomes the parent of that list', () => {
+  // The indented-paragraph rule above must not reach this shape, which is how
+  // LLM answers and READMEs group bullets under a bold line.
+  const rows = outline(parse('# Doc\n\n**Editing**\n- one\n- two\n')).map(r => [r.depth, r.text]);
+  assert.deepEqual(rows, [[0, 'Doc'], [1, '<b>Editing</b>'], [2, 'one'], [2, 'two']], JSON.stringify(rows));
 });

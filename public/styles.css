@@ -3715,14 +3715,25 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
     .tb.wide{padding:0 10px}
     .save-pill{display:none}                        /* hide on phones to save room */
     .user-pill span{display:none}                   /* avatar only */
-    .search-wrap.open{width:140px}
+    /* The open field shares its width with the all-maps and replace toggles,
+       so 140px left about 40px to type into (four letters of a query). The
+       bar wraps on a phone, so the wider field takes a row of its own. */
+    .search-wrap.open{width:min(62vw, 230px)}
     .search-wrap.open.replace-mode{width:min(86vw,330px)}
     .donate-btn{display:flex}
 
-    .hint{display:none}
+    /* Must outrank `.statusbar .hint{display:flex}`: a bare `.hint` loses, and
+       the long one-line shortcut list then pushes the overview (and its zoom
+       row) past the right edge. */
+    .statusbar .hint{display:none}
 
     /* Format toolbar wraps and scrolls on narrow screens */
     .nodebar{max-width:calc(100vw - 16px); flex-wrap:wrap}
+    /* The groups must wrap as well. At 320px the format row (size, B I S U,
+       lists, align, colours) is wider than the capped bar, and a nowrap group
+       ran its last buttons out past the bar's dark background - and in the
+       rail layout past the screen edge, where the clamp cannot see them. */
+    .nodebar .nb-group{flex-wrap:wrap; min-width:0}
     .nodebar button{width:34px; height:34px; min-width:34px}
 
     /* Overview chip tighter on phones; minimap hidden */
@@ -3733,7 +3744,14 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
     /* Cards fit phone width */
     .login-card{padding:24px 22px}
     .login-brand h1{font-size:22px}
-    .notes-popup{width:96vw}
+    /* A sticky note is fixed-width and its editor used to cap at 50vh, so on a
+       short screen (or with the phone keyboard open) the Save row slid past the
+       bottom edge. Let it become a column that shrinks its editor instead. */
+    .notes-popup{
+      width:96vw; display:flex; flex-direction:column;
+      max-height:calc(100dvh / var(--ui-zoom, 1) - 16px);
+    }
+    .notes-popup .np-editor{flex:1 1 auto; min-height:0; max-height:none}
     .donate-card{padding:24px 22px; border-radius:14px}
     .donate-head h2{font-size:20px}
 
@@ -4454,6 +4472,20 @@ body.ui-classic.tabs-on.md-ready .stage{grid-column:3;grid-row:2}
   .diff-row .d-arrow{ margin:0 6px; color:var(--ink-soft); }
   .diff-empty{ padding:16px 14px; color:var(--ink-soft); }
 
+  /* Panels that are sized for a desktop window keep a fixed width/row and would
+     hang off a phone screen. Cap them to the viewport and let the flex rows wrap
+     rather than clip their outer buttons. */
+  @media (max-width:720px){
+    .hist-panel, .diff-panel{ left:8px; right:8px; width:auto; max-width:none; }
+    .bp-panel{ min-width:0; }
+    .formula-ac{ max-width:calc(100vw - 16px); }
+    .tpl-pop{ width:calc(100vw - 16px); max-width:340px; }
+    .empty .e-card{ max-width:calc(100vw - 32px); }
+    .toast{ max-width:calc(100% - 24px); text-align:center; }
+    .bulk-bar{ max-width:calc(100vw - 16px); flex-wrap:wrap; justify-content:center; row-gap:2px; }
+    .hist-banner{ max-width:calc(100vw - 16px); flex-wrap:wrap; justify-content:center; row-gap:6px; }
+  }
+
   /* OAuth ("Sign in with GitHub") button on the login overlay */
   .login-oauth{ margin:2px 0 4px; }
   .oauth-btn{ display:flex; align-items:center; justify-content:center; gap:9px; width:100%; padding:11px 14px;
@@ -4797,7 +4829,7 @@ body.ui-zen .topbar{
   position:absolute;top:14px;left:50%;right:auto;z-index:30;pointer-events:none;
   display:flex;align-items:center;gap:6px;flex-wrap:nowrap;overflow:hidden;
   background:var(--chrome);border:1px solid var(--chrome-edge);border-radius:12px;
-  padding:4px 8px;box-shadow:var(--shadow);max-width:92vw;width:max-content;
+  padding:4px 8px;box-shadow:var(--shadow);width:min(max-content, 92vw);min-width:0;
   opacity:0;transform:translateX(-50%) translateY(-12px);
   transition:opacity .18s ease, transform .18s ease;
 }
@@ -4807,6 +4839,19 @@ body.ui-zen.zen-chrome .topbar{opacity:1;transform:translateX(-50%) translateY(0
    Declared BEFORE the focus-mode rules below so focus mode still hides it. */
 body.ui-zen.zen-pinned .topbar{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
 body.ui-zen #zenPin.on{background:var(--accent);color:var(--accent-fg, #fff)}
+/* A touch screen has no hover, so the top-edge reveal never fired and the
+   strip - and with it the sidebar toggle, search, theme and More - could not
+   be reached at all. Treat it as pinned there; the pin has nothing left to
+   toggle. The :not() keeps focus mode able to hide it. Phones get the same
+   in the 720px block, which also drops the horizontal centring. */
+@media (hover:none){
+  body.ui-zen:not(.focus-mode) .topbar{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
+  body.ui-zen #zenPin{display:none}
+}
+/* Single row, like classic, until fitTopbar() finds that even the overflow
+   menu leaves it too wide (a portrait phone). Clipping then hid search,
+   theme, More and the pin past the right edge. */
+body.ui-zen .topbar.tb-wrap{flex-wrap:wrap}
 body.ui-zen .tb-group{background:none;border:none;border-radius:0;padding:0;box-shadow:none}
 body.ui-zen .tb-sep{width:1px;height:22px;background:var(--chrome-edge);flex:0 0 auto}
 body.ui-zen .search-wrap{background:transparent;border:none;box-shadow:none;flex:0 0 auto}
@@ -5094,9 +5139,12 @@ body.ui-outline.shared-view .stage{grid-column:2;grid-row:3}
   /* Full-width strip on phones. The insets stretch the bar, so the desktop
      translateX(-50%) centering must go too - it shifted the strip half its
      own width off-screen (left edge unreachable). */
-  body.ui-zen .topbar{top:10px;left:10px;right:10px;width:auto;max-width:none;transform:translateY(-12px)}
+  body.ui-zen .topbar{top:10px;left:10px;right:10px;width:auto;max-width:none;transform:translateY(-12px);overflow:hidden}
   body.ui-zen.zen-chrome .topbar,
   body.ui-zen.zen-pinned .topbar{transform:translateY(0)}
+  /* Always shown on phones: see the (hover:none) block in the zen section. */
+  body.ui-zen:not(.focus-mode) .topbar{opacity:1;transform:translateY(0);pointer-events:auto}
+  body.ui-zen #zenPin{display:none}
   body.ui-split .app{grid-template-columns:1fr}
   body.ui-split .topbar{grid-column:1;grid-row:1}
   body.ui-split .stage{grid-column:1;grid-row:3}
@@ -5111,6 +5159,40 @@ body.ui-outline.shared-view .stage{grid-column:2;grid-row:3}
   body.ui-rail .side{grid-column:1;grid-row:1;width:min(280px, 86vw)}
   body.ui-rail .topbar{grid-column:1;grid-row:1;padding:8px 2px}
   body.ui-rail .stage{grid-column:2;grid-row:1}
+  /* The phone sidebar is an off-canvas overlay that keeps its width while
+     collapsed (the generic rule above), but the desktop shells' collapsed rule
+     is `width:0 !important` and outranks it. The phone overlay also forces the
+     tabs, active pane and footer back on, so a 0px sidebar spilled them over
+     the canvas: the Maps/Templates tabs sat on the map title and the footer
+     links ran down the left edge. Classic has its own override above. */
+  body.ui-rail .side.collapsed{width:min(280px, 86vw) !important}
+  body.ui-zen .side.collapsed{width:min(320px, 86vw) !important}
+  /* Zen leaves the bottom-left corner free on phones (hint and minimap are
+     hidden), and the top-right is where the now always-visible strip ends. */
+  body.ui-zen .save-pill{top:auto;bottom:14px;left:14px;right:auto}
+  /* The dock shares its one row with the sidebar toggle and the Maps/Templates
+     tabs. With the zoom slider as well, the row is about 30px wider than a
+     360px phone and fit-to-screen and the chip's chevron hang off the right
+     edge. The -/+ buttons and the percentage still zoom. */
+  body.ui-dock #zoomSlider{display:none}
+  body.ui-dock .statusbar{gap:6px;padding:6px 8px}   /* the desktop 12px gaps alone cost 10px too many at 320px */
+  /* The rail's desktop replace field is 420px wide, which overflows a phone and
+     beat the 330px phone cap by specificity. */
+  body.ui-rail .topbar .search-wrap.open.replace-mode{width:min(86vw,330px)}
+  /* These layouts size the markdown pane at 40vw, which is about 144px on a
+     phone - narrower than the pane's own 240px resize minimum - and they beat
+     the phone overlay width by specificity. Use the same full-width overlay as
+     every other layout. */
+  body.ui-dock #mdPane,
+  body.ui-dock.md-mode #mdPane,
+  body.ui-minimal #mdPane,
+  body.ui-minimal.md-mode #mdPane,
+  body.ui-split #mdPane{width:min(94vw,560px)}
+  /* Split mode pins the pane open on desktop, so it hides both the toolbar
+     toggle and the close button. On a phone that leaves a 94vw overlay with no
+     way out; give both controls back. */
+  body.ui-split #mdToggle{display:grid}
+  body.ui-split #mdPane .md-close{display:inline-block}
 }
 
 /* ===== Smooth theme switching =====

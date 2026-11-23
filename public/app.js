@@ -1307,6 +1307,13 @@ function positionPopup(pop, anchor, opts){
 
 /* ---------- app state ---------- */
 let map=null;                 // current map {id,title,color,rootId,nodes:{}}
+// True while viewing a shared (read-only) map; see ASYNC SHARING. Declared up
+// here, not beside the sharing code, because the boot-time applyUiLayout()
+// reads it: the split layout opens the markdown pane, and toggleMdMode() checks
+// it. Declared ~1400 lines after that call it was still in its temporal dead
+// zone (`typeof` does not guard a `let`), so restoring split at load threw and
+// skipped the rest of the switch, overflow menu included.
+let READONLY = false;
 let view={x:80,y:0,k:1};      // pan/zoom
 let userZoom=null;            // user-chosen camera zoom, preserved across map switches
 // The whole UI may be scaled by CSS `zoom` (display size). getBoundingClientRect
@@ -4316,14 +4323,32 @@ function _hlLine(raw){
   s=s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (m,p,u)=>p+'<span class="hl-url">'+u+'</span>');              // bare URLs
   return s;
 }
+// A block written under a bullet carries that bullet's indent on every line. The
+// indent is scaffolding, not content, so it comes off; anything deeper is the
+// block's own (an ASCII diagram's columns) and stays. A line indented less than
+// the block's first line is left alone rather than cut into.
+function stripIndent(line, ind){ return line.startsWith(ind) ? line.slice(ind.length) : line; }
+// `items` holds bullet lines, plus {block, ind} entries: an already-rendered
+// block (table, code, quote, raw HTML...) that sat indented under a bullet. A
+// block belongs to the nearest shallower item, in order among its sub-items, and
+// never takes children itself: a deeper bullet after it still hangs off the item.
 function renderMdList(items, itemFn){
   const root={children:[],depth:-1}; const stack=[root];
-  items.forEach(raw=>{ const ind=(raw.match(/^\s*/)||[''])[0].replace(/\t/g,'  ').length; const depth=Math.floor(ind/2); const ordered=/^\s*\d+\./.test(raw);
-    const node={text:itemFn(raw),children:[],depth,ordered};
+  items.forEach(raw=>{
+    const isBlock=typeof raw!=='string';
+    const ind=isBlock ? raw.ind : (raw.match(/^\s*/)||[''])[0].replace(/\t/g,'  ').length;
+    const depth=Math.floor(ind/2);
     while(stack.length>1 && stack[stack.length-1].depth>=depth) stack.pop();
+    if(isBlock){ stack[stack.length-1].children.push({block:raw.block}); return; }
+    const node={text:itemFn(raw),children:[],depth,ordered:/^\s*\d+\./.test(raw)};
     stack[stack.length-1].children.push(node); stack.push(node); });
-  const emit=n=>{ if(!n.children.length) return ''; const tag=n.children[0].ordered?'ol':'ul';
-    return '<'+tag+'>'+n.children.map(c=>'<li>'+c.text+emit(c)+'</li>').join('')+'</'+tag+'>'; };
+  // A run of consecutive items is one <ul>/<ol>; a block between them ends the
+  // run, so the list resumes after it rather than wrapping the block in an <li>.
+  const emit=n=>{ let html='', run=[];
+    const flush=()=>{ if(!run.length) return; const tag=run[0].ordered?'ol':'ul';
+      html+='<'+tag+'>'+run.map(c=>'<li>'+c.text+emit(c)+'</li>').join('')+'</'+tag+'>'; run=[]; };
+    n.children.forEach(c=>{ if(c.block!=null){ flush(); html+=c.block; } else run.push(c); });
+    flush(); return html; };
   return emit(root);
 }
 // Display-only variant of mdInlineToHtml that also renders $...$ / $$...$$ LaTeX to MathML
@@ -4398,6 +4423,26 @@ function mdToHtml(md){
   const item=x=>mdInlineToHtmlWithMath(x.replace(/^\s*([-*+]|\d+\.)\s+/,'').replace(/^\[[ ]\]\s/,'\u2610 ').replace(/^\[[xX]\]\s/,'\u2611 '));
   const cells=r=>r.replace(/^\s*\|?/,'').replace(/\|?\s*$/,'').split('|').map(c=>c.trim());
   const tbl=rows=>'<table><thead><tr>'+cells(rows[0]).map(h=>'<th>'+mdInlineToHtmlWithMath(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.slice(2).map(r=>'<tr>'+cells(r).map(c=>'<td>'+mdInlineToHtmlWithMath(c)+'</td>').join('')+'</tr>').join('')+'</tbody></table>';
+  const HTML_OPEN=/^\s*<(table|div|details|figure|section|dl|img|hr|blockquote|p|h[1-6]|ul|ol)\b/i;
+  const BULLET=/^\s*([-*+]|\d+\.)\s+/, HR=/^\s*([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+  const isTableAt=k=>L[k].includes('|') && k+1<L.length && /-/.test(L[k+1]) && /^[\s|:\-]+$/.test(L[k+1]);
+  // Where the block starting at L[k] ends (exclusive). The branches below use it
+  // and so does the list scan, which has to lift a whole block out from under a
+  // bullet before it knows what kind of block it is.
+  // The closing fence of the fence opened at L[k], or L.length if it never closes.
+  const fenceClose=k=>{ let j=k+1; while(j<L.length && !/^\s*(```+|~~~+)\s*$/.test(L[j])) j++; return j; };
+  const blockEnd=k=>{
+    const ln=L[k];
+    if(/^\s*(```+|~~~+)/.test(ln)) return Math.min(fenceClose(k)+1, L.length);
+    if(/^\s*>/.test(ln)){ let j=k+1; while(j<L.length && /^\s*>/.test(L[j])) j++; return j; }
+    if(isTableAt(k)){ let j=k; while(j<L.length && L[j].includes('|') && L[j].trim()) j++; return j; }
+    const hm=ln.match(HTML_OPEN);
+    if(hm){ const close=new RegExp('</'+hm[1]+'>','i');
+      if(/^(img|hr)$/i.test(hm[1]) || close.test(ln) || /\/>\s*$/.test(ln)) return k+1;
+      for(let j=k+1;j<L.length;j++) if(close.test(L[j])) return j+1;
+      return k+1; }   // never closed: just this line, rather than the rest of the document
+    return k+1;
+  };
   while(i<L.length){
     let line=L[i];
     if(!line.trim()){ i++; continue; }
@@ -4405,30 +4450,33 @@ function mdToHtml(md){
     // indentation is scaffolding, not content - strip it off every line the way
     // parseMarkdownOutline does, or an indented ASCII diagram renders two
     // columns further right than it was written.
-    let fm=line.match(/^(\s*)(```+|~~~+)(.*)$/);
-    if(fm){ const ind=fm[1], buf=[]; let j=i+1;
-      while(j<L.length && !/^\s*(```+|~~~+)\s*$/.test(L[j])){ buf.push(L[j].startsWith(ind)?L[j].slice(ind.length):L[j]); j++; }
-      out.push('<pre class="mp-code"><code>'+esc(buf.join('\n'))+'</code></pre>'); i=j+1; continue; }
+    let fm=line.match(/^(\s*)(```+|~~~+)/);
+    if(fm){ const c=fenceClose(i);
+      out.push('<pre class="mp-code"><code>'+esc(L.slice(i+1,c).map(l=>stripIndent(l,fm[1])).join('\n'))+'</code></pre>'); i=c+1; continue; }
     let h=line.match(/^(#{1,6})\s+(.*)$/);
     if(h){ out.push('<h'+h[1].length+'>'+mdInlineToHtmlWithMath(h[2])+'</h'+h[1].length+'>'); i++; continue; }
-    if(/^\s*([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)){ out.push('<hr>'); i++; continue; }
-    if(/^\s*>/.test(line)){ const buf=[]; while(i<L.length && /^\s*>/.test(L[i])){ buf.push(L[i].replace(/^\s*>\s?/,'')); i++; } out.push('<blockquote>'+mdInlineToHtmlWithMath(buf.join('<br>'))+'</blockquote>'); continue; }
-    if(line.includes('|') && i+1<L.length && /-/.test(L[i+1]) && /^[\s|:\-]+$/.test(L[i+1])){ const rows=[]; while(i<L.length && L[i].includes('|') && L[i].trim()){ rows.push(L[i]); i++; } out.push(tbl(rows)); continue; }
-    if(/^\s*<(table|div|details|figure|section|img|hr|blockquote|p|h[1-6]|ul|ol)\b/i.test(line)){ const tm=line.match(/^\s*<([a-z0-9]+)/i), tag=tm?tm[1].toLowerCase():''; const buf=[line];
-      const VOID=/^(img|hr|br|input|source|col|area|embed|track|wbr|link|meta)$/;
-      if(tag && !VOID.test(tag) && !new RegExp('</'+tag+'>','i').test(line) && !/\/>\s*$/.test(line)){ let j=i+1, found=false; while(j<L.length){ buf.push(L[j]); if(new RegExp('</'+tag+'>','i').test(L[j])){ found=true; j++; break; } j++; } if(found){ i=j; } else { buf.length=1; i++; } } else i++;
-      out.push(scrubRawHtmlBlock(buf.join('\n'))); continue; }
+    if(HR.test(line)){ out.push('<hr>'); i++; continue; }
+    if(/^\s*>/.test(line)){ const j=blockEnd(i); out.push('<blockquote>'+mdInlineToHtmlWithMath(L.slice(i,j).map(l=>l.replace(/^\s*>\s?/,'')).join('<br>'))+'</blockquote>'); i=j; continue; }
+    if(isTableAt(i)){ const j=blockEnd(i); out.push(tbl(L.slice(i,j))); i=j; continue; }
+    if(HTML_OPEN.test(line)){ const j=blockEnd(i); out.push(scrubRawHtmlBlock(L.slice(i,j).join('\n'))); i=j; continue; }
     let im=line.match(/^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$/);
     if(im){ out.push('<img alt="'+esc(im[1])+'" src="'+esc(im[2])+'">'); i++; continue; }
-    // The continuation arm of this scan takes ANY line indented two spaces or
-    // more, which used to swallow a fenced code block nested under a bullet -
-    // every line of it, fences included, came back out as its own <li>. That is
-    // the exact shape buildMarkdown emits for a code node, so the preview
-    // mangled the app's own output while the canvas rendered the same block
-    // correctly. Stop the list at a fence and let the branch above take it on
-    // the next pass: the block lands after the list, which is already where the
-    // unindented and blank-line-separated spellings put it.
-    if(/^\s*([-*+]|\d+\.)\s+/.test(line)){ const items=[]; while(i<L.length && !/^\s*(```+|~~~+)/.test(L[i]) && (/^\s*([-*+]|\d+\.)\s+/.test(L[i]) || (L[i].trim() && /^\s{2,}\S/.test(L[i])))){ items.push(L[i]); i++; } out.push(renderMdList(items,item)); continue; }
+    // A bullet's own content follows it, indented: buildMarkdown writes a table,
+    // code, quote, raw HTML, image or rule node there, and a paragraph node too.
+    // Each is rendered as a block inside its parent item. The scan used to take
+    // every indented line as one more list item, so a table under a bullet came
+    // out one bullet per row (a fence had the same bug and was patched alone by
+    // ending the list at it, which still lifted the block out of its item).
+    if(BULLET.test(line)){ const items=[];
+      while(i<L.length){ const ln=L[i];
+        if(BULLET.test(ln) && !HR.test(ln)){ items.push(ln); i++; continue; }
+        if(!ln.trim() || !/^\s{2,}\S/.test(ln)) break;
+        const ind=ln.match(/^\s*/)[0], j=blockEnd(i);
+        // Only the block's own indent is scaffolding; a code block keeps its inner columns.
+        const body=L.slice(i,j).map(l=>stripIndent(l,ind)).join('\n');
+        items.push({ ind:ind.replace(/\t/g,'  ').length, block:mdToHtml(body) });
+        i=j; }
+      out.push(renderMdList(items,item)); continue; }
     const buf=[line]; i++; while(i<L.length && L[i].trim() && !/^\s*(#{1,6}\s|[-*+]\s|\d+\.\s|>|```|~~~|\||<)/.test(L[i])){ buf.push(L[i]); i++; }
     out.push('<p>'+mdInlineToHtmlWithMath(buf.join(' '))+'</p>');
   }
@@ -7398,12 +7446,19 @@ const TOPBAR_MORE_ITEMS = [
 // A row bar overflows when content runs past its edge (the nowrap floating
 // shells) or when a child drops below the first line (the wrapping modern
 // bar). The rail is a column and overflows downwards.
+//
+// scrollWidth only grows for content past the END edge. Mirror packs its bar
+// with justify-content:flex-end, so on a phone it overflowed past the START
+// edge instead: scrollWidth stayed equal to clientWidth, the menu never
+// engaged, and the sidebar toggle and title sat off-screen to the left. A
+// child with a negative offsetLeft is that case.
 function topbarOverflows(bar, column){
   if(column) return bar.scrollHeight > bar.clientHeight + 1;
   if(bar.scrollWidth > bar.clientWidth + 1) return true;
   // Hidden children and the zero-height spacer say nothing about wrapping.
   const kids=[...bar.children].filter(k=>k.offsetWidth>0 && k.offsetHeight>0);
   if(!kids.length) return false;
+  if(kids.some(k=>k.offsetLeft < -1)) return true;
   const firstBottom=Math.min(...kids.map(k=>k.offsetTop+k.offsetHeight));
   return kids.some(k=>k.offsetTop>=firstBottom);
 }
@@ -7668,9 +7723,8 @@ function updateBreadcrumb(){
   if(path.length<=1){ if(bc._prevHtml){ bc.innerHTML=''; bc._prevHtml=''; } bc._has=false; syncBreadcrumb(); return; }   // nothing to show at the root
   bc._has=true;
   const html=path.map((id,i)=>{
-    const label=nodeTextPlain(map.nodes[id].text||'')||'(untitled)';
-    const short=label.length>22 ? label.slice(0,22)+'…' : label;
-    const crumb=`<button class="bc-crumb${id===sel?' current':''}" data-id="${id}" title="${escapeHtml(label)}">${escapeHtml(short)}</button>`;
+    const lab=crumbLabel(map.nodes[id]), label=lab.text||'(untitled)';
+    const crumb=`<button class="bc-crumb${id===sel?' current':''}" data-id="${id}" title="${escapeHtml(label)}">${crumbHtml(label, lab.math)}</button>`;
     return crumb + (i<path.length-1 ? '<span class="bc-sep">›</span>' : '');
   }).join('');
   // render() runs on every interaction; skip the innerHTML write (and the
@@ -7681,6 +7735,41 @@ function updateBreadcrumb(){
     bc.querySelectorAll('.bc-crumb').forEach(b=>b.onclick=()=>{ select(b.dataset.id,false); centreOn(b.dataset.id); });
   }
   syncBreadcrumb();
+}
+// What a crumb says for a node: {text, math}. A block node has no words of its
+// own - its text is a placeholder ("table", "code", "details block") or empty
+// for a divider - so its crumb read "table" or "(untitled)", and two tables on
+// one path looked the same. It names the kind instead, plus what tells one apart
+// from another: a table's header row, the code's language and first line, a raw
+// block's text. `math` is false for code, where a $ is a shell variable or a
+// price, not a formula.
+function crumbLabel(n){
+  if(n.hr) return { text:'Divider', math:false };
+  if(n.frontmatter) return { text:'Frontmatter', math:false };
+  if(!n.html) return { text:nodeTextPlain(n.text||''), math:true };
+  const tpl=document.createElement('template'); tpl.innerHTML=n.html;   // inert parse: nothing loads or runs
+  const c=tpl.content, words=el=>(el.textContent||'').replace(/\s+/g,' ').trim();
+  const row=c.querySelector('tr');
+  if(row) return { text:'▦ '+([...row.children].map(words).filter(Boolean).join(' · ') || 'Table'), math:true };
+  const pre=c.querySelector('pre');
+  if(pre){ const first=(pre.textContent||'').split('\n').map(s=>s.trim()).find(Boolean)||'';
+    return { text:'⌗ '+([n.lang, first].filter(Boolean).join(': ') || 'Code'), math:false }; }
+  return { text:words(c) || 'HTML block', math:true };
+}
+// A crumb's inner HTML: escaped, with $...$ / $$...$$ rendered as MathML the way
+// the canvas renders the node, so a formula no longer shows as its LaTeX source.
+// A plain label is cut at 22 characters as before. One holding math is not cut,
+// since a cut could split a formula; the crumb's CSS max-width and ellipsis
+// bound it instead. Display math is drawn inline: a crumb is one line.
+function crumbHtml(label, math){
+  if(!math || !containsMath(label)) return escapeHtml(label.length>22 ? label.slice(0,22)+'…' : label);
+  const re=new RegExp(MATH_DELIM_RE.source,'g'); let out='', last=0, m;
+  while((m=re.exec(label))){
+    let ml=null; try{ ml=latexToMathML(m[1]!=null ? m[1] : m[2], false); }catch(e){ ml=null; }
+    out+=escapeHtml(label.slice(last, m.index)) + (ml || escapeHtml(m[0]));   // latexToMathML escapes its own text
+    last=m.index+m[0].length;
+  }
+  return out+escapeHtml(label.slice(last));
 }
 function syncBreadcrumb(){
   const bc=_breadcrumbEl; if(!bc) return;
@@ -7891,8 +7980,17 @@ function showNotesEditor(nodeId){
   // r.left/width/top are raw px (scale with UI-level display size); style.left/top are
   // read as logical px, so divide through by the same factor _stageSize()/_stagePoint()
   // already use before mixing them with the (logical) -240/70 constants below.
-  popup.style.left = (r.left/z + r.width/z/2 - 240) + 'px';
-  popup.style.top  = (r.top/z  + 70) + 'px';
+  //
+  // The note is 340px wide, so "stage centre - 240" assumes a desktop window. On a
+  // phone (stage ~360px wide) that left edge goes NEGATIVE and the toolbar plus the
+  // start of every line are clipped off-screen - the same bug positionPopup() exists
+  // to prevent for every other popover. Measure the real box after appending and pull
+  // it back inside the viewport. Kept in logical px because style.left/top are.
+  //
+  // Fill the note first and measure after: a long note grows past the empty
+  // editor's min-height, and clamping against that smaller box would still let
+  // its Save row fall below the screen. The read-only variant also removes a row.
+  popup.style.visibility='hidden';
   document.body.appendChild(popup);
   popup.addEventListener('mousedown',e=>e.stopPropagation());
   const editor=popup.querySelector('.np-editor');
@@ -7906,6 +8004,16 @@ function showNotesEditor(nodeId){
     popup.querySelectorAll('.np-save,.np-clear').forEach(b=>b.remove());
     const cb=popup.querySelector('.np-cancel'); if(cb) cb.textContent='Close';
   }
+  const pr=popup.getBoundingClientRect();
+  const vw=window.innerWidth/z, vh=window.innerHeight/z;
+  const margin=8;
+  let left = r.left/z + r.width/z/2 - 240;
+  let top  = r.top/z + 70;
+  left = Math.max(margin, Math.min(left, vw - pr.width/z - margin));
+  top  = Math.max(margin, Math.min(top,  vh - pr.height/z - margin));
+  popup.style.left = left + 'px';
+  popup.style.top  = top + 'px';
+  popup.style.visibility='';
   // Math renders in place as it is typed (see npRenderAtCaret). A formula the
   // user opened for editing (click, or Backspace onto it) is the one text node
   // the caret is in; it renders again once the caret leaves it.
@@ -9924,7 +10032,7 @@ function parseMarkdownOutline(text, filename){
     const fence = line.match(/^(\s*)(`{3,}|~{3,})(.*)$/);
     if(fence){
       const ind=fence[1], fch=fence[2][0], flen=fence[2].length, buf=[]; let j=i+1;
-      while(j<L.length){ const cl=L[j].match(/^\s*(`{3,}|~{3,})\s*$/); if(cl && cl[1][0]===fch && cl[1].length>=flen) break; buf.push(L[j].startsWith(ind)?L[j].slice(ind.length):L[j]); j++; }
+      while(j<L.length){ const cl=L[j].match(/^\s*(`{3,}|~{3,})\s*$/); if(cl && cl[1][0]===fch && cl[1].length>=flen) break; buf.push(stripIndent(L[j],ind)); j++; }
       const lang=fence[3].trim();
       add(lang||'code', base() + 1 + Math.floor(ind.length/2), null, { html:'<pre><code>'+escHtml(buf.join('\n'))+'</code></pre>', lang:lang||'' });
       i=j; continue;   // skip past the closing fence
@@ -9952,7 +10060,13 @@ function parseMarkdownOutline(text, filename){
       const tag=htmlOpen[1].toLowerCase(), buf=[line]; let depth=1, j=i+1;
       const openRe=new RegExp('<'+tag+'\\b','gi'), closeRe=new RegExp('</'+tag+'\\s*>','gi');
       while(j<L.length && depth>0){ const ln=L[j]; buf.push(ln); depth += (ln.match(openRe)||[]).length - (ln.match(closeRe)||[]).length; j++; }
-      add(tag+' block', base() + 1, null, { html: buf.join('\n'), raw:true });
+      // Placed by its indent, as tables and fences are: buildMarkdown writes a
+      // raw block under its parent bullet, and reading it back at the section
+      // level moved it out from under that bullet on every Markdown edit. The
+      // indent is scaffolding, so it comes off too, or each round trip added
+      // another two spaces to every line of the stored HTML.
+      const ind=(line.match(/^\s*/)||[''])[0];
+      add(tag+' block', base() + 1 + Math.floor(ind.length/2), null, { html: buf.map(l=>stripIndent(l,ind)).join('\n'), raw:true });
       i=j-1; continue;
     }
     // Raw HTML <img> (bare, or wrapped in <p>/<a>/<figure>) -> image on the current node
@@ -9964,7 +10078,9 @@ function parseMarkdownOutline(text, filename){
       continue;
     }
     // Horizontal rule (---, ***, ___) -> separator, not a node
-    if(/^\s*([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)){ add('', base()+1, null, {hr:true}); continue; }   // horizontal rule -> divider node
+    // Horizontal rule -> divider node, placed by its indent like the blocks above,
+    // so a divider written under a bullet stays under it.
+    if(/^\s*([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)){ add('', base() + 1 + Math.floor((line.match(/^\s*/)||[''])[0].length/2), null, {hr:true}); continue; }
     // A bare block wrapper on its own line (<p ...>, </p>, <div>, <center>, <figure>...) -> unwrap (no node)
     if(/^<\/?(?:p|div|center|figure|picture|section|article)\b[^>]*>$/i.test(line.trim())) continue;
     const h = line.match(/^(#{1,6})\s+(.*)$/);
@@ -9995,6 +10111,13 @@ function parseMarkdownOutline(text, filename){
       add(body, base() + 1 + Math.floor(indent/2), task);
       continue;
     }
+    // An indented paragraph belongs to the bullet above it: buildMarkdown writes a
+    // paragraph node there, one indent deeper than its parent. It used to land at
+    // the section level, so every edit in the Markdown pane (which rebuilds the
+    // map from the text) moved it out from under its bullet. Placed by its indent
+    // like a bullet, and never taken as a lead-in, which is a top-level shape.
+    const paraInd = (line.match(/^\s*/)||[''])[0].replace(/\t/g, '  ').length;
+    if(paraInd >= 2){ const p = stripWrap(line.trim()); if(p) add(p, base() + 1 + Math.floor(paraInd/2), null, {para:true}); continue; }
     // A bold-led paragraph immediately followed by a list acts as a sub-heading:
     // it becomes the parent of that list (e.g. "**Editing & canvas**" over its bullets).
     if(nextIsBullet(i)){   // a lead-in line directly above a list -> parent of that list
@@ -10570,14 +10693,19 @@ function buildMarkdown(startId, opts){
   const nmeta={}, lm={};
   const baseDepth = 0;
   const notesText = n => (n.notes||'').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim();
-  const emitNotes = (n, pad) => {   // rich: code fences / tables round-trip; other notes -> blockquotes
-    if(!(n.notes||'').trim()) return;
-    notesToMdBlocks(n.notes).forEach(b=>{
-      if(b.code!=null){ lines.push('```'); b.code.split('\n').forEach(l=>lines.push(l)); lines.push('```'); }
-      else if(b.table){ b.table.forEach(l=>lines.push(l)); }
+  // rich: code fences / tables round-trip; other notes -> blockquotes. All of them
+  // take the note's indent. Code and tables used to be written flush left, which
+  // ends the list: the preview showed them after the whole list instead of in their
+  // item, and the importer hung them off the section instead of the node.
+  // A block node's html is written by the same code, so the two cannot drift apart.
+  const emitBlocks = (html, pad, lang) => {
+    notesToMdBlocks(html).forEach(b=>{
+      if(b.code!=null){ lines.push(pad+'```'+(lang||'')); b.code.split('\n').forEach(l=>lines.push(pad+l)); lines.push(pad+'```'); }
+      else if(b.table){ b.table.forEach(l=>lines.push(pad+l)); }
       else lines.push(pad+'> '+b.q);
     });
   };
+  const emitNotes = (n, pad) => { if((n.notes||'').trim()) emitBlocks(n.notes, pad); };
   // Returns whether this subtree wrote any meta: a node whose descendants carry
   // meta gets a fingerprint-only entry of its own, so the reader can follow the
   // text down to them even when their positions have moved.
@@ -10592,17 +10720,18 @@ function buildMarkdown(startId, opts){
   };
   const walkBody=(id, n, bd, path)=>{
     const pad='  '.repeat(bd);
-    if(n.hr){ if(lineMap) lm[lines.length]=id; lines.push(pad+'---'); return; }   // divider round-trips as ---
+    // A block node can have children like any other node. These two branches
+    // used to return without walking them, so a link hung off a code block was
+    // missing from the Markdown, and the next edit in the Markdown pane, which
+    // rebuilds the map from that text, deleted it. The children follow the block
+    // one level deeper, which the importer reads back as children of the block.
+    const blockKids=()=>childrenOf(id).map((c,i)=>walk(c, bd+1, path+'.'+i)).some(Boolean);
+    if(n.hr){ if(lineMap) lm[lines.length]=id; lines.push(pad+'---'); return blockKids(); }   // divider round-trips as ---
     if(n.html){   // block node (table / code / raw HTML) at the current bullet indent
       if(lineMap) lm[lines.length]=id;
-      if(n.raw){ n.html.split('\n').forEach(l=>lines.push(l.trim()?pad+l:l)); return; }
-      const lang=(rich && n.lang) ? n.lang : '';
-      notesToMdBlocks(n.html).forEach(b=>{
-        if(b.code!=null){ lines.push(pad+'```'+lang); b.code.split('\n').forEach(l=>lines.push(pad+l)); lines.push(pad+'```'); }
-        else if(b.table){ b.table.forEach(l=>lines.push(pad+l)); }
-        else lines.push(pad+'> '+b.q);
-      });
-      return;
+      if(n.raw){ n.html.split('\n').forEach(l=>lines.push(l.trim()?pad+l:l)); return blockKids(); }
+      emitBlocks(n.html, pad, (rich && n.lang) ? n.lang : '');
+      return blockKids();
     }
     let body = (rich ? htmlToInlineMd(n.text) : nodeTextPlain(n.text)) || 'Untitled';
     const wrapStyle = s => {   // whole-node style toggles (nodebar buttons) get real Markdown/HTML syntax, not just metadata
@@ -15026,6 +15155,34 @@ let _layoutFitTimer=0;
 // arrived and clipped the map's right edge, and leaving the split editor
 // fitted to the narrow half and parked the map in the left third. The second
 // pass is a no-op when nothing slid, since the stage key is then unchanged.
+// The ☰ group at the start of the bar. restoreShell() removes it on every
+// switch, so it is created fresh by whichever layout wants one.
+function sideToggleGroup(topbar, toggleSide){
+  let grp=topbar.querySelector('.tb-orphan');
+  if(!grp){ grp=document.createElement('div'); grp.className='tb-group tb-orphan';
+    grp.appendChild(toggleSide); topbar.insertBefore(grp, topbar.firstChild); }
+  return grp;
+}
+// The modern shell keeps ☰ in the sidebar's brand row. On a phone that
+// sidebar is a collapsed off-canvas overlay with the brand row hidden, so
+// modern, split and outline had no way to open Maps or Templates at all.
+// There the toggle moves to the start of the bar, where the floating shells
+// already keep it, and it goes home again once the window is wider than the
+// breakpoint (a phone turned to landscape). Every other shell places it
+// itself: classic, rail and zen in the bar, dock in the dock, and minimal
+// hides it behind its launcher.
+function placeSideToggle(){
+  const b=document.body.classList;
+  if(['ui-classic','ui-rail','ui-zen','ui-dock','ui-minimal'].some(c=>b.contains(c))) return;
+  const topbar=document.querySelector('.topbar'), toggleSide=$('#toggleSide'), brand=document.querySelector('.brand');
+  if(!topbar || !toggleSide || !brand) return;
+  if(window.matchMedia('(max-width: 720px)').matches){
+    sideToggleGroup(topbar, toggleSide);
+  }else if(toggleSide.closest('.topbar')){
+    brand.appendChild(toggleSide);               // last in the brand row, as restoreShell leaves it
+    topbar.querySelector('.tb-orphan')?.remove();
+  }
+}
 function refitStageAfterChrome(){
   if(!map) return;
   const pass=()=>{
@@ -15122,9 +15279,7 @@ function applyUiLayout(id){
     // floating beside the minimap card instead of inside it.
     stage.appendChild(zoomRow);
     stage.appendChild(hint);
-    let grp=topbar.querySelector('.tb-orphan');
-    if(!grp){ grp=document.createElement('div'); grp.className='tb-group tb-orphan';
-      grp.appendChild(toggleSide); topbar.insertBefore(grp, topbar.firstChild); }
+    const grp=sideToggleGroup(topbar, toggleSide);
     grp.after(titleEdit);                            // title sits beside the ☰ group, as upstream
     [$('#userPill'),$('#tokenTotal'),$('#savePill')].forEach(p=>{ if(p) topbar.appendChild(p); });
     $('#addChild').textContent='＋ Topic';
@@ -15153,9 +15308,7 @@ function applyUiLayout(id){
     // left of the canvas (side | rail | stage). Title, save feedback, minimap
     // card, zoombar and hint float over the canvas, exactly like classic.
     app.insertBefore(topbar, stage);             // grid order: side, rail, stage
-    let grp=topbar.querySelector('.tb-orphan');
-    if(!grp){ grp=document.createElement('div'); grp.className='tb-group tb-orphan';
-      grp.appendChild(toggleSide); topbar.insertBefore(grp, topbar.firstChild); }
+    sideToggleGroup(topbar, toggleSide);
     $('#addChild').textContent='＋';            // icon-only in the narrow rail
     stage.appendChild(titleEdit);                // floating title, top-left
     stage.appendChild(overview);
@@ -15184,9 +15337,7 @@ function applyUiLayout(id){
     stage.appendChild(hint);
     stage.appendChild($('#savePill'));
     $('#addChild').textContent='＋ Topic';       // horizontal strip keeps the label
-    let grp=topbar.querySelector('.tb-orphan');
-    if(!grp){ grp=document.createElement('div'); grp.className='tb-group tb-orphan';
-      grp.appendChild(toggleSide); topbar.insertBefore(grp, topbar.firstChild); }
+    const grp=sideToggleGroup(topbar, toggleSide);
     grp.after(titleEdit);                        // title beside the ☰ group, as classic
     [$('#userPill'),$('#tokenTotal')].forEach(p=>{ if(p) topbar.appendChild(p); });
     // Pin toggle: keeps the centered bar always visible (no top-edge hover needed).
@@ -15250,6 +15401,7 @@ function applyUiLayout(id){
   }
   // The stage just changed size, so re-measure and re-render the canvas.
   renderTabs();   // tab strip visibility depends on the layout (hidden in floating shells)
+  placeSideToggle();   // before observeTopbar: on a phone it adds the ☰ group to the bar
   observeTopbar();   // the bar's shape and contents just changed: re-decide the overflow menu
   if(map){
     render();
@@ -16144,7 +16296,11 @@ try{
 }catch(e){}
 try{ applyLook(localStorage.getItem('mindspark:look') || 'office'); }catch(e){ console.warn('look could not be applied at boot:', e); }
 try{ if(localStorage.getItem('mindspark:zenPinned')==='1') document.body.classList.add('zen-pinned'); }catch(e){}
-try{ applyUiLayout(localStorage.getItem('mindspark:uiLayout') || 'modern'); }catch(e){}   // app shell layout (Modern bars / Classic floating)
+// app shell layout (Modern bars / Classic floating). Not an empty catch: one
+// here hid a ReferenceError that left split half-applied on every load.
+try{ applyUiLayout(localStorage.getItem('mindspark:uiLayout') || 'modern'); }catch(e){ console.warn('layout could not be applied at boot:', e); }
+// Rotating a phone crosses the breakpoint without a layout switch.
+try{ window.matchMedia('(max-width: 720px)').addEventListener('change', ()=>{ placeSideToggle(); observeTopbar(); }); }catch(e){}
 
 applyView();
 
@@ -17581,7 +17737,8 @@ function showLoginOverlay(opts){
    decodes it and shows a read-only view. Nothing is sent to any server - the
    data lives entirely in the link, so recipients need no account.
    ============================================================ */
-let READONLY = false;   // true while viewing a shared (read-only) map
+// READONLY (true while viewing a shared map) is declared with the app state
+// near the top: the boot-time layout switch reads it.
 
 function _b64urlFromBytes(bytes){
   let bin=''; const CH=0x8000;

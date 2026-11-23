@@ -9,14 +9,19 @@
 // different things depending on which side you looked at, and an ASCII diagram
 // lost its alignment in the half the user was reading.
 //
-// Tables were never broken; they are asserted here because they travel with
-// code blocks in the same documents and share the block-dispatch loop.
+// Tables had the same bug and it went unnoticed, because the table test put a
+// blank line between the bullet and the table, which ends the list before the
+// scanner can swallow anything. buildMarkdown writes no blank line there, so a
+// table node under a bullet came out of the preview as one bullet per row. The
+// fence fix had also only stopped the list at the fence, so the code landed
+// after the list instead of inside the item it belongs to. The tests below use
+// the exact shape buildMarkdown writes and check where each block lands.
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadFns, extractConst } from './helpers/load-app-fns.mjs';
 
 const { mdToHtml } = loadFns(
-  ['mdToHtml', 'scrubRawHtmlBlock', 'mdInlineToHtmlWithMath', 'renderMdList', 'mdInlineToHtml', 'escapeHtml',
+  ['mdToHtml', 'stripIndent', 'scrubRawHtmlBlock', 'mdInlineToHtmlWithMath', 'renderMdList', 'mdInlineToHtml', 'escapeHtml',
    'parseMapOptionsFrontmatter', 'parseFrontmatterFields', 'frontmatterFieldsToHtml'],
   { INLINE_HTML_RE: extractConst('INLINE_HTML_RE'), ENTITY_RE: extractConst('ENTITY_RE') });
 
@@ -105,6 +110,76 @@ describe('markdown preview - tables', () => {
     assert.equal(count(html, /<pre/g), 1, 'the code block went missing');
     assert.equal(count(html, /<table/g), 1, 'the table went missing');
     assert.equal(codeOf(html), 'a\nb');
+  });
+});
+
+describe('markdown preview - blocks nested under a bullet, as buildMarkdown writes them', () => {
+  const ind = (s, n) => s.split('\n').map(l => (l ? ' '.repeat(n) + l : l)).join('\n');
+  const TABLE = '| # | Core Idea |\n| --- | --- |\n| 1 | **Polymathy** |\n| 2 | Neuroscience |';
+  // The item's own text, then whatever block html follows it inside the same <li>.
+  const liBody = (html, text) => {
+    const at = html.indexOf('<li>' + text);
+    assert.notEqual(at, -1, `no item "${text}":\n${html}`);
+    return html.slice(at);
+  };
+
+  // The ToDo's map that reported this: a table node under "Leonardo Da Vinci",
+  // itself a child bullet, with a sibling after it. No blank lines anywhere.
+  const LEO = `- Ideas\n  - Leonardo Da Vinci\n${ind(TABLE, 4)}\n  - 369!\n- Random Thoughts\n`;
+
+  test('a table under a child bullet is one table, not one bullet per row', () => {
+    const html = mdToHtml(LEO);
+    assert.equal(count(html, /<table/g), 1, `expected one table:\n${html}`);
+    assert.equal(count(html, /<td>/g), 4);
+    assert.doesNotMatch(html, /<li>[^<]*\|/, 'a table row leaked out as a list item');
+    assert.equal(count(html, /<li>/g), 4, 'Ideas, Leonardo, 369! and Random Thoughts, nothing else');
+  });
+
+  test('the table sits inside its own item, and the list carries on after it', () => {
+    const html = mdToHtml(LEO);
+    assert.match(liBody(html, 'Leonardo Da Vinci'), /^<li>Leonardo Da Vinci<table/, 'the table must follow its item, inside it');
+    assert.match(html, /<\/table><\/li><li>369!<\/li>/, '369! stays the next sibling in the same list');
+  });
+
+  const F3 = '```';
+  for (const [kind, block, tag, expect] of [
+    ['code block', `${F3}\nroot\n|  +- leaf\n${F3}`, 'pre', /<pre class="mp-code"><code>root\n\|  \+- leaf<\/code><\/pre>/],
+    ['blockquote (a node\'s notes)', '> a note', 'blockquote', /<blockquote>a note<\/blockquote>/],
+    ['raw HTML block', '<details><summary>More</summary>\n<p>Body</p>\n</details>', 'details', /<details><summary>More<\/summary>\n<p>Body<\/p>\n<\/details>/],
+    ['image', '![diagram](https://example.com/a.png)', 'img', /<img alt="diagram" src="https:\/\/example.com\/a.png">/],
+    ['divider', '---', 'hr', /<hr>/],
+    ['paragraph node', 'A plain paragraph.', 'p', /<p>A plain paragraph.<\/p>/],
+  ]) {
+    test(`a ${kind} under a child bullet renders inside that item`, () => {
+      const html = mdToHtml(`- Parent\n  - Child\n${ind(block, 4)}\n  - Next\n`);
+      assert.match(html, expect, `the ${kind} did not render:\n${html}`);
+      assert.match(liBody(html, 'Child'), new RegExp(`^<li>Child<${tag}\\b`), `the ${kind} is not inside its item:\n${html}`);
+      assert.equal(count(html, /<li>/g), 3, `stray list items:\n${html}`);
+    });
+  }
+
+  test('a deeper bullet after a block still hangs off the item, not the block', () => {
+    const html = mdToHtml(`- Parent\n${ind(TABLE, 2)}\n  - Kid\n- Next\n`);
+    assert.match(html, /<li>Parent<table[\s\S]*<\/table><ul><li>Kid<\/li><\/ul><\/li><li>Next<\/li>/, html);
+  });
+
+  test('a block under the top-level bullet of a heading section renders the same way', () => {
+    const html = mdToHtml(`# ToDo's\n\n## Section\n\n- Item\n${ind(TABLE, 2)}\n`);
+    assert.match(html, /<h2>Section<\/h2>/);
+    assert.match(html, /<li>Item<table/);
+  });
+
+  test('a block directly under a heading (no bullet) renders at the top level', () => {
+    const html = mdToHtml(`# Root\n\n${TABLE}\n\n${F3}\nx\n${F3}\n`);
+    assert.equal(count(html, /<table/g), 1);
+    assert.equal(count(html, /<pre/g), 1);
+    assert.equal(count(html, /<li>/g), 0);
+  });
+
+  test('raw HTML under a bullet is still scrubbed', () => {
+    const html = mdToHtml('- Item\n  <div onclick="x()"><a href="javascript:alert(1)">a</a></div>\n');
+    assert.doesNotMatch(html, /onclick|javascript:/);
+    assert.match(html, /<li>Item<div/);
   });
 });
 
